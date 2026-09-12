@@ -114,6 +114,7 @@ const state = {
   gateMode: "signin", // signin | request | link
   adminUnlocked: false,
   adminRequests: [],
+  editingId: null, // id of the member's own review being edited in the Post a review form
 };
 
 const aaForm = { agencyName: "", agentName: "", payRate: "", ratings: {}, wouldReturn: "", comment: "" };
@@ -131,6 +132,48 @@ function resetForms() {
   postOpts.anonymous = false;
 }
 resetForms();
+
+// Which review form to show: while editing, follow the review's own type; otherwise the member's setting.
+function formMode() {
+  if (state.editingId) {
+    const r = state.reviews.find((x) => x.id === state.editingId);
+    if (r) return r.employmentType === "staff" ? "staff" : "locum";
+  }
+  return state.user && state.user.employmentType === "staff" ? "staff" : "locum";
+}
+
+function loadReviewIntoForms(r) {
+  resetForms();
+  aaForm.agencyName = r.agencyName || ""; aaForm.agentName = r.agentName || "";
+  aaForm.payRate = r.payRate == null ? "" : String(r.payRate);
+  AGENCY_CATEGORIES.forEach((c) => (aaForm.ratings[c.key] = (r.agencyAgentRatings || {})[c.key] || 0));
+  aaForm.wouldReturn = r.agencyAgentWouldReturn || ""; aaForm.comment = r.agencyAgentComment || "";
+  grpForm.name = r.groupName || "";
+  GROUP_CATEGORIES.forEach((c) => (grpForm.ratings[c.key] = (r.groupRatings || {})[c.key] || 0));
+  grpForm.wouldReturn = r.groupWouldReturn || ""; grpForm.comment = r.groupComment || "";
+  hospForm.name = r.hospitalName || "";
+  HOSPITAL_CATEGORIES.forEach((c) => (hospForm.ratings[c.key] = (r.hospitalRatings || {})[c.key] || 0));
+  hospForm.wouldReturn = r.hospitalWouldReturn || ""; hospForm.comment = r.hospitalComment || "";
+  postOpts.anonymous = !!r.anonymous;
+}
+
+function startEditing(id) {
+  const r = state.reviews.find((x) => x.id === id);
+  if (!r || !r.isMine) return;
+  loadReviewIntoForms(r);
+  state.editingId = id;
+  state.detail = null;
+  state.tab = "submit";
+  render();
+  window.scrollTo(0, 0);
+}
+
+function cancelEditing() {
+  state.editingId = null;
+  resetForms();
+  state.tab = "mine";
+  render();
+}
 
 function flash(msg) {
   state.toast = msg;
@@ -265,6 +308,7 @@ function attachNavHandlers() {
         render();
         return;
       }
+      if (tab !== "submit" && state.editingId) { state.editingId = null; resetForms(); }
       state.tab = tab; state.detail = null;
       render();
     };
@@ -732,7 +776,7 @@ function detailHtml() {
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
           <span style="font-weight:800;font-size:16px">${weighted(categories, ratings).toFixed(2)}</span>
-          <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}</span>
+          <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}${r.editedAt ? ` · <span title="Edited ${new Date(r.editedAt).toLocaleDateString()}">edited</span>` : ""}</span>
         </div>
         ${pairedLabel ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">${pairedLabel}</div>` : ""}
         ${ent.hasPay && r.payRate != null ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Pay: $${r.payRate}/hr (pay score ${payScore(r.payRate)}/5)</div>` : ""}
@@ -741,7 +785,7 @@ function detailHtml() {
         ${comment ? `<p style="margin:6px 0">${esc(comment)}</p>` : ""}
         <div style="display:flex;justify-content:space-between;align-items:center">
           <p style="margin:0;font-size:12px;color:#6B756F">— ${r.anonymous ? `Anonymous CRNA${isMine ? ` (you)` : ""}` : esc(r.reviewer.name || "Verified CRNA")}, ${esc(r.reviewer.credentials)}${roleLabel ? ` · ${roleLabel}` : ""}${r.anonymous ? ` · <span title="Posted anonymously by a verified CRNA">🔒 anonymous</span>` : ""}</p>
-          ${isMine ? `<span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span>` : ""}
+          ${isMine ? `<span style="display:flex;gap:6px"><button class="tiny-btn" data-edit="${r.id}">Edit</button><span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span></span>` : ""}
         </div>
       </div>`;
   }).join("");
@@ -815,14 +859,21 @@ function returnToggleHtml(value, group) {
 }
 
 function submitHtml() {
-  const mode = state.user.employmentType === "staff" ? "staff" : "locum";
-  const header = `
+  const mode = formMode();
+  const editing = state.editingId ? state.reviews.find((x) => x.id === state.editingId) : null;
+  const editBanner = editing ? `
+    <div class="card edit-banner">
+      <div class="section-label">EDITING YOUR REVIEW</div>
+      <div style="font-size:13px">Originally posted ${new Date(editing.date).toLocaleDateString()}. Change anything below, then save. Other members will see it marked as edited.</div>
+      <button type="button" class="tiny-btn" id="cancel-edit" style="margin-top:8px">Cancel editing</button>
+    </div>` : "";
+  const header = editBanner + `
     <div class="card">
       <div class="section-label">POSTING AS</div>
       <div style="font-family:'Special Elite',monospace;font-size:17px">${esc(state.user.name)}, ${esc(state.user.credentials)}</div>
       <p class="hint-text">Tied to your verified account. You can post under your name or anonymously.</p>
       <p class="hint-text" style="margin-top:6px">Reviewing as <strong>${esc(EMPLOYMENT[mode].label)}</strong> — ${EMPLOYMENT[mode].reviews}.
-        <button type="button" class="inline-link" id="switch-employment">Switch</button></p>
+        ${editing ? "" : `<button type="button" class="inline-link" id="switch-employment">Switch</button>`}</p>
       <label class="checkbox-row anon-row"><input type="checkbox" id="post-anon" ${postOpts.anonymous ? "checked" : ""} />
         <span><strong>Post anonymously.</strong> Your name is hidden from other members and shown as "Anonymous CRNA." The review is still tied to your verified account — nobody can pretend to be a CRNA — and you can delete it any time from My reviews.</span>
       </label>
@@ -872,13 +923,17 @@ function submitHtml() {
     </div>`;
   return header + (mode === "staff" ? groupCard : agencyCard) + hospitalCard + `
     <div id="submit-error" class="error-text"></div>
-    <button class="primary-btn" id="submit-btn">Post review</button>`;
+    <button class="primary-btn" id="submit-btn">${editing ? "Save changes" : "Post review"}</button>
+    ${editing ? `<button type="button" class="link-btn" id="cancel-edit-bottom">Cancel — keep the original</button>` : ""}`;
 }
 
 function attachSubmitHandlers() {
-  const mode = state.user.employmentType === "staff" ? "staff" : "locum";
+  const mode = formMode();
   const first = mode === "staff" ? "grp" : "aa";
-  document.getElementById("switch-employment").onclick = () => { state.view = "employment"; render(); };
+  const editingId = state.editingId;
+  const sw = document.getElementById("switch-employment");
+  if (sw) sw.onclick = () => { state.view = "employment"; render(); };
+  ["cancel-edit", "cancel-edit-bottom"].forEach((id) => { const el = document.getElementById(id); if (el) el.onclick = cancelEditing; });
   document.getElementById("post-anon").onchange = (e) => (postOpts.anonymous = e.target.checked);
   if (mode === "locum") {
     document.getElementById("aa-agency").oninput = (e) => (aaForm.agencyName = e.target.value);
@@ -930,15 +985,17 @@ function attachSubmitHandlers() {
       });
     }
     try {
-      await api("/api/reviews", { method: "POST", body });
+      if (editingId) await api(`/api/reviews/${editingId}`, { method: "PUT", body });
+      else await api("/api/reviews", { method: "POST", body });
       const wasAnon = postOpts.anonymous;
       await loadReviews();
       resetForms();
-      state.tab = "search";
-      flash(wasAnon ? "Review posted anonymously." : "Review posted.");
+      state.editingId = null;
+      state.tab = editingId ? "mine" : "search";
+      flash(editingId ? "Review updated." : wasAnon ? "Review posted anonymously." : "Review posted.");
       render();
     } catch (e) {
-      errEl.textContent = "Something went wrong posting your review. Try again.";
+      errEl.textContent = editingId ? "Something went wrong saving your changes. Try again." : "Something went wrong posting your review. Try again.";
     }
   };
 }
@@ -989,8 +1046,8 @@ function mineHtml() {
   return account + mine.map((r) => `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}${r.anonymous ? ` · <span class="badge anon">🔒 ANONYMOUS</span>` : ""}</span>
-        <span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span>
+        <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}${r.editedAt ? " · edited" : ""}${r.anonymous ? ` · <span class="badge anon">🔒 ANONYMOUS</span>` : ""}</span>
+        <span style="display:flex;gap:6px"><button class="tiny-btn" data-edit="${r.id}">Edit</button><span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span></span>
       </div>
       ${r.groupName ? `
       <div style="margin-bottom:10px;padding-left:10px;border-left:3px solid ${COLORS.group}">
@@ -1031,6 +1088,7 @@ function attachMineHandlers() {
 }
 
 function attachDeleteHandlers() {
+  document.querySelectorAll("[data-edit]").forEach((btn) => { btn.onclick = () => startEditing(btn.dataset.edit); });
   document.querySelectorAll("[data-delete]").forEach((wrap) => {
     const id = wrap.dataset.delete;
     const btn = wrap.querySelector("button");
