@@ -11,16 +11,40 @@ const AGENCY_CATEGORIES = [
 
 const HOSPITAL_CATEGORIES = [
   { key: "caseMix", label: "Case Mix & Acuity", weight: 0.1, anchors: [[5, "strong variety, well matched to skill level, kept you sharp"], [3, "decent mix, but repetitive or occasionally mismatched"], [1, "monotonous, or cases well below/beyond reasonable"]] },
-  { key: "staffing", label: "Staffing & Support", weight: 0.15, anchors: [[5, "fully staffed, backup always available, call burden reasonable"], [3, "generally covered, but backup or call load tight at times"], [1, "chronically understaffed, no real backup, unsustainable call"]] },
-  { key: "equipment", label: "Equipment & Resources", weight: 0.1, anchors: [[5, "modern, well maintained, drugs and supplies always on hand"], [3, "workable, but occasional equipment issues or shortages"], [1, "outdated/broken equipment or frequent drug shortages"]] },
-  { key: "culture", label: "Culture & Collegiality", weight: 0.15, anchors: [[5, "welcoming, treated as part of the team from day one"], [3, "professional but distant, tolerated rather than welcomed"], [1, "openly unwelcoming or difficult toward locum staff"]] },
-  { key: "orientation", label: "Orientation / Onboarding", weight: 0.1, anchors: [[5, "smooth EMR/badge/access setup, productive from day one"], [3, "got you functional, but took longer than it should have"], [1, "disorganized onboarding that ate into productive days"]] },
+  { key: "staffing", label: "Staffing & Support", weight: 0.1, anchors: [[5, "fully staffed, backup always available, call burden reasonable"], [3, "generally covered, but backup or call load tight at times"], [1, "chronically understaffed, no real backup, unsustainable call"]] },
+  { key: "equipment", label: "Equipment & Resources", weight: 0.05, anchors: [[5, "modern, well maintained, drugs and supplies always on hand"], [3, "workable, but occasional equipment issues or shortages"], [1, "outdated/broken equipment or frequent drug shortages"]] },
+  { key: "culture", label: "Culture & Collegiality", weight: 0.1, anchors: [[5, "welcoming, treated as part of the team from day one"], [3, "professional but distant, tolerated rather than welcomed"], [1, "openly unwelcoming or difficult toward locum staff"]] },
+  { key: "chief", label: "Chief & Leadership Treatment", weight: 0.15, anchors: [[5, "treated like one of the team — a fair share of the schedule and case assignments"], [3, "mostly fair, but you tended to get the surgeons and cases the W-2 staff didn't want"], [1, "treated as disposable — pulled to relieve W-2 staff the moment your cases finished while they sat idle"]] },
+  { key: "orientation", label: "Orientation / Onboarding", weight: 0.05, anchors: [[5, "smooth EMR/badge/access setup, productive from day one"], [3, "got you functional, but took longer than it should have"], [1, "disorganized onboarding that ate into productive days"]] },
   { key: "schedule", label: "Schedule Reliability", weight: 0.1, anchors: [[5, "ran exactly as promised, essentially no last-minute changes"], [3, "mostly reliable, with occasional last-minute changes"], [1, "frequent last-minute changes or shifts not honored"]] },
-  { key: "locationLogistics", label: "Location / Logistics", weight: 0.1, anchors: [[5, "easy commute, convenient parking, housing close by"], [3, "workable, but commute/parking/housing added real friction"], [1, "difficult commute, poor parking, or housing far from site"]] },
-  { key: "supervision", label: "Supervision / Practice Autonomy", weight: 0.2, anchors: [[5, "independent practice"], [3, "medically directed/supervised loosely"], [1, "medically directed"]] },
+  { key: "lunchesBreaks", label: "Lunches & Breaks", weight: 0.1, anchors: [[5, "anesthesia staff made sure you got lunch every day and most of your breaks"], [3, "lunch most days but not always; break relief was hit or miss"], [1, "lunch was often missed and breaks were essentially nonexistent"]] },
+  { key: "meals", label: "Free Meals", weight: 0.05, anchors: [[5, "meals and snacks provided by the hospital"], [3, "meals ordered for the CRNAs weekly or monthly"], [1, "none"]] },
+  { key: "locationLogistics", label: "Location / Logistics", weight: 0.05, anchors: [[5, "easy commute, convenient parking, housing close by"], [3, "workable, but commute/parking/housing added real friction"], [1, "difficult commute, poor parking, or housing far from site"]] },
+  { key: "supervision", label: "Practice Autonomy", weight: 0.15, anchors: [[5, "independent practice"], [3, "medically directed/supervised loosely"], [1, "medically directed"]] },
 ];
 
-const COLORS = { agency: "#123C3A", agent: "#B87F1E", hospital: "#8C3A32" };
+const GROUP_CATEGORIES = [
+  { key: "compensation", label: "Compensation & Benefits", weight: 0.2, anchors: [[5, "pay at or above market, strong benefits and retirement match, raises honored"], [3, "fair pay, but benefits thin or raises slow to come"], [1, "below-market pay, weak benefits, or promised increases never materialized"]] },
+  { key: "leadership", label: "Chief & Leadership", weight: 0.2, anchors: [[5, "transparent, fair, advocates for CRNAs, and follows through"], [3, "decent intentions, but inconsistent or plays favorites at times"], [1, "opaque, punitive, or clearly favors physicians/W-2 insiders over the CRNA staff"]] },
+  { key: "scheduleCall", label: "Scheduling & Call Burden", weight: 0.15, anchors: [[5, "predictable schedule, fair call rotation, time off honored"], [3, "workable, but call heavier or schedule less predictable than promised"], [1, "unsustainable call, last-minute changes, time off routinely denied"]] },
+  { key: "staffingWorkload", label: "Staffing & Workload", weight: 0.15, anchors: [[5, "fully staffed, reasonable room load, relief available"], [3, "generally covered, but stretched thin at times"], [1, "chronically short, constant overtime pressure, no relief"]] },
+  { key: "culture", label: "Culture & Respect for CRNAs", weight: 0.15, anchors: [[5, "CRNAs treated as full members of the anesthesia team"], [3, "professional, but a clear physician/CRNA hierarchy"], [1, "CRNAs marginalized, talked down to, or blamed"]] },
+  { key: "autonomy", label: "Practice Autonomy", weight: 0.15, anchors: [[5, "independent practice"], [3, "medically directed/supervised loosely"], [1, "medically directed"]] },
+];
+
+const COLORS = { agency: "#123C3A", agent: "#B87F1E", hospital: "#8C3A32", group: "#3F5E8C" };
+
+// One place that knows, for each rateable thing, which review fields hold its data.
+const ENTITY = {
+  agency:   { label: "Agency",           field: "agencyName",   ratings: "agencyAgentRatings", comment: "agencyAgentComment", ret: "agencyAgentWouldReturn", categories: AGENCY_CATEGORIES,   hasPay: true },
+  agent:    { label: "Agent",            field: "agentName",    ratings: "agencyAgentRatings", comment: "agencyAgentComment", ret: "agencyAgentWouldReturn", categories: AGENCY_CATEGORIES,   hasPay: true },
+  group:    { label: "Anesthesia Group", field: "groupName",    ratings: "groupRatings",       comment: "groupComment",       ret: "groupWouldReturn",       categories: GROUP_CATEGORIES,    hasPay: false },
+  hospital: { label: "Hospital",         field: "hospitalName", ratings: "hospitalRatings",    comment: "hospitalComment",    ret: "hospitalWouldReturn",    categories: HOSPITAL_CATEGORIES, hasPay: false },
+};
+const EMPLOYMENT = {
+  locum: { label: "Locum / 1099 contractor", short: "Locum", reviews: "agencies, agents, and hospitals" },
+  staff: { label: "Full-time / part-time staff", short: "Staff", reviews: "anesthesia groups and hospitals" },
+};
 
 function payScore(rate) {
   const r = Number(rate);
@@ -33,9 +57,12 @@ function payScore(rate) {
   return 5;
 }
 function weighted(categories, values) {
-  let sum = 0;
-  categories.forEach((c) => { sum += (values[c.key] || 0) * c.weight; });
-  return sum;
+  let sum = 0, weightSum = 0;
+  categories.forEach((c) => {
+    const v = values && values[c.key];
+    if (v > 0) { sum += v * c.weight; weightSum += c.weight; }
+  });
+  return weightSum > 0 ? sum / weightSum : 0;
 }
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -90,11 +117,15 @@ const state = {
 };
 
 const aaForm = { agencyName: "", agentName: "", payRate: "", ratings: {}, wouldReturn: "", comment: "" };
+const grpForm = { name: "", ratings: {}, wouldReturn: "", comment: "" };
 const hospForm = { name: "", ratings: {}, wouldReturn: "", comment: "" };
+const FORMS = { aa: { form: aaForm, categories: AGENCY_CATEGORIES }, grp: { form: grpForm, categories: GROUP_CATEGORIES }, hosp: { form: hospForm, categories: HOSPITAL_CATEGORIES } };
 function resetForms() {
   AGENCY_CATEGORIES.forEach((c) => (aaForm.ratings[c.key] = 0));
+  GROUP_CATEGORIES.forEach((c) => (grpForm.ratings[c.key] = 0));
   HOSPITAL_CATEGORIES.forEach((c) => (hospForm.ratings[c.key] = 0));
   aaForm.agencyName = ""; aaForm.agentName = ""; aaForm.payRate = ""; aaForm.wouldReturn = ""; aaForm.comment = "";
+  grpForm.name = ""; grpForm.wouldReturn = ""; grpForm.comment = "";
   hospForm.name = ""; hospForm.wouldReturn = ""; hospForm.comment = "";
 }
 resetForms();
@@ -116,12 +147,17 @@ async function init() {
     const params = new URLSearchParams(window.location.search);
     const cameFromLink = params.get("setpw") === "1";
     if (cameFromLink) window.history.replaceState({}, "", "/");
-    state.view = cameFromLink || !state.user.hasPassword ? "setpw" : "app";
+    state.view = cameFromLink || !state.user.hasPassword ? "setpw" : nextViewAfterAuth();
     await loadReviews();
   } catch {
     state.view = "home";
   }
   render();
+}
+
+// Members pick how they're working (locum vs. staff) once; it decides which review form they get.
+function nextViewAfterAuth() {
+  return state.user && state.user.employmentType ? "app" : "employment";
 }
 
 async function loadReviews() {
@@ -131,22 +167,25 @@ async function loadReviews() {
 
 // ---------- computed helpers ----------
 
-function typeLabel(t) { return t === "agency" ? "Agency" : t === "agent" ? "Agent" : "Hospital"; }
+function typeLabel(t) { return ENTITY[t] ? ENTITY[t].label : t; }
 
 function searchResults() {
   const q = state.query.trim().toLowerCase();
-  const byType = { agency: new Map(), agent: new Map(), hospital: new Map() };
+  const types = Object.keys(ENTITY);
+  const byType = {};
+  types.forEach((t) => (byType[t] = new Map()));
   state.reviews.forEach((r) => {
-    if (r.agencyName) byType.agency.set(r.agencyName, (byType.agency.get(r.agencyName) || []).concat(r));
-    if (r.agentName) byType.agent.set(r.agentName, (byType.agent.get(r.agentName) || []).concat(r));
-    if (r.hospitalName) byType.hospital.set(r.hospitalName, (byType.hospital.get(r.hospitalName) || []).concat(r));
+    types.forEach((t) => {
+      const name = r[ENTITY[t].field];
+      if (name) byType[t].set(name, (byType[t].get(name) || []).concat(r));
+    });
   });
   const items = [];
-  ["agency", "agent", "hospital"].forEach((type) => {
+  types.forEach((type) => {
     byType[type].forEach((rows, name) => {
       if (q && !name.toLowerCase().includes(q)) return;
-      const cats = type === "hospital" ? HOSPITAL_CATEGORIES : AGENCY_CATEGORIES;
-      const scores = rows.map((r) => weighted(cats, type === "hospital" ? r.hospitalRatings : r.agencyAgentRatings));
+      const cats = ENTITY[type].categories;
+      const scores = rows.map((r) => weighted(cats, r[ENTITY[type].ratings]));
       const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
       items.push({ type, name, count: rows.length, avg });
     });
@@ -169,6 +208,7 @@ function render() {
   if (state.view === "home") { root.innerHTML = headerHtml(true) + toastHtml() + landingHtml() + footerHtml(); attachFooterHandlers(); attachLandingHandlers(); return; }
   if (state.view === "gate") { root.innerHTML = headerHtml() + toastHtml() + gateHtml() + footerHtml(); attachFooterHandlers(); attachGateHandlers(); return; }
   if (state.view === "setpw") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${setPasswordHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachSetPasswordHandlers(); return; }
+  if (state.view === "employment") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${employmentHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachEmploymentHandlers(); return; }
   if (state.view === "admin") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body" id="admin-root"></div>` + footerHtml(); attachFooterHandlers(); renderAdmin(); return; }
   root.innerHTML = headerHtml() + toastHtml() + navHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
   attachFooterHandlers();
@@ -359,11 +399,16 @@ function landingHtml() {
 
     <section class="lp-section">
       <div class="lp-label">WHAT YOU CAN RATE</div>
-      <h3 class="lp-h">Full-time staff or locum contractor — rate the assignment end to end.</h3>
+      <h3 class="lp-h">Full-time staff or locum contractor — rate the job end to end.</h3>
+      <p class="lp-body">Tell us how you're working and you get the right review form: staff CRNAs rate their anesthesia group and hospital; locums rate the agency, the agent, and the hospital.</p>
       <div class="feature-grid">
         <div class="feature f-hospital">
-          <div class="feature-kicker">HOSPITALS &amp; ANESTHESIA GROUPS</div>
-          <p>Case mix and acuity, staffing and backup, equipment, culture toward outside staff, onboarding, schedule reliability, and practice autonomy — independent, supervised, or medically directed.</p>
+          <div class="feature-kicker">HOSPITALS</div>
+          <p>Case mix and acuity, staffing and backup, equipment, culture, how the chief and leadership treat you, onboarding, schedule reliability, lunches and breaks, free meals, and practice autonomy.</p>
+        </div>
+        <div class="feature f-group">
+          <div class="feature-kicker">ANESTHESIA GROUPS</div>
+          <p>For full-time and part-time staff: compensation and benefits, chief and leadership, scheduling and call burden, staffing and workload, respect for CRNAs, and practice autonomy.</p>
         </div>
         <div class="feature f-agency">
           <div class="feature-kicker">AGENCIES</div>
@@ -381,7 +426,7 @@ function landingHtml() {
       <ol class="step-list">
         <li><span class="step-n">1</span><div><strong>First time here — get verified.</strong> Submit your name, NBCRNA number, and contact information. An admin reviews it personally.</div></li>
         <li><span class="step-n">2</span><div><strong>Create your password.</strong> Once approved, a one-time email link signs you in to set a password. After that, it's just email and password — no more links.</div></li>
-        <li><span class="step-n">3</span><div><strong>Search, then contribute.</strong> Look up any facility, agency, or agent by name, and post your own rated review of the places you've worked.</div></li>
+        <li><span class="step-n">3</span><div><strong>Choose how you work, then contribute.</strong> Pick full-time/part-time staff or locum, look up any hospital, group, agency, or agent by name, and post your own rated review of the places you've worked.</div></li>
       </ol>
     </section>
 
@@ -475,7 +520,7 @@ function attachSetPasswordHandlers() {
     try {
       await api("/api/auth/set-password", { method: "POST", body: { password: pw } });
       state.user.hasPassword = true;
-      state.view = "app";
+      state.view = nextViewAfterAuth();
       flash("Password saved. You can sign in with it from now on.");
     } catch {
       errEl.textContent = "Couldn't save that password. Try again.";
@@ -484,7 +529,44 @@ function attachSetPasswordHandlers() {
   document.getElementById("pw-submit").onclick = submit;
   document.getElementById("pw-confirm").onkeydown = (e) => { if (e.key === "Enter") submit(); };
   const skip = document.getElementById("pw-skip");
-  if (skip) skip.onclick = () => { state.view = "app"; render(); };
+  if (skip) skip.onclick = () => { state.view = nextViewAfterAuth(); render(); };
+}
+function employmentHtml() {
+  const current = state.user.employmentType;
+  const card = (type, title, desc) => `
+    <button type="button" class="choice-card${current === type ? " active" : ""}" data-employment="${type}">
+      <div class="choice-title">${title}</div>
+      <div class="choice-desc">${desc}</div>
+    </button>`;
+  return `
+    <div class="card" style="max-width:560px">
+      <div class="section-label">${current ? "CHANGE HOW YOU'RE WORKING" : "HOW ARE YOU WORKING RIGHT NOW?"}</div>
+      <p class="hint-text" style="margin-top:0">This decides what you review. You can change it any time from My reviews.</p>
+      <div class="choice-grid">
+        ${card("staff", "Full-time / part-time staff", "W-2 employee of a hospital or anesthesia group. You'll review the <strong>anesthesia group</strong> and the <strong>hospital</strong>.")}
+        ${card("locum", "Locum / 1099 contractor", "Working assignments through an agency. You'll review the <strong>agency</strong>, your <strong>agent</strong>, and the <strong>hospital</strong>.")}
+      </div>
+      <div id="employment-error" class="error-text"></div>
+      ${current ? `<button type="button" class="link-btn" id="employment-cancel">Keep it as ${esc(EMPLOYMENT[current].label)}</button>` : ""}
+    </div>`;
+}
+function attachEmploymentHandlers() {
+  document.querySelectorAll("[data-employment]").forEach((btn) => {
+    btn.onclick = async () => {
+      const type = btn.dataset.employment;
+      try {
+        await api("/api/auth/employment", { method: "POST", body: { employmentType: type } });
+        state.user.employmentType = type;
+        resetForms();
+        state.view = "app";
+        flash(`Set to ${EMPLOYMENT[type].label}. You can review ${EMPLOYMENT[type].reviews}.`);
+      } catch {
+        document.getElementById("employment-error").textContent = "Couldn't save that. Try again.";
+      }
+    };
+  });
+  const cancel = document.getElementById("employment-cancel");
+  if (cancel) cancel.onclick = () => { state.view = "app"; render(); };
 }
 function requestFormHtml() {
   return `
@@ -578,7 +660,7 @@ function attachGateHandlers() {
 function searchHtml() {
   const results = searchResults();
   return `
-    <input class="search-input" id="search-box" placeholder="Search an agency, agent, or hospital…" value="${esc(state.query)}" />
+    <input class="search-input" id="search-box" placeholder="Search a hospital, anesthesia group, agency, or agent…" value="${esc(state.query)}" />
     <div id="search-results">${searchResultsHtml(results)}</div>`;
 }
 function searchResultsHtml(results) {
@@ -624,23 +706,26 @@ function attachResultClickHandlers() {
 
 function detailHtml() {
   const { type, name } = state.detail;
+  const ent = ENTITY[type];
   const isHospital = type === "hospital";
-  const field = type === "agency" ? "agencyName" : type === "agent" ? "agentName" : "hospitalName";
-  const rows = state.reviews.filter((r) => r[field] === name).sort((a, b) => b.date.localeCompare(a.date));
-  const categories = isHospital ? HOSPITAL_CATEGORIES : AGENCY_CATEGORIES;
-  const scores = rows.map((r) => weighted(categories, isHospital ? r.hospitalRatings : r.agencyAgentRatings));
+  const rows = state.reviews.filter((r) => r[ent.field] === name).sort((a, b) => b.date.localeCompare(a.date));
+  const categories = ent.categories;
+  const scores = rows.map((r) => weighted(categories, r[ent.ratings]));
   const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
-  const payRows = rows.filter((r) => r.payRate != null && !isHospital);
+  const payRows = rows.filter((r) => r.payRate != null && ent.hasPay);
   const avgPay = payRows.length ? payRows.reduce((a, b) => a + b.payRate, 0) / payRows.length : null;
 
   const rowsHtml = rows.map((r) => {
-    const ratings = isHospital ? r.hospitalRatings : r.agencyAgentRatings;
-    const comment = isHospital ? r.hospitalComment : r.agencyAgentComment;
-    const wouldReturn = isHospital ? r.hospitalWouldReturn : r.agencyAgentWouldReturn;
-    const pairedLabel = !isHospital && type === "agency" && r.agentName ? `Agent: ${esc(r.agentName)}` :
-      !isHospital && type === "agent" && r.agencyName ? `Agency: ${esc(r.agencyName)}` : "";
+    const ratings = r[ent.ratings] || {};
+    const comment = r[ent.comment];
+    const wouldReturn = r[ent.ret];
+    const pairedLabel = type === "agency" && r.agentName ? `Agent: ${esc(r.agentName)}` :
+      type === "agent" && r.agencyName ? `Agency: ${esc(r.agencyName)}` :
+      type === "group" && r.hospitalName ? `Hospital: ${esc(r.hospitalName)}` :
+      type === "hospital" && r.groupName ? `Anesthesia group: ${esc(r.groupName)}` : "";
+    const roleLabel = r.employmentType && EMPLOYMENT[r.employmentType] ? EMPLOYMENT[r.employmentType].short : "";
     const isMine = state.user && r.reviewer.email === state.user.email;
-    const chips = categories.map((c) => `<span class="chip">${esc(c.label.split(" ")[0])} ${ratings[c.key] || 0}</span>`).join("");
+    const chips = categories.map((c) => `<span class="chip">${esc(c.label.split(" ")[0])} ${ratings[c.key] > 0 ? ratings[c.key] : "–"}</span>`).join("");
     return `
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
@@ -648,16 +733,45 @@ function detailHtml() {
           <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}</span>
         </div>
         ${pairedLabel ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">${pairedLabel}</div>` : ""}
-        ${!isHospital && r.payRate != null ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Pay: $${r.payRate}/hr (pay score ${payScore(r.payRate)}/5)</div>` : ""}
+        ${ent.hasPay && r.payRate != null ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Pay: $${r.payRate}/hr (pay score ${payScore(r.payRate)}/5)</div>` : ""}
         <div style="margin:6px 0">${chips}</div>
         <div style="margin:4px 0">${returnBadge(wouldReturn)}</div>
         ${comment ? `<p style="margin:6px 0">${esc(comment)}</p>` : ""}
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <p style="margin:0;font-size:12px;color:#6B756F">— ${esc(r.reviewer.name || "Anonymous CRNA")}, ${esc(r.reviewer.credentials)}</p>
+          <p style="margin:0;font-size:12px;color:#6B756F">— ${esc(r.reviewer.name || "Anonymous CRNA")}, ${esc(r.reviewer.credentials)}${roleLabel ? ` · ${roleLabel}` : ""}</p>
           ${isMine ? `<span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span>` : ""}
         </div>
       </div>`;
   }).join("");
+
+  // Running totals: cumulative average per category across every review on file for this name.
+  const categoryStats = categories.map((c) => {
+    const vals = rows.map((r) => (r[ent.ratings] || {})[c.key]).filter((v) => v > 0);
+    const catAvg = vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : null;
+    return { label: c.label, n: vals.length, avg: catAvg };
+  });
+  const returnField = ent.ret;
+  const returnTally = { Y: 0, Maybe: 0, N: 0 };
+  rows.forEach((r) => { if (r[returnField] in returnTally) returnTally[r[returnField]] += 1; });
+  const statsHtml = rows.length === 0 ? "" : `
+    <div class="card" style="margin-top:0">
+      <div class="section-label">CATEGORY AVERAGES · ${rows.length} REVIEW${rows.length !== 1 ? "S" : ""}</div>
+      <table class="stats-table">
+        ${categoryStats.map((st) => `
+          <tr>
+            <td class="stats-label">${esc(st.label)}</td>
+            <td class="stats-stars">${st.avg != null ? starsHtml(Math.round(st.avg), 13) : ""}</td>
+            <td class="stats-avg">${st.avg != null ? st.avg.toFixed(1) : "—"}</td>
+            <td class="stats-n">${st.n > 0 ? `n=${st.n}` : "no data"}</td>
+          </tr>`).join("")}
+      </table>
+      <div class="stats-return">
+        <span>Would ${isHospital ? "work here" : "work with them"} again:</span>
+        <span class="badge y">${returnTally.Y} YES</span>
+        <span class="badge maybe">${returnTally.Maybe} MAYBE</span>
+        <span class="badge n">${returnTally.N} NO</span>
+      </div>
+    </div>`;
 
   return `
     <button class="back-btn" id="detail-back">&larr; Back to search</button>
@@ -665,16 +779,18 @@ function detailHtml() {
       <div style="font-size:11px;letter-spacing:0.3px;color:${COLORS[type]};font-weight:700">${typeLabel(type).toUpperCase()}</div>
       <div style="font-family:'Special Elite',monospace;font-size:24px;margin:4px 0">${esc(name)}</div>
       ${rows.length > 0
-        ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${starsHtml(Math.round(avg), 18)}<span style="font-weight:700">${avg.toFixed(2)}</span><span style="color:#6B756F;font-size:13px">${rows.length} review${rows.length !== 1 ? "s" : ""}</span>${avgPay != null ? `<span style="color:#6B756F;font-size:13px">· avg $${Math.round(avgPay)}/hr</span>` : ""}</div>`
+        ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${starsHtml(Math.round(avg), 18)}<span style="font-weight:700">${avg.toFixed(2)}</span><span style="color:#6B756F;font-size:13px">overall · ${rows.length} review${rows.length !== 1 ? "s" : ""}</span>${avgPay != null ? `<span style="color:#6B756F;font-size:13px">· avg $${Math.round(avgPay)}/hr quoted</span>` : ""}</div>`
         : `<div style="color:#6B756F;font-size:13px">No reviews yet.</div>`}
     </div>
+    ${statsHtml}
+    <div class="section-label" style="margin:14px 0 8px">INDIVIDUAL REVIEWS</div>
     ${rowsHtml}`;
 }
 
 // ---------- submit ----------
 
 function categoryRowHtml(cat, group) {
-  const val = group === "aa" ? aaForm.ratings[cat.key] : hospForm.ratings[cat.key];
+  const val = FORMS[group].form.ratings[cat.key];
   const anchors = cat.anchors.map(([s, t]) => `<li><span class="score">${s} —</span><span>${esc(t)}</span></li>`).join("");
   return `
     <div class="category-row">
@@ -697,13 +813,28 @@ function returnToggleHtml(value, group) {
 }
 
 function submitHtml() {
-  return `
+  const mode = state.user.employmentType === "staff" ? "staff" : "locum";
+  const header = `
     <div class="card">
       <div class="section-label">POSTING AS</div>
       <div style="font-family:'Special Elite',monospace;font-size:17px">${esc(state.user.name)}, ${esc(state.user.credentials)}</div>
       <p class="hint-text">Tied to your verified account — real names keep the ratings honest.</p>
-    </div>
-
+      <p class="hint-text" style="margin-top:6px">Reviewing as <strong>${esc(EMPLOYMENT[mode].label)}</strong> — ${EMPLOYMENT[mode].reviews}.
+        <button type="button" class="inline-link" id="switch-employment">Switch</button></p>
+    </div>`;
+  const groupCard = `
+    <div class="card border-group" style="margin-bottom:12px">
+      <div class="section-label" style="color:${COLORS.group}">ANESTHESIA GROUP</div>
+      <input id="grp-name" placeholder="Anesthesia group / practice name" value="${esc(grpForm.name)}" />
+      <div style="margin-top:14px">${GROUP_CATEGORIES.map((c) => categoryRowHtml(c, "grp")).join("")}</div>
+      <div class="score-row"><span style="font-size:12px;color:#6B756F">Weighted score</span><span class="big" id="grp-score">${weighted(GROUP_CATEGORIES, grpForm.ratings).toFixed(2)}</span></div>
+      <div style="margin-top:8px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px">Would you work for this group again?</div>
+        ${returnToggleHtml(grpForm.wouldReturn, "grp")}
+      </div>
+      <textarea id="grp-comment" style="margin-top:10px" rows="3" placeholder="Anything else another CRNA should know about this group?">${esc(grpForm.comment)}</textarea>
+    </div>`;
+  const agencyCard = `
     <div class="card border-agency" style="margin-bottom:12px">
       <div class="section-label" style="color:${COLORS.agency}">AGENCY &amp; AGENT</div>
       <input id="aa-agency" placeholder="Agency name" value="${esc(aaForm.agencyName)}" />
@@ -721,8 +852,8 @@ function submitHtml() {
         ${returnToggleHtml(aaForm.wouldReturn, "aa")}
       </div>
       <textarea id="aa-comment" style="margin-top:10px" rows="3" placeholder="Anything else another CRNA should know about this agency/agent?">${esc(aaForm.comment)}</textarea>
-    </div>
-
+    </div>`;
+  const hospitalCard = `
     <div class="card border-hospital" style="margin-bottom:12px">
       <div class="section-label" style="color:${COLORS.hospital}">HOSPITAL</div>
       <input id="hosp-name" placeholder="Hospital / facility name" value="${esc(hospForm.name)}" />
@@ -733,54 +864,66 @@ function submitHtml() {
         ${returnToggleHtml(hospForm.wouldReturn, "hosp")}
       </div>
       <textarea id="hosp-comment" style="margin-top:10px" rows="3" placeholder="Anything else another CRNA should know about this hospital?">${esc(hospForm.comment)}</textarea>
-    </div>
-
+    </div>`;
+  return header + (mode === "staff" ? groupCard : agencyCard) + hospitalCard + `
     <div id="submit-error" class="error-text"></div>
     <button class="primary-btn" id="submit-btn">Post review</button>`;
 }
 
 function attachSubmitHandlers() {
-  document.getElementById("aa-agency").oninput = (e) => (aaForm.agencyName = e.target.value);
-  document.getElementById("aa-agent").oninput = (e) => (aaForm.agentName = e.target.value);
-  document.getElementById("aa-pay").oninput = (e) => {
-    aaForm.payRate = e.target.value;
-    const ps = payScore(aaForm.payRate);
-    document.getElementById("aa-pay-score").textContent = ps != null ? `Pay score: ${ps}/5` : "";
-  };
-  document.getElementById("aa-comment").oninput = (e) => (aaForm.comment = e.target.value);
+  const mode = state.user.employmentType === "staff" ? "staff" : "locum";
+  const first = mode === "staff" ? "grp" : "aa";
+  document.getElementById("switch-employment").onclick = () => { state.view = "employment"; render(); };
+  if (mode === "locum") {
+    document.getElementById("aa-agency").oninput = (e) => (aaForm.agencyName = e.target.value);
+    document.getElementById("aa-agent").oninput = (e) => (aaForm.agentName = e.target.value);
+    document.getElementById("aa-pay").oninput = (e) => {
+      aaForm.payRate = e.target.value;
+      const ps = payScore(aaForm.payRate);
+      document.getElementById("aa-pay-score").textContent = ps != null ? `Pay score: ${ps}/5` : "";
+    };
+    document.getElementById("aa-comment").oninput = (e) => (aaForm.comment = e.target.value);
+  } else {
+    document.getElementById("grp-name").oninput = (e) => (grpForm.name = e.target.value);
+    document.getElementById("grp-comment").oninput = (e) => (grpForm.comment = e.target.value);
+  }
   document.getElementById("hosp-name").oninput = (e) => (hospForm.name = e.target.value);
   document.getElementById("hosp-comment").oninput = (e) => (hospForm.comment = e.target.value);
 
-  ["aa", "hosp"].forEach((group) => {
-    const cats = group === "aa" ? AGENCY_CATEGORIES : HOSPITAL_CATEGORIES;
-    cats.forEach((c) => attachSubmitHandlers.rebindStars(group, c.key));
+  [first, "hosp"].forEach((group) => {
+    FORMS[group].categories.forEach((c) => attachSubmitHandlers.rebindStars(group, c.key));
+    rebindReturnToggle(group);
   });
-  rebindReturnToggle("aa");
-  rebindReturnToggle("hosp");
 
   document.getElementById("submit-btn").onclick = async () => {
     const errEl = document.getElementById("submit-error");
-    if (!aaForm.agencyName.trim() || !hospForm.name.trim()) { errEl.textContent = "An agency name and a hospital name are required."; return; }
-    const aaRated = AGENCY_CATEGORIES.every((c) => aaForm.ratings[c.key] > 0);
+    const firstName = mode === "staff" ? grpForm.name : aaForm.agencyName;
+    if (!firstName.trim() || !hospForm.name.trim()) {
+      errEl.textContent = mode === "staff" ? "An anesthesia group name and a hospital name are required." : "An agency name and a hospital name are required.";
+      return;
+    }
+    const firstRated = FORMS[first].categories.every((c) => FORMS[first].form.ratings[c.key] > 0);
     const hospRated = HOSPITAL_CATEGORIES.every((c) => hospForm.ratings[c.key] > 0);
-    if (!aaRated || !hospRated) { errEl.textContent = "Give a star rating for every category in both sections."; return; }
+    if (!firstRated || !hospRated) { errEl.textContent = "Give a star rating for every category in both sections."; return; }
     errEl.textContent = "";
-    try {
-      await api("/api/reviews", {
-        method: "POST",
-        body: {
-          agencyName: aaForm.agencyName.trim(),
-          agentName: aaForm.agentName.trim(),
-          payRate: aaForm.payRate === "" ? null : Number(aaForm.payRate),
-          agencyAgentRatings: aaForm.ratings,
-          agencyAgentWouldReturn: aaForm.wouldReturn,
-          agencyAgentComment: aaForm.comment.trim(),
-          hospitalName: hospForm.name.trim(),
-          hospitalRatings: hospForm.ratings,
-          hospitalWouldReturn: hospForm.wouldReturn,
-          hospitalComment: hospForm.comment.trim(),
-        },
+    const body = {
+      employmentType: mode,
+      hospitalName: hospForm.name.trim(),
+      hospitalRatings: hospForm.ratings,
+      hospitalWouldReturn: hospForm.wouldReturn,
+      hospitalComment: hospForm.comment.trim(),
+    };
+    if (mode === "staff") {
+      Object.assign(body, { groupName: grpForm.name.trim(), groupRatings: grpForm.ratings, groupWouldReturn: grpForm.wouldReturn, groupComment: grpForm.comment.trim() });
+    } else {
+      Object.assign(body, {
+        agencyName: aaForm.agencyName.trim(), agentName: aaForm.agentName.trim(),
+        payRate: aaForm.payRate === "" ? null : Number(aaForm.payRate),
+        agencyAgentRatings: aaForm.ratings, agencyAgentWouldReturn: aaForm.wouldReturn, agencyAgentComment: aaForm.comment.trim(),
       });
+    }
+    try {
+      await api("/api/reviews", { method: "POST", body });
       await loadReviews();
       resetForms();
       state.tab = "search";
@@ -796,7 +939,7 @@ function rebindReturnToggle(group) {
   document.querySelectorAll(`#return-${group} [data-return]`).forEach((btn) => {
     btn.onclick = () => {
       const [g, v] = btn.dataset.return.split("::");
-      const form = g === "aa" ? aaForm : hospForm;
+      const form = FORMS[g].form;
       form.wouldReturn = v;
       document.getElementById(`return-${g}`).outerHTML = returnToggleHtml(v, g);
       rebindReturnToggle(g);
@@ -807,12 +950,11 @@ attachSubmitHandlers.rebindStars = function (group, key) {
   document.querySelectorAll(`#stars-${group}-${key} [data-rate]`).forEach((btn) => {
     btn.onclick = () => {
       const [g, k, n] = btn.dataset.rate.split("::");
-      const form = g === "aa" ? aaForm : hospForm;
+      const form = FORMS[g].form;
       form.ratings[k] = Number(n);
       document.getElementById(`stars-${g}-${k}`).innerHTML = starsInteractiveHtml(form.ratings[k], g, k);
       attachSubmitHandlers.rebindStars(g, k);
-      const cats = g === "aa" ? AGENCY_CATEGORIES : HOSPITAL_CATEGORIES;
-      document.getElementById(g === "aa" ? "aa-score" : "hosp-score").textContent = weighted(cats, form.ratings).toFixed(2);
+      document.getElementById(`${g}-score`).textContent = weighted(FORMS[g].categories, form.ratings).toFixed(2);
     };
   });
 };
@@ -826,8 +968,12 @@ function mineHtml() {
       <div>
         <div class="section-label" style="margin-bottom:2px">ACCOUNT</div>
         <div style="font-size:13px;color:#6B756F">${esc(state.user.email)}</div>
+        <div style="font-size:13px;color:#6B756F">Working as: <strong>${esc(state.user.employmentType && EMPLOYMENT[state.user.employmentType] ? EMPLOYMENT[state.user.employmentType].label : "not set")}</strong></div>
       </div>
-      <button class="tiny-btn" id="change-pw-btn">Change password</button>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="tiny-btn" id="change-employment-btn">Change work type</button>
+        <button class="tiny-btn" id="change-pw-btn">Change password</button>
+      </div>
     </div>`;
   if (mine.length === 0) {
     return account + `<div class="empty-box"><p style="margin:0">No reviews posted yet under ${esc(state.user.name)}. Head to "Post a review" to file your first case.</p></div>`;
@@ -838,6 +984,17 @@ function mineHtml() {
         <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}</span>
         <span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span>
       </div>
+      ${r.groupName ? `
+      <div style="margin-bottom:10px;padding-left:10px;border-left:3px solid ${COLORS.group}">
+        <div style="font-size:11px;color:${COLORS.group};font-weight:700">ANESTHESIA GROUP: ${esc(r.groupName)}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin:4px 0">
+          ${starsHtml(Math.round(weighted(GROUP_CATEGORIES, r.groupRatings)), 14)}
+          <span style="font-size:13px;font-weight:700">${weighted(GROUP_CATEGORIES, r.groupRatings).toFixed(2)}</span>
+        </div>
+        ${returnBadge(r.groupWouldReturn)}
+        ${r.groupComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.groupComment)}</p>` : ""}
+      </div>` : ""}
+      ${r.agencyName ? `
       <div style="margin-bottom:10px;padding-left:10px;border-left:3px solid ${COLORS.agency}">
         <div style="font-size:11px;color:${COLORS.agency};font-weight:700">AGENCY: ${esc(r.agencyName)}${r.agentName ? ` · AGENT: ${esc(r.agentName)}` : ""}</div>
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0">
@@ -847,7 +1004,7 @@ function mineHtml() {
         </div>
         ${returnBadge(r.agencyAgentWouldReturn)}
         ${r.agencyAgentComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.agencyAgentComment)}</p>` : ""}
-      </div>
+      </div>` : ""}
       <div style="padding-left:10px;border-left:3px solid ${COLORS.hospital}">
         <div style="font-size:11px;color:${COLORS.hospital};font-weight:700">HOSPITAL: ${esc(r.hospitalName)}</div>
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0">
@@ -862,6 +1019,7 @@ function mineHtml() {
 function attachMineHandlers() {
   attachDeleteHandlers();
   document.getElementById("change-pw-btn").onclick = () => { state.view = "setpw"; render(); };
+  document.getElementById("change-employment-btn").onclick = () => { state.view = "employment"; render(); };
 }
 
 function attachDeleteHandlers() {
