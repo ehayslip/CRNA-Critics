@@ -90,6 +90,7 @@ textarea { resize: vertical; }
 .badge.n { background: #8C3A32; }
 .badge.maybe { background: #B87F1E; }
 .badge.anon { background: #5B6660; }
+.edit-banner { border-left: 4px solid #E3A73B; background: #FFF9EE; }
 .anon-row { margin-top: 12px; padding-top: 10px; border-top: 1px solid #EEF2ED; }
 
 .chip { font-size: 11px; color: #5B6660; margin-right: 10px; }
