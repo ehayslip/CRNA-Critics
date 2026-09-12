@@ -56,5 +56,6 @@ addColumnIfMissing("reviews", "group_would_return", "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("reviews", "group_comment", "TEXT NOT NULL DEFAULT ''");
 // Anonymous reviews hide the reviewer's name from other members (still tied to the account).
 addColumnIfMissing("reviews", "anonymous", "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("reviews", "edited_at", "TEXT");
 
 module.exports = db;
