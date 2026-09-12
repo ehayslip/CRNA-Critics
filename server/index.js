@@ -34,7 +34,7 @@ function requireSession(req, res, next) {
   if (!payload || !payload.email) return res.status(401).json({ error: "not_signed_in" });
   const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(payload.email);
   if (!row || row.status !== "approved") return res.status(401).json({ error: "not_approved" });
-  req.user = { email: row.email, name: row.name, credentials: "CRNA", hasPassword: !!row.password_hash };
+  req.user = { email: row.email, name: row.name, credentials: "CRNA", hasPassword: !!row.password_hash, employmentType: row.employment_type || null };
   next();
 }
 
@@ -187,6 +187,14 @@ app.post("/api/auth/set-password", requireSession, (req, res) => {
   res.json({ ok: true });
 });
 
+const EMPLOYMENT_TYPES = ["locum", "staff"];
+app.post("/api/auth/employment", requireSession, (req, res) => {
+  const employmentType = String(req.body?.employmentType || "");
+  if (!EMPLOYMENT_TYPES.includes(employmentType)) return res.status(400).json({ error: "bad_type" });
+  db.prepare("UPDATE access_requests SET employment_type = ? WHERE email = ?").run(employmentType, req.user.email);
+  res.json({ ok: true, employmentType });
+});
+
 app.post("/api/auth/request-link", async (req, res) => {
   const email = String(req.body?.email || "").trim().toLowerCase();
   if (!email) return res.status(400).json({ error: "missing_email" });
@@ -288,6 +296,11 @@ function rowToReview(r) {
     hospitalRatings: JSON.parse(r.hospital_ratings),
     hospitalWouldReturn: r.hospital_would_return,
     hospitalComment: r.hospital_comment,
+    employmentType: r.employment_type || "locum",
+    groupName: r.group_name || "",
+    groupRatings: JSON.parse(r.group_ratings || "{}"),
+    groupWouldReturn: r.group_would_return || "",
+    groupComment: r.group_comment || "",
   };
 }
 
@@ -298,31 +311,39 @@ app.get("/api/reviews", requireSession, (req, res) => {
 
 app.post("/api/reviews", requireSession, (req, res) => {
   const b = req.body || {};
-  if (!b.agencyName || !b.hospitalName || !b.agencyAgentRatings || !b.hospitalRatings) {
-    return res.status(400).json({ error: "missing_fields" });
-  }
+  const employmentType = b.employmentType === "staff" ? "staff" : "locum";
+  if (!b.hospitalName || !b.hospitalRatings) return res.status(400).json({ error: "missing_fields" });
+  if (employmentType === "staff" && (!b.groupName || !b.groupRatings)) return res.status(400).json({ error: "missing_fields" });
+  if (employmentType === "locum" && (!b.agencyName || !b.agencyAgentRatings)) return res.status(400).json({ error: "missing_fields" });
+  const isStaff = employmentType === "staff";
   const id = crypto.randomUUID();
   db.prepare(
     `INSERT INTO reviews (id, date, reviewer_name, reviewer_credentials, reviewer_email,
       agency_name, agent_name, agency_agent_ratings, agency_agent_would_return, agency_agent_comment, pay_rate,
-      hospital_name, hospital_ratings, hospital_would_return, hospital_comment)
-     VALUES (?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?)`
+      hospital_name, hospital_ratings, hospital_would_return, hospital_comment,
+      employment_type, group_name, group_ratings, group_would_return, group_comment)
+     VALUES (?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?)`
   ).run(
     id,
     new Date().toISOString(),
     req.user.name,
     req.user.credentials,
     req.user.email,
-    b.agencyName,
-    b.agentName || "",
-    JSON.stringify(b.agencyAgentRatings),
-    b.agencyAgentWouldReturn || "",
-    b.agencyAgentComment || "",
-    b.payRate === "" || b.payRate == null ? null : Number(b.payRate),
+    isStaff ? "" : b.agencyName,
+    isStaff ? "" : (b.agentName || ""),
+    JSON.stringify(isStaff ? {} : b.agencyAgentRatings),
+    isStaff ? "" : (b.agencyAgentWouldReturn || ""),
+    isStaff ? "" : (b.agencyAgentComment || ""),
+    isStaff || b.payRate === "" || b.payRate == null ? null : Number(b.payRate),
     b.hospitalName,
     JSON.stringify(b.hospitalRatings),
     b.hospitalWouldReturn || "",
-    b.hospitalComment || ""
+    b.hospitalComment || "",
+    employmentType,
+    isStaff ? b.groupName : "",
+    JSON.stringify(isStaff ? b.groupRatings : {}),
+    isStaff ? (b.groupWouldReturn || "") : "",
+    isStaff ? (b.groupComment || "") : ""
   );
   const row = db.prepare("SELECT * FROM reviews WHERE id = ?").get(id);
   res.json({ review: rowToReview(row) });
