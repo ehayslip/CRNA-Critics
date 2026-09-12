@@ -42,9 +42,17 @@ db.exec(`
 `);
 
 // Lightweight migrations for columns added after the initial schema.
-const accessCols = db.prepare("PRAGMA table_info(access_requests)").all().map((c) => c.name);
-if (!accessCols.includes("password_hash")) {
-  db.exec("ALTER TABLE access_requests ADD COLUMN password_hash TEXT");
+function addColumnIfMissing(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
+addColumnIfMissing("access_requests", "password_hash", "TEXT");
+addColumnIfMissing("access_requests", "employment_type", "TEXT"); // 'locum' | 'staff'
+// Staff (W-2) reviews rate an anesthesia group instead of an agency/agent.
+addColumnIfMissing("reviews", "employment_type", "TEXT NOT NULL DEFAULT 'locum'");
+addColumnIfMissing("reviews", "group_name", "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("reviews", "group_ratings", "TEXT NOT NULL DEFAULT '{}'");
+addColumnIfMissing("reviews", "group_would_return", "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("reviews", "group_comment", "TEXT NOT NULL DEFAULT ''");
 
 module.exports = db;
