@@ -77,14 +77,14 @@ async function api(path, opts = {}) {
 // ---------- state ----------
 
 const state = {
-  view: "loading", // loading | home | gate | app | admin
+  view: "loading", // loading | home | gate | setpw | app | admin
   user: null,
   reviews: [],
   tab: "search",
   query: "",
   detail: null,
   toast: "",
-  gateMode: "signin", // signin | request
+  gateMode: "signin", // signin | request | link
   adminUnlocked: false,
   adminRequests: [],
 };
@@ -113,7 +113,10 @@ async function init() {
   try {
     const data = await api("/api/me");
     state.user = data.user;
-    state.view = "app";
+    const params = new URLSearchParams(window.location.search);
+    const cameFromLink = params.get("setpw") === "1";
+    if (cameFromLink) window.history.replaceState({}, "", "/");
+    state.view = cameFromLink || !state.user.hasPassword ? "setpw" : "app";
     await loadReviews();
   } catch {
     state.view = "home";
@@ -165,6 +168,7 @@ function render() {
   if (state.view === "loading") { root.innerHTML = `<div class="body"><p>Loading the chart room…</p></div>`; return; }
   if (state.view === "home") { root.innerHTML = headerHtml(true) + toastHtml() + landingHtml() + footerHtml(); attachFooterHandlers(); attachLandingHandlers(); return; }
   if (state.view === "gate") { root.innerHTML = headerHtml() + toastHtml() + gateHtml() + footerHtml(); attachFooterHandlers(); attachGateHandlers(); return; }
+  if (state.view === "setpw") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${setPasswordHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachSetPasswordHandlers(); return; }
   if (state.view === "admin") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body" id="admin-root"></div>` + footerHtml(); attachFooterHandlers(); renderAdmin(); return; }
   root.innerHTML = headerHtml() + toastHtml() + navHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
   attachFooterHandlers();
@@ -247,34 +251,74 @@ function renderTab() {
 
 function heroArtHtml() {
   return `
-  <svg class="hero-art" viewBox="0 0 340 210" role="img" aria-label="A verified CRNA review file">
-    <rect x="0" y="0" width="340" height="210" fill="#123C3A"/>
+  <svg class="hero-art" viewBox="0 0 480 300" role="img" aria-label="A shocked CRNA reading a bad contract rated one star out of five">
+    <rect x="0" y="0" width="480" height="300" fill="#123C3A"/>
     <g opacity="0.10">
-      <circle cx="292" cy="34" r="70" fill="#E3A73B"/>
-      <circle cx="34" cy="186" r="56" fill="#F2F4F1"/>
+      <circle cx="420" cy="40" r="90" fill="#E3A73B"/>
+      <circle cx="40" cy="270" r="70" fill="#F2F4F1"/>
     </g>
-    <!-- back file -->
-    <rect x="46" y="40" width="190" height="140" rx="3" fill="#0D2E2C"/>
-    <!-- main file card -->
-    <rect x="36" y="30" width="190" height="140" rx="3" fill="#F7F8F5"/>
-    <rect x="36" y="30" width="190" height="8" fill="#E3A73B"/>
-    <rect x="52" y="52" width="96" height="9" rx="1" fill="#123C3A"/>
-    <rect x="52" y="68" width="58" height="6" rx="1" fill="#9BA59E"/>
-    <text x="52" y="102" font-size="19" fill="#E3A73B" letter-spacing="3">★★★★</text>
-    <text x="128" y="102" font-size="19" fill="#D8DDD5" letter-spacing="3">★</text>
-    <rect x="52" y="118" width="146" height="5" rx="1" fill="#C9D2C6"/>
-    <rect x="52" y="130" width="160" height="5" rx="1" fill="#C9D2C6"/>
-    <rect x="52" y="142" width="112" height="5" rx="1" fill="#C9D2C6"/>
-    <!-- beware stamp -->
-    <g transform="rotate(-9 236 140)">
-      <rect x="186" y="122" width="112" height="30" fill="none" stroke="#8C3A32" stroke-width="2.5"/>
-      <text x="242" y="143" text-anchor="middle" font-size="14" font-weight="700" fill="#8C3A32" letter-spacing="1.5">BEWARE</text>
+
+    <!-- body: scrub top -->
+    <path d="M78 300 C80 240 100 205 150 190 C200 205 220 240 222 300 Z" fill="#5B8DB8"/>
+    <path d="M150 190 L136 208 L150 226 L164 208 Z" fill="#3F6F97"/>
+    <!-- arms reaching for the contract -->
+    <path d="M205 215 L262 165" stroke="#5B8DB8" stroke-width="24" stroke-linecap="round" fill="none"/>
+    <path d="M198 262 L262 240" stroke="#5B8DB8" stroke-width="24" stroke-linecap="round" fill="none"/>
+    <!-- stethoscope -->
+    <path d="M128 196 Q150 240 172 196" stroke="#2B2B2B" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <circle cx="150" cy="243" r="8" fill="#B8BDB9" stroke="#2B2B2B" stroke-width="2.5"/>
+
+    <!-- neck + head -->
+    <rect x="138" y="158" width="24" height="26" fill="#D9A47C"/>
+    <circle cx="150" cy="122" r="46" fill="#E0AC84"/>
+    <circle cx="104" cy="126" r="8" fill="#D9A47C"/>
+    <circle cx="196" cy="126" r="8" fill="#D9A47C"/>
+    <!-- scrub cap -->
+    <path d="M104 102 C104 66 128 56 150 56 C172 56 196 66 196 102 C180 94 120 94 104 102 Z" fill="#5B8DB8"/>
+    <path d="M104 102 C120 94 180 94 196 102 L196 107 C180 99 120 99 104 107 Z" fill="#3F6F97"/>
+    <path d="M194 92 L214 84 L208 100 Z" fill="#3F6F97"/>
+    <!-- raised eyebrows -->
+    <path d="M119 114 Q132 104 146 113" stroke="#4A2E1E" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <path d="M155 113 Q169 104 182 114" stroke="#4A2E1E" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <!-- wide eyes -->
+    <ellipse cx="133" cy="130" rx="12" ry="14" fill="#FFFFFF" stroke="#4A2E1E" stroke-width="2"/>
+    <ellipse cx="168" cy="130" rx="12" ry="14" fill="#FFFFFF" stroke="#4A2E1E" stroke-width="2"/>
+    <circle cx="137" cy="132" r="4.5" fill="#2B2B2B"/>
+    <circle cx="172" cy="132" r="4.5" fill="#2B2B2B"/>
+    <circle cx="138.5" cy="130" r="1.4" fill="#FFFFFF"/>
+    <circle cx="173.5" cy="130" r="1.4" fill="#FFFFFF"/>
+    <!-- open mouth -->
+    <ellipse cx="151" cy="155" rx="10" ry="11" fill="#4A2E1E"/>
+    <ellipse cx="151" cy="160" rx="6" ry="4.5" fill="#C9605A"/>
+    <!-- sweat drops -->
+    <path d="M206 92 C206 84 212 78 212 78 C212 78 218 84 218 92 A6 6 0 0 1 206 92 Z" fill="#9DD6F0"/>
+    <path d="M214 120 C214 114 219 109 219 109 C219 109 224 114 224 120 A5 5 0 0 1 214 120 Z" fill="#9DD6F0"/>
+
+    <!-- the contract -->
+    <g transform="rotate(-6 340 172)">
+      <rect x="258" y="74" width="168" height="200" rx="2" fill="#F7F8F5" stroke="#C9D2C6"/>
+      <rect x="258" y="74" width="168" height="7" fill="#8C3A32"/>
+      <text x="342" y="104" text-anchor="middle" font-family="'Special Elite', monospace" font-size="14" fill="#123C3A" letter-spacing="1.5">LOCUM CONTRACT</text>
+      <rect x="276" y="116" width="132" height="1.5" fill="#C9D2C6"/>
+      <text x="276" y="134" font-family="Inter, sans-serif" font-size="9.5" fill="#3C4A45">Guaranteed hours: <tspan font-weight="700" fill="#8C3A32">NONE</tspan></text>
+      <text x="276" y="150" font-family="Inter, sans-serif" font-size="9.5" fill="#3C4A45">Rate: <tspan font-weight="700" fill="#8C3A32">$40 below quoted</tspan></text>
+      <text x="276" y="166" font-family="Inter, sans-serif" font-size="9.5" fill="#3C4A45">Cancellation: <tspan font-weight="700" fill="#8C3A32">24h, unpaid</tspan></text>
+      <rect x="276" y="178" width="120" height="4" rx="1" fill="#D8DDD5"/>
+      <rect x="276" y="188" width="96" height="4" rx="1" fill="#D8DDD5"/>
+      <text x="276" y="224" font-size="20" fill="#E3A73B">★</text>
+      <text x="297" y="224" font-size="20" fill="#D8DDD5">★★★★</text>
+      <text x="408" y="224" text-anchor="end" font-family="'Special Elite', monospace" font-size="15" fill="#8C3A32">1 / 5</text>
+      <g transform="rotate(-12 350 250)">
+        <rect x="300" y="238" width="100" height="26" fill="none" stroke="#8C3A32" stroke-width="2.5"/>
+        <text x="350" y="256" text-anchor="middle" font-family="'Special Elite', monospace" font-size="14" fill="#8C3A32" letter-spacing="2">BEWARE</text>
+      </g>
     </g>
-    <!-- verification badge -->
-    <g transform="translate(232,26)">
-      <path d="M36 0 L70 13 V44 C70 63 54 75 36 82 C18 75 2 63 2 44 V13 Z" fill="#E3A73B"/>
-      <path d="M21 41 L31 52 L51 29" fill="none" stroke="#123C3A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-    </g>
+
+    <!-- hands gripping the paper -->
+    <circle cx="264" cy="163" r="13" fill="#E0AC84"/>
+    <circle cx="266" cy="240" r="13" fill="#E0AC84"/>
+    <path d="M258 154 L272 152 M256 162 L272 160 M258 170 L271 169" stroke="#D9A47C" stroke-width="2" stroke-linecap="round"/>
+    <path d="M260 231 L274 229 M258 239 L274 237 M260 247 L273 246" stroke="#D9A47C" stroke-width="2" stroke-linecap="round"/>
   </svg>`;
 }
 
@@ -336,7 +380,7 @@ function landingHtml() {
       <div class="lp-label">HOW IT WORKS</div>
       <ol class="step-list">
         <li><span class="step-n">1</span><div><strong>First time here — get verified.</strong> Submit your name, NBCRNA number, and contact information. An admin reviews it personally.</div></li>
-        <li><span class="step-n">2</span><div><strong>Get your sign-in link.</strong> Once approved, you sign in by email — no password to manage.</div></li>
+        <li><span class="step-n">2</span><div><strong>Create your password.</strong> Once approved, a one-time email link signs you in to set a password. After that, it's just email and password — no more links.</div></li>
         <li><span class="step-n">3</span><div><strong>Search, then contribute.</strong> Look up any facility, agency, or agent by name, and post your own rated review of the places you've worked.</div></li>
       </ol>
     </section>
@@ -376,21 +420,71 @@ function attachLandingHandlers() {
 function gateHtml() {
   const tabs = `
     <div class="nav">
-      <button class="nav-btn${state.gateMode === "signin" ? " active" : ""}" id="gate-signin-tab">Already a member</button>
+      <button class="nav-btn${state.gateMode !== "request" ? " active" : ""}" id="gate-signin-tab">Already a member</button>
       <button class="nav-btn${state.gateMode === "request" ? " active" : ""}" id="gate-request-tab">First time here</button>
     </div>`;
-  const body = state.gateMode === "signin" ? signinFormHtml() : requestFormHtml();
+  const body = state.gateMode === "request" ? requestFormHtml() : state.gateMode === "link" ? linkFormHtml() : signinFormHtml();
   return tabs + `<div class="body"><button class="back-btn" id="gate-home-btn" style="margin-bottom:10px">&larr; Back to home</button><div id="gate-body">${body}</div></div>`;
 }
 function signinFormHtml() {
   return `
     <div class="card">
       <div class="section-label">ALREADY A MEMBER — SIGN IN</div>
-      <p class="hint-text" style="margin-top:0">Already verified? Enter your email and we'll send you a one-tap sign-in link.</p>
-      <input id="signin-email" type="email" placeholder="Email" />
+      <p class="hint-text" style="margin-top:0">Sign in with the email you were verified under and your password.</p>
+      <input id="signin-email" type="email" placeholder="Email" autocomplete="email" />
+      <input id="signin-password" type="password" style="margin-top:8px" placeholder="Password" autocomplete="current-password" />
       <div id="gate-error" class="error-text"></div>
-      <button class="primary-btn" id="signin-submit" style="margin-top:10px">Email me a sign-in link</button>
+      <button class="primary-btn" id="signin-submit" style="margin-top:10px">Sign in</button>
+      <button type="button" class="link-btn" id="gate-forgot">Forgot your password? Email me a one-time sign-in link</button>
     </div>`;
+}
+function linkFormHtml() {
+  return `
+    <div class="card">
+      <div class="section-label">ONE-TIME SIGN-IN LINK</div>
+      <p class="hint-text" style="margin-top:0">Forgot your password, or never set one? Enter your verified email and we'll send a one-time link. Once you're in, you can create a new password.</p>
+      <input id="link-email" type="email" placeholder="Email" autocomplete="email" />
+      <div id="gate-error" class="error-text"></div>
+      <button class="primary-btn" id="link-submit" style="margin-top:10px">Email me a sign-in link</button>
+      <button type="button" class="link-btn" id="gate-back-signin">&larr; Back to password sign-in</button>
+    </div>`;
+}
+function setPasswordHtml() {
+  const first = !state.user.hasPassword;
+  return `
+    <div class="card" style="max-width:480px">
+      <div class="section-label">${first ? "CREATE YOUR PASSWORD" : "SET A NEW PASSWORD"}</div>
+      <p class="hint-text" style="margin-top:0">${first
+        ? `Welcome, ${esc(state.user.name)}. Create a password so you can sign in directly from now on — no more emailed links.`
+        : `You signed in with a one-time link. Set a new password now, or keep your current one.`}</p>
+      <input id="pw-new" type="password" placeholder="New password (8+ characters)" autocomplete="new-password" />
+      <input id="pw-confirm" type="password" style="margin-top:8px" placeholder="Confirm password" autocomplete="new-password" />
+      <div id="pw-error" class="error-text"></div>
+      <button class="primary-btn" id="pw-submit" style="margin-top:10px">Save password</button>
+      ${first ? "" : `<button type="button" class="link-btn" id="pw-skip">Keep my current password</button>`}
+    </div>`;
+}
+function attachSetPasswordHandlers() {
+  const submit = async () => {
+    const pw = document.getElementById("pw-new").value;
+    const confirm = document.getElementById("pw-confirm").value;
+    const errEl = document.getElementById("pw-error");
+    if (pw.length < 8) { errEl.textContent = "Use at least 8 characters."; return; }
+    if (pw !== confirm) { errEl.textContent = "Those passwords don't match."; return; }
+    errEl.textContent = "";
+    try {
+      await api("/api/auth/set-password", { method: "POST", body: { password: pw } });
+      state.user.hasPassword = true;
+      state.view = "app";
+      flash("Password saved. You can sign in with it from now on.");
+    } catch {
+      errEl.textContent = "Couldn't save that password. Try again.";
+    }
+  };
+  document.getElementById("pw-submit").onclick = submit;
+  document.getElementById("pw-confirm").onkeydown = (e) => { if (e.key === "Enter") submit(); };
+  const skip = document.getElementById("pw-skip");
+  if (skip) skip.onclick = () => { state.view = "app"; render(); };
 }
 function requestFormHtml() {
   return `
@@ -414,8 +508,33 @@ function attachGateHandlers() {
   document.getElementById("gate-request-tab").onclick = () => { state.gateMode = "request"; render(); };
 
   if (state.gateMode === "signin") {
-    document.getElementById("signin-submit").onclick = async () => {
+    document.getElementById("gate-forgot").onclick = () => { state.gateMode = "link"; render(); };
+    const signin = async () => {
       const email = document.getElementById("signin-email").value.trim();
+      const password = document.getElementById("signin-password").value;
+      const errEl = document.getElementById("gate-error");
+      if (!email || !password) { errEl.textContent = "Enter your email and password."; return; }
+      errEl.textContent = "";
+      try {
+        await api("/api/auth/login", { method: "POST", body: { email, password } });
+        state.gateMode = "signin";
+        await init();
+      } catch (e) {
+        const code = e.data && e.data.error;
+        if (code === "no_password") errEl.textContent = "This account doesn't have a password yet. Use the one-time link option below to sign in and create one.";
+        else if (code === "pending") errEl.textContent = "Your verification is still pending review.";
+        else if (code === "rejected") errEl.textContent = "This account wasn't approved. Contact the admin if you think that's a mistake.";
+        else if (code === "not_found") errEl.textContent = "No account found with that email. Use the 'First time here' tab to get verified.";
+        else if (code === "locked") errEl.textContent = "Too many attempts. Wait 15 minutes, or use the one-time link option below.";
+        else errEl.textContent = "Email or password didn't match.";
+      }
+    };
+    document.getElementById("signin-submit").onclick = signin;
+    document.getElementById("signin-password").onkeydown = (e) => { if (e.key === "Enter") signin(); };
+  } else if (state.gateMode === "link") {
+    document.getElementById("gate-back-signin").onclick = () => { state.gateMode = "signin"; render(); };
+    document.getElementById("link-submit").onclick = async () => {
+      const email = document.getElementById("link-email").value.trim();
       const errEl = document.getElementById("gate-error");
       if (!email) { errEl.textContent = "Enter your email."; return; }
       try {
@@ -702,10 +821,18 @@ attachSubmitHandlers.rebindStars = function (group, key) {
 
 function mineHtml() {
   const mine = myReviews();
+  const account = `
+    <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div>
+        <div class="section-label" style="margin-bottom:2px">ACCOUNT</div>
+        <div style="font-size:13px;color:#6B756F">${esc(state.user.email)}</div>
+      </div>
+      <button class="tiny-btn" id="change-pw-btn">Change password</button>
+    </div>`;
   if (mine.length === 0) {
-    return `<div class="empty-box"><p style="margin:0">No reviews posted yet under ${esc(state.user.name)}. Head to "Post a review" to file your first case.</p></div>`;
+    return account + `<div class="empty-box"><p style="margin:0">No reviews posted yet under ${esc(state.user.name)}. Head to "Post a review" to file your first case.</p></div>`;
   }
-  return mine.map((r) => `
+  return account + mine.map((r) => `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}</span>
@@ -732,7 +859,10 @@ function mineHtml() {
       </div>
     </div>`).join("");
 }
-function attachMineHandlers() { attachDeleteHandlers(); }
+function attachMineHandlers() {
+  attachDeleteHandlers();
+  document.getElementById("change-pw-btn").onclick = () => { state.view = "setpw"; render(); };
+}
 
 function attachDeleteHandlers() {
   document.querySelectorAll("[data-delete]").forEach((wrap) => {
