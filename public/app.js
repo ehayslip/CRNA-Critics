@@ -119,6 +119,7 @@ const state = {
 const aaForm = { agencyName: "", agentName: "", payRate: "", ratings: {}, wouldReturn: "", comment: "" };
 const grpForm = { name: "", ratings: {}, wouldReturn: "", comment: "" };
 const hospForm = { name: "", ratings: {}, wouldReturn: "", comment: "" };
+const postOpts = { anonymous: false };
 const FORMS = { aa: { form: aaForm, categories: AGENCY_CATEGORIES }, grp: { form: grpForm, categories: GROUP_CATEGORIES }, hosp: { form: hospForm, categories: HOSPITAL_CATEGORIES } };
 function resetForms() {
   AGENCY_CATEGORIES.forEach((c) => (aaForm.ratings[c.key] = 0));
@@ -127,6 +128,7 @@ function resetForms() {
   aaForm.agencyName = ""; aaForm.agentName = ""; aaForm.payRate = ""; aaForm.wouldReturn = ""; aaForm.comment = "";
   grpForm.name = ""; grpForm.wouldReturn = ""; grpForm.comment = "";
   hospForm.name = ""; hospForm.wouldReturn = ""; hospForm.comment = "";
+  postOpts.anonymous = false;
 }
 resetForms();
 
@@ -197,7 +199,7 @@ function searchResults() {
 function myReviews() {
   if (!state.user) return [];
   return state.reviews
-    .filter((r) => r.reviewer.email === state.user.email)
+    .filter((r) => r.isMine)
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
@@ -392,7 +394,7 @@ function landingHtml() {
       <p class="lp-body">Reviews are only worth what the reviewer is worth. Before an account can post or read reviews, an administrator verifies the applicant's name and NBCRNA number by hand. Anesthesiologists, AAs, recruiters, agency staff, and facility management are not eligible for accounts — this is a CRNA-only room, and it stays that way.</p>
       <ul class="check-list">
         <li>Name and NBCRNA credential reviewed by an admin before access is granted</li>
-        <li>Every review is tied to a verified account — no drive-by anonymous posts</li>
+        <li>Every review comes from a verified CRNA account — post under your name, or anonymously</li>
         <li>Reviews can't be bought, removed, or edited by the parties being rated</li>
       </ul>
     </section>
@@ -724,7 +726,7 @@ function detailHtml() {
       type === "group" && r.hospitalName ? `Hospital: ${esc(r.hospitalName)}` :
       type === "hospital" && r.groupName ? `Anesthesia group: ${esc(r.groupName)}` : "";
     const roleLabel = r.employmentType && EMPLOYMENT[r.employmentType] ? EMPLOYMENT[r.employmentType].short : "";
-    const isMine = state.user && r.reviewer.email === state.user.email;
+    const isMine = !!r.isMine;
     const chips = categories.map((c) => `<span class="chip">${esc(c.label.split(" ")[0])} ${ratings[c.key] > 0 ? ratings[c.key] : "–"}</span>`).join("");
     return `
       <div class="card">
@@ -738,7 +740,7 @@ function detailHtml() {
         <div style="margin:4px 0">${returnBadge(wouldReturn)}</div>
         ${comment ? `<p style="margin:6px 0">${esc(comment)}</p>` : ""}
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <p style="margin:0;font-size:12px;color:#6B756F">— ${esc(r.reviewer.name || "Anonymous CRNA")}, ${esc(r.reviewer.credentials)}${roleLabel ? ` · ${roleLabel}` : ""}</p>
+          <p style="margin:0;font-size:12px;color:#6B756F">— ${r.anonymous ? `Anonymous CRNA${isMine ? ` (you)` : ""}` : esc(r.reviewer.name || "Verified CRNA")}, ${esc(r.reviewer.credentials)}${roleLabel ? ` · ${roleLabel}` : ""}${r.anonymous ? ` · <span title="Posted anonymously by a verified CRNA">🔒 anonymous</span>` : ""}</p>
           ${isMine ? `<span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span>` : ""}
         </div>
       </div>`;
@@ -818,9 +820,12 @@ function submitHtml() {
     <div class="card">
       <div class="section-label">POSTING AS</div>
       <div style="font-family:'Special Elite',monospace;font-size:17px">${esc(state.user.name)}, ${esc(state.user.credentials)}</div>
-      <p class="hint-text">Tied to your verified account — real names keep the ratings honest.</p>
+      <p class="hint-text">Tied to your verified account. You can post under your name or anonymously.</p>
       <p class="hint-text" style="margin-top:6px">Reviewing as <strong>${esc(EMPLOYMENT[mode].label)}</strong> — ${EMPLOYMENT[mode].reviews}.
         <button type="button" class="inline-link" id="switch-employment">Switch</button></p>
+      <label class="checkbox-row anon-row"><input type="checkbox" id="post-anon" ${postOpts.anonymous ? "checked" : ""} />
+        <span><strong>Post anonymously.</strong> Your name is hidden from other members and shown as "Anonymous CRNA." The review is still tied to your verified account — nobody can pretend to be a CRNA — and you can delete it any time from My reviews.</span>
+      </label>
     </div>`;
   const groupCard = `
     <div class="card border-group" style="margin-bottom:12px">
@@ -874,6 +879,7 @@ function attachSubmitHandlers() {
   const mode = state.user.employmentType === "staff" ? "staff" : "locum";
   const first = mode === "staff" ? "grp" : "aa";
   document.getElementById("switch-employment").onclick = () => { state.view = "employment"; render(); };
+  document.getElementById("post-anon").onchange = (e) => (postOpts.anonymous = e.target.checked);
   if (mode === "locum") {
     document.getElementById("aa-agency").oninput = (e) => (aaForm.agencyName = e.target.value);
     document.getElementById("aa-agent").oninput = (e) => (aaForm.agentName = e.target.value);
@@ -908,6 +914,7 @@ function attachSubmitHandlers() {
     errEl.textContent = "";
     const body = {
       employmentType: mode,
+      anonymous: postOpts.anonymous,
       hospitalName: hospForm.name.trim(),
       hospitalRatings: hospForm.ratings,
       hospitalWouldReturn: hospForm.wouldReturn,
@@ -924,10 +931,11 @@ function attachSubmitHandlers() {
     }
     try {
       await api("/api/reviews", { method: "POST", body });
+      const wasAnon = postOpts.anonymous;
       await loadReviews();
       resetForms();
       state.tab = "search";
-      flash("Review posted.");
+      flash(wasAnon ? "Review posted anonymously." : "Review posted.");
       render();
     } catch (e) {
       errEl.textContent = "Something went wrong posting your review. Try again.";
@@ -981,7 +989,7 @@ function mineHtml() {
   return account + mine.map((r) => `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}</span>
+        <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}${r.anonymous ? ` · <span class="badge anon">🔒 ANONYMOUS</span>` : ""}</span>
         <span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span>
       </div>
       ${r.groupName ? `
