@@ -1,0 +1,20 @@
+{
+    "name": "crna-critics",
+    "version": "1.0.0",
+    "private": true,
+    "description": "CRNA Critics",
+    "main": "server/index.js",
+    "scripts": {
+          "start": "node server/index.js",
+          "dev": "node --watch server/index.js"
+    },
+    "engines": {
+          "node": ">=18"
+    },
+    "dependencies": {
+          "better-sqlite3": "^11.3.0",
+          "cookie-parser": "^1.4.6",
+          "dotenv": "^16.4.5",
+          "express": "^4.19.2"
+    }
+}
