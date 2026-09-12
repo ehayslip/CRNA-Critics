@@ -77,7 +77,7 @@ async function api(path, opts = {}) {
 // ---------- state ----------
 
 const state = {
-  view: "loading", // loading | gate | app | admin
+  view: "loading", // loading | home | gate | app | admin
   user: null,
   reviews: [],
   tab: "search",
@@ -116,7 +116,7 @@ async function init() {
     state.view = "app";
     await loadReviews();
   } catch {
-    state.view = "gate";
+    state.view = "home";
   }
   render();
 }
@@ -163,6 +163,7 @@ function myReviews() {
 
 function render() {
   if (state.view === "loading") { root.innerHTML = `<div class="body"><p>Loading the chart room…</p></div>`; return; }
+  if (state.view === "home") { root.innerHTML = headerHtml(true) + toastHtml() + landingHtml() + footerHtml(); attachFooterHandlers(); attachLandingHandlers(); return; }
   if (state.view === "gate") { root.innerHTML = headerHtml() + toastHtml() + gateHtml() + footerHtml(); attachFooterHandlers(); attachGateHandlers(); return; }
   if (state.view === "admin") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body" id="admin-root"></div>` + footerHtml(); attachFooterHandlers(); renderAdmin(); return; }
   root.innerHTML = headerHtml() + toastHtml() + navHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
@@ -179,12 +180,12 @@ function toastHtml() {
   return `<div id="toast-slot">${state.toast ? `<div class="toast">${esc(state.toast)}</div>` : ""}</div>`;
 }
 
-function headerHtml() {
+function headerHtml(compact) {
   return `
-    <div class="header">
+    <div class="header${compact ? " header-compact" : ""}">
       <div class="header-tab">CASE FILE</div>
       <h1 class="h1">CRNA Critics</h1>
-      <p class="tagline">Know before you sign. Rate the agency & agent, the pay, and the hospital — separately, honestly.</p>
+      ${compact ? "" : `<p class="tagline">Know before you sign. Rate the agency & agent, the pay, and the hospital — separately, honestly.</p>`}
     </div>`;
 }
 
@@ -197,7 +198,7 @@ function footerHtml() {
 }
 function attachFooterHandlers() {
   document.getElementById("admin-link-btn").onclick = () => {
-    state.view = state.view === "admin" ? (state.user ? "app" : "gate") : "admin";
+    state.view = state.view === "admin" ? (state.user ? "app" : "home") : "admin";
     render();
   };
 }
@@ -214,7 +215,7 @@ function attachNavHandlers() {
       const tab = btn.dataset.tab;
       if (tab === "signout") {
         await api("/api/auth/logout", { method: "POST" });
-        state.user = null; state.view = "gate"; state.tab = "search"; state.detail = null;
+        state.user = null; state.view = "home"; state.tab = "search"; state.detail = null;
         render();
         return;
       }
@@ -242,21 +243,149 @@ function renderTab() {
   }
 }
 
+// ---------- landing / home ----------
+
+function heroArtHtml() {
+  return `
+  <svg class="hero-art" viewBox="0 0 340 210" role="img" aria-label="A verified CRNA review file">
+    <rect x="0" y="0" width="340" height="210" fill="#123C3A"/>
+    <g opacity="0.10">
+      <circle cx="292" cy="34" r="70" fill="#E3A73B"/>
+      <circle cx="34" cy="186" r="56" fill="#F2F4F1"/>
+    </g>
+    <!-- back file -->
+    <rect x="46" y="40" width="190" height="140" rx="3" fill="#0D2E2C"/>
+    <!-- main file card -->
+    <rect x="36" y="30" width="190" height="140" rx="3" fill="#F7F8F5"/>
+    <rect x="36" y="30" width="190" height="8" fill="#E3A73B"/>
+    <rect x="52" y="52" width="96" height="9" rx="1" fill="#123C3A"/>
+    <rect x="52" y="68" width="58" height="6" rx="1" fill="#9BA59E"/>
+    <text x="52" y="102" font-size="19" fill="#E3A73B" letter-spacing="3">★★★★</text>
+    <text x="128" y="102" font-size="19" fill="#D8DDD5" letter-spacing="3">★</text>
+    <rect x="52" y="118" width="146" height="5" rx="1" fill="#C9D2C6"/>
+    <rect x="52" y="130" width="160" height="5" rx="1" fill="#C9D2C6"/>
+    <rect x="52" y="142" width="112" height="5" rx="1" fill="#C9D2C6"/>
+    <!-- beware stamp -->
+    <g transform="rotate(-9 236 140)">
+      <rect x="186" y="122" width="112" height="30" fill="none" stroke="#8C3A32" stroke-width="2.5"/>
+      <text x="242" y="143" text-anchor="middle" font-size="14" font-weight="700" fill="#8C3A32" letter-spacing="1.5">BEWARE</text>
+    </g>
+    <!-- verification badge -->
+    <g transform="translate(232,26)">
+      <path d="M36 0 L70 13 V44 C70 63 54 75 36 82 C18 75 2 63 2 44 V13 Z" fill="#E3A73B"/>
+      <path d="M21 41 L31 52 L51 29" fill="none" stroke="#123C3A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </svg>`;
+}
+
+function landingHtml() {
+  return `
+  <div class="landing">
+
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow">VERIFIED CRNAs ONLY</div>
+        <h2 class="hero-h">Know who you're signing with — before you sign.</h2>
+        <p class="hero-sub">CRNA Critics is an independent review platform built by CRNAs, for CRNAs. Rate the hospitals, anesthesia groups, agencies, and agents you've actually worked with, and read honest accounts from colleagues who were there before you.</p>
+        <div class="cta-row">
+          <button class="btn btn-amber" data-go="request">First time here? Get verified</button>
+          <button class="btn btn-ghost" data-go="signin">Already a member? Sign in</button>
+        </div>
+        <p class="hero-fine">Free for CRNAs. No agency, hospital, or group can pay to remove a review.</p>
+      </div>
+      ${heroArtHtml()}
+    </section>
+
+    <section class="lp-section">
+      <div class="lp-label">WHY THIS EXISTS</div>
+      <p class="lp-lead">Anesthesia careers turn on information most of us never get until it's too late — how a facility really staffs its rooms, whether an agency pays what it quoted, whether a recruiter told you the truth about the assignment.</p>
+      <p class="lp-body">That information already exists. It lives in group texts, private Facebook threads, and hallway conversations, and it disappears the moment the conversation ends. CRNA Critics puts it somewhere permanent, searchable, and accountable — so the next CRNA weighing the same offer isn't starting from zero.</p>
+    </section>
+
+    <section class="lp-section verify-band">
+      <div class="lp-label">HOW WE KEEP IT CREDIBLE</div>
+      <h3 class="lp-h">Every account is verified as a practicing CRNA.</h3>
+      <p class="lp-body">Reviews are only worth what the reviewer is worth. Before an account can post or read reviews, an administrator verifies the applicant's name and NBCRNA number by hand. Anesthesiologists, AAs, recruiters, agency staff, and facility management are not eligible for accounts — this is a CRNA-only room, and it stays that way.</p>
+      <ul class="check-list">
+        <li>Name and NBCRNA credential reviewed by an admin before access is granted</li>
+        <li>Every review is tied to a verified account — no drive-by anonymous posts</li>
+        <li>Reviews can't be bought, removed, or edited by the parties being rated</li>
+      </ul>
+    </section>
+
+    <section class="lp-section">
+      <div class="lp-label">WHAT YOU CAN RATE</div>
+      <h3 class="lp-h">Full-time staff or locum contractor — rate the assignment end to end.</h3>
+      <div class="feature-grid">
+        <div class="feature f-hospital">
+          <div class="feature-kicker">HOSPITALS &amp; ANESTHESIA GROUPS</div>
+          <p>Case mix and acuity, staffing and backup, equipment, culture toward outside staff, onboarding, schedule reliability, and practice autonomy — independent, supervised, or medically directed.</p>
+        </div>
+        <div class="feature f-agency">
+          <div class="feature-kicker">AGENCIES</div>
+          <p>Pay and billing accuracy, contract terms, credentialing support, travel and housing logistics, and whether the assignment matched what you were sold.</p>
+        </div>
+        <div class="feature f-agent">
+          <div class="feature-kicker">AGENTS &amp; RECRUITERS</div>
+          <p>Communication and responsiveness rated 0–5, from misinformation and pressure tactics at the low end to honest, transparent, trustworthy at the high end.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="lp-section">
+      <div class="lp-label">HOW IT WORKS</div>
+      <ol class="step-list">
+        <li><span class="step-n">1</span><div><strong>First time here — get verified.</strong> Submit your name, NBCRNA number, and contact information. An admin reviews it personally.</div></li>
+        <li><span class="step-n">2</span><div><strong>Get your sign-in link.</strong> Once approved, you sign in by email — no password to manage.</div></li>
+        <li><span class="step-n">3</span><div><strong>Search, then contribute.</strong> Look up any facility, agency, or agent by name, and post your own rated review of the places you've worked.</div></li>
+      </ol>
+    </section>
+
+    <section class="beware-band">
+      <div class="beware-stamp">CRNA BEWARE</div>
+      <h3 class="lp-h" style="color:#F2F4F1">Some places have earned a warning.</h3>
+      <p class="beware-body">Fair reviews cut both ways. When a facility chronically understaffs its rooms, when a group treats outside CRNAs as disposable, when an agency quietly cuts a rate after you've relocated, or when an agent misrepresents an assignment to close a contract — colleagues deserve to know before they commit. Low scores and documented patterns surface on a name's profile so a bad actor can't simply start over with the next CRNA who calls.</p>
+      <p class="beware-fine">Post what you experienced and can stand behind. Reviews are factual accounts of your own working experience, not personal attacks.</p>
+    </section>
+
+    <section class="final-cta">
+      <h3 class="lp-h">Make the next contract an informed one.</h3>
+      <p class="lp-body" style="max-width:520px">Join a growing record of verified CRNA experience — and add yours to it.</p>
+      <div class="cta-row">
+        <button class="btn btn-amber" data-go="request">First time here? Get verified</button>
+        <button class="btn btn-ghost" data-go="signin">Already a member? Sign in</button>
+      </div>
+    </section>
+
+  </div>`;
+}
+
+function attachLandingHandlers() {
+  document.querySelectorAll("[data-go]").forEach((btn) => {
+    btn.onclick = () => {
+      state.gateMode = btn.dataset.go === "request" ? "request" : "signin";
+      state.view = "gate";
+      render();
+      window.scrollTo(0, 0);
+    };
+  });
+}
+
 // ---------- gate (sign in / request access) ----------
 
 function gateHtml() {
   const tabs = `
     <div class="nav">
-      <button class="nav-btn${state.gateMode === "signin" ? " active" : ""}" id="gate-signin-tab">Sign in</button>
-      <button class="nav-btn${state.gateMode === "request" ? " active" : ""}" id="gate-request-tab">Request verification</button>
+      <button class="nav-btn${state.gateMode === "signin" ? " active" : ""}" id="gate-signin-tab">Already a member</button>
+      <button class="nav-btn${state.gateMode === "request" ? " active" : ""}" id="gate-request-tab">First time here</button>
     </div>`;
   const body = state.gateMode === "signin" ? signinFormHtml() : requestFormHtml();
-  return tabs + `<div class="body" id="gate-body">${body}</div>`;
+  return tabs + `<div class="body"><button class="back-btn" id="gate-home-btn" style="margin-bottom:10px">&larr; Back to home</button><div id="gate-body">${body}</div></div>`;
 }
 function signinFormHtml() {
   return `
     <div class="card">
-      <div class="section-label">SIGN IN</div>
+      <div class="section-label">ALREADY A MEMBER — SIGN IN</div>
       <p class="hint-text" style="margin-top:0">Already verified? Enter your email and we'll send you a one-tap sign-in link.</p>
       <input id="signin-email" type="email" placeholder="Email" />
       <div id="gate-error" class="error-text"></div>
@@ -266,7 +395,7 @@ function signinFormHtml() {
 function requestFormHtml() {
   return `
     <div class="card">
-      <div class="section-label">CRNA VERIFICATION</div>
+      <div class="section-label">FIRST TIME HERE — CRNA VERIFICATION</div>
       <p class="hint-text" style="margin-top:0">CRNA Critics is for practicing CRNAs only — not agencies, recruiters, or anesthesiologists. Submit your info below; an admin reviews it before you get access to reviews.</p>
       <input id="req-name" placeholder="Full name" />
       <input id="req-nbcrna" style="margin-top:8px" placeholder="NBCRNA #" />
@@ -280,6 +409,7 @@ function requestFormHtml() {
     </div>`;
 }
 function attachGateHandlers() {
+  document.getElementById("gate-home-btn").onclick = () => { state.view = "home"; render(); };
   document.getElementById("gate-signin-tab").onclick = () => { state.gateMode = "signin"; render(); };
   document.getElementById("gate-request-tab").onclick = () => { state.gateMode = "request"; render(); };
 
@@ -297,7 +427,7 @@ function attachGateHandlers() {
         } else if (data.reason === "rejected") {
           errEl.textContent = "This account wasn't approved. Contact the admin if you think that's a mistake.";
         } else {
-          errEl.textContent = "No account found with that email. Try 'Request verification' instead.";
+          errEl.textContent = "No account found with that email. Use the 'First time here' tab to get verified.";
         }
       } catch (e) {
         errEl.textContent = "Something went wrong. Try again.";
@@ -658,7 +788,7 @@ async function renderAdmin() {
         document.getElementById("admin-passcode").value = "";
       }
     };
-    document.getElementById("admin-close").onclick = () => { state.view = state.user ? "app" : "gate"; render(); };
+    document.getElementById("admin-close").onclick = () => { state.view = state.user ? "app" : "home"; render(); };
     return;
   }
   el.innerHTML = `<p class="hint-text">Loading…</p>`;
@@ -702,7 +832,7 @@ async function renderAdmin() {
         <div style="font-size:12px;color:#6B756F">NBCRNA ${esc(r.nbcrna_number)}</div>
       </div>`).join("")}`;
 
-  document.getElementById("admin-back-btn").onclick = () => { state.view = state.user ? "app" : "gate"; render(); };
+  document.getElementById("admin-back-btn").onclick = () => { state.view = state.user ? "app" : "home"; render(); };
   document.getElementById("admin-refresh").onclick = () => renderAdmin();
   document.querySelectorAll("[data-decide]").forEach((btn) => {
     btn.onclick = async () => {
