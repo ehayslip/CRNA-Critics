@@ -291,6 +291,7 @@ function rowToReview(r, viewerEmail) {
     date: r.date,
     isMine,
     anonymous,
+    editedAt: r.edited_at || null,
     reviewer: {
       name: anonymous && !isMine ? "Anonymous CRNA" : r.reviewer_name,
       credentials: r.reviewer_credentials,
@@ -318,45 +319,64 @@ app.get("/api/reviews", requireSession, (req, res) => {
   res.json({ reviews: rows.map((r) => rowToReview(r, req.user.email)) });
 });
 
-app.post("/api/reviews", requireSession, (req, res) => {
-  const b = req.body || {};
+// Validates a review body and returns the column values shared by create and edit,
+// or { error } if something required is missing.
+function reviewColumns(b) {
   const employmentType = b.employmentType === "staff" ? "staff" : "locum";
-  if (!b.hospitalName || !b.hospitalRatings) return res.status(400).json({ error: "missing_fields" });
-  if (employmentType === "staff" && (!b.groupName || !b.groupRatings)) return res.status(400).json({ error: "missing_fields" });
-  if (employmentType === "locum" && (!b.agencyName || !b.agencyAgentRatings)) return res.status(400).json({ error: "missing_fields" });
+  if (!b.hospitalName || !b.hospitalRatings) return { error: "missing_fields" };
+  if (employmentType === "staff" && (!b.groupName || !b.groupRatings)) return { error: "missing_fields" };
+  if (employmentType === "locum" && (!b.agencyName || !b.agencyAgentRatings)) return { error: "missing_fields" };
   const isStaff = employmentType === "staff";
+  return {
+    values: {
+      agency_name: isStaff ? "" : b.agencyName,
+      agent_name: isStaff ? "" : (b.agentName || ""),
+      agency_agent_ratings: JSON.stringify(isStaff ? {} : b.agencyAgentRatings),
+      agency_agent_would_return: isStaff ? "" : (b.agencyAgentWouldReturn || ""),
+      agency_agent_comment: isStaff ? "" : (b.agencyAgentComment || ""),
+      pay_rate: isStaff || b.payRate === "" || b.payRate == null ? null : Number(b.payRate),
+      hospital_name: b.hospitalName,
+      hospital_ratings: JSON.stringify(b.hospitalRatings),
+      hospital_would_return: b.hospitalWouldReturn || "",
+      hospital_comment: b.hospitalComment || "",
+      employment_type: employmentType,
+      group_name: isStaff ? b.groupName : "",
+      group_ratings: JSON.stringify(isStaff ? b.groupRatings : {}),
+      group_would_return: isStaff ? (b.groupWouldReturn || "") : "",
+      group_comment: isStaff ? (b.groupComment || "") : "",
+      anonymous: b.anonymous ? 1 : 0,
+    },
+  };
+}
+
+app.post("/api/reviews", requireSession, (req, res) => {
+  const parsed = reviewColumns(req.body || {});
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const v = parsed.values;
   const id = crypto.randomUUID();
+  const cols = Object.keys(v);
   db.prepare(
-    `INSERT INTO reviews (id, date, reviewer_name, reviewer_credentials, reviewer_email,
-      agency_name, agent_name, agency_agent_ratings, agency_agent_would_return, agency_agent_comment, pay_rate,
-      hospital_name, hospital_ratings, hospital_would_return, hospital_comment,
-      employment_type, group_name, group_ratings, group_would_return, group_comment, anonymous)
-     VALUES (?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?)`
-  ).run(
-    id,
-    new Date().toISOString(),
-    req.user.name,
-    req.user.credentials,
-    req.user.email,
-    isStaff ? "" : b.agencyName,
-    isStaff ? "" : (b.agentName || ""),
-    JSON.stringify(isStaff ? {} : b.agencyAgentRatings),
-    isStaff ? "" : (b.agencyAgentWouldReturn || ""),
-    isStaff ? "" : (b.agencyAgentComment || ""),
-    isStaff || b.payRate === "" || b.payRate == null ? null : Number(b.payRate),
-    b.hospitalName,
-    JSON.stringify(b.hospitalRatings),
-    b.hospitalWouldReturn || "",
-    b.hospitalComment || "",
-    employmentType,
-    isStaff ? b.groupName : "",
-    JSON.stringify(isStaff ? b.groupRatings : {}),
-    isStaff ? (b.groupWouldReturn || "") : "",
-    isStaff ? (b.groupComment || "") : "",
-    b.anonymous ? 1 : 0
-  );
+    `INSERT INTO reviews (id, date, reviewer_name, reviewer_credentials, reviewer_email, ${cols.join(", ")})
+     VALUES (?,?,?,?,?, ${cols.map(() => "?").join(",")})`
+  ).run(id, new Date().toISOString(), req.user.name, req.user.credentials, req.user.email, ...cols.map((c) => v[c]));
   const row = db.prepare("SELECT * FROM reviews WHERE id = ?").get(id);
   res.json({ review: rowToReview(row, req.user.email) });
+});
+
+// Edit your own review. Every rated field can change; the original post date is kept
+// and edited_at records the change.
+app.put("/api/reviews/:id", requireSession, (req, res) => {
+  const row = db.prepare("SELECT * FROM reviews WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.reviewer_email !== req.user.email) return res.status(403).json({ error: "not_yours" });
+  const parsed = reviewColumns(req.body || {});
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const v = parsed.values;
+  const cols = Object.keys(v);
+  db.prepare(`UPDATE reviews SET ${cols.map((c) => `${c} = ?`).join(", ")}, edited_at = ? WHERE id = ?`)
+    .run(...cols.map((c) => v[c]), new Date().toISOString(), row.id);
+  const updated = db.prepare("SELECT * FROM reviews WHERE id = ?").get(row.id);
+  res.json({ review: rowToReview(updated, req.user.email) });
 });
 
 app.delete("/api/reviews/:id", requireSession, (req, res) => {
