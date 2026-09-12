@@ -41,4 +41,10 @@ db.exec(`
   );
 `);
 
+// Lightweight migrations for columns added after the initial schema.
+const accessCols = db.prepare("PRAGMA table_info(access_requests)").all().map((c) => c.name);
+if (!accessCols.includes("password_hash")) {
+  db.exec("ALTER TABLE access_requests ADD COLUMN password_hash TEXT");
+}
+
 module.exports = db;
