@@ -5,7 +5,7 @@ const crypto = require("crypto");
 const path = require("path");
 
 const db = require("./db");
-const { sign, verify } = require("./auth");
+const { sign, verify, hashPassword, verifyPassword } = require("./auth");
 const { sendEmail, escapeHtml } = require("./email");
 
 const app = express();
@@ -13,6 +13,8 @@ const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE || "";
 const isProd = process.env.NODE_ENV === "production";
+const SESSION_SECONDS = 60 * 60 * 24 * 90; // members stay signed in for 90 days per device
+const MIN_PASSWORD_LENGTH = 8;
 
 app.use(express.json());
 app.use(cookieParser());
@@ -32,7 +34,7 @@ function requireSession(req, res, next) {
   if (!payload || !payload.email) return res.status(401).json({ error: "not_signed_in" });
   const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(payload.email);
   if (!row || row.status !== "approved") return res.status(401).json({ error: "not_approved" });
-  req.user = { email: row.email, name: row.name, credentials: "CRNA" };
+  req.user = { email: row.email, name: row.name, credentials: "CRNA", hasPassword: !!row.password_hash };
   next();
 }
 
@@ -115,26 +117,75 @@ app.get("/api/admin/decide/:token", async (req, res) => {
   );
 
   if (payload.decision === "approved") {
-    const loginToken = sign({ email: row.email, purpose: "login" }, 60 * 15);
-    const loginUrl = `${BASE_URL}/api/auth/verify?token=${loginToken}`;
-    sendEmail({
-      to: row.email,
-      subject: "You're verified on CRNA Critics",
-      html: `
-        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
-          <h2 style="color:#123C3A;">You're verified</h2>
-          <p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics.</p>
-          <p><a href="${loginUrl}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Sign in</a></p>
-          <p style="color:#888;font-size:12px;">This link expires in 15 minutes. You can always request a new one from the sign-in screen.</p>
-        </div>
-      `,
-    }).catch((e) => console.error("Failed to send welcome email:", e.message));
+    sendWelcomeEmail(row).catch((e) => console.error("Failed to send welcome email:", e.message));
   }
 
   res.send(page(payload.decision === "approved" ? "Approved ✓" : "Rejected", `${escapeHtml(row.name)} has been marked ${payload.decision}.`));
 });
 
-// ---------- CRNA magic-link sign-in ----------
+// ---------- CRNA sign-in ----------
+//
+// First sign-in happens through the emailed welcome link (valid 24h); the member
+// then creates a password and signs in with email + password from there on.
+// Emailed links remain available as a "forgot password" fallback.
+
+function sendWelcomeEmail(row) {
+  const loginToken = sign({ email: row.email, purpose: "login" }, 60 * 60 * 24);
+  const loginUrl = `${BASE_URL}/api/auth/verify?token=${loginToken}`;
+  return sendEmail({
+    to: row.email,
+    subject: "You're verified on CRNA Critics",
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+        <h2 style="color:#123C3A;">You're verified</h2>
+        <p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics.</p>
+        <p>Use the button below to sign in for the first time and create your password. After that, you'll sign in with your email and password — no more links.</p>
+        <p><a href="${loginUrl}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Sign in &amp; create password</a></p>
+        <p style="color:#888;font-size:12px;">This link expires in 24 hours. If it expires, use "Forgot password" on the sign-in screen to get a new one.</p>
+      </div>
+    `,
+  });
+}
+
+// Simple in-memory brute-force guard: 5 failed attempts locks an email for 15 minutes.
+const loginFailures = new Map();
+function loginLocked(email) {
+  const f = loginFailures.get(email);
+  return !!(f && f.count >= 5 && Date.now() - f.last < 15 * 60 * 1000);
+}
+function recordLoginFailure(email) {
+  const f = loginFailures.get(email) || { count: 0, last: 0 };
+  if (Date.now() - f.last > 15 * 60 * 1000) f.count = 0;
+  f.count += 1; f.last = Date.now();
+  loginFailures.set(email, f);
+}
+
+app.post("/api/auth/login", (req, res) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "");
+  if (!email || !password) return res.status(400).json({ error: "missing_fields" });
+  if (loginLocked(email)) return res.status(429).json({ error: "locked" });
+
+  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
+  if (!row) return res.status(401).json({ error: "not_found" });
+  if (row.status !== "approved") return res.status(401).json({ error: row.status });
+  if (!row.password_hash) return res.status(401).json({ error: "no_password" });
+  if (!verifyPassword(password, row.password_hash)) {
+    recordLoginFailure(email);
+    return res.status(401).json({ error: "bad_password" });
+  }
+  loginFailures.delete(email);
+  const session = sign({ email: row.email }, SESSION_SECONDS);
+  res.cookie("session", session, cookieOpts(SESSION_SECONDS));
+  res.json({ ok: true });
+});
+
+app.post("/api/auth/set-password", requireSession, (req, res) => {
+  const password = String(req.body?.password || "");
+  if (password.length < MIN_PASSWORD_LENGTH) return res.status(400).json({ error: "too_short" });
+  db.prepare("UPDATE access_requests SET password_hash = ? WHERE email = ?").run(hashPassword(password), req.user.email);
+  res.json({ ok: true });
+});
 
 app.post("/api/auth/request-link", async (req, res) => {
   const email = String(req.body?.email || "").trim().toLowerCase();
@@ -151,6 +202,7 @@ app.post("/api/auth/request-link", async (req, res) => {
     html: `
       <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
         <h2 style="color:#123C3A;">Sign in to CRNA Critics</h2>
+        <p>This one-time link signs you in. Once you're in, you can set a new password from the sign-in prompt.</p>
         <p><a href="${loginUrl}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Sign in</a></p>
         <p style="color:#888;font-size:12px;">This link expires in 15 minutes.</p>
       </div>
@@ -169,9 +221,10 @@ app.get("/api/auth/verify", (req, res) => {
   if (!row || row.status !== "approved") {
     return res.status(403).send("This account is not an approved CRNA.");
   }
-  const session = sign({ email: row.email }, 60 * 60 * 24 * 30);
-  res.cookie("session", session, cookieOpts(60 * 60 * 24 * 30));
-  res.redirect("/");
+  const session = sign({ email: row.email }, SESSION_SECONDS);
+  res.cookie("session", session, cookieOpts(SESSION_SECONDS));
+  // Arriving via an emailed link always offers to (re)set the password.
+  res.redirect("/?setpw=1");
 });
 
 app.post("/api/auth/logout", (req, res) => {
@@ -213,13 +266,7 @@ app.post("/api/admin/requests/:id/decide", requireAdmin, async (req, res) => {
   db.prepare("UPDATE access_requests SET status=?, decided_at=? WHERE id=?").run(decision, new Date().toISOString(), row.id);
 
   if (decision === "approved") {
-    const loginToken = sign({ email: row.email, purpose: "login" }, 60 * 15);
-    const loginUrl = `${BASE_URL}/api/auth/verify?token=${loginToken}`;
-    sendEmail({
-      to: row.email,
-      subject: "You're verified on CRNA Critics",
-      html: `<p>Hi ${escapeHtml(row.name)}, you're approved. <a href="${loginUrl}">Sign in</a> (link expires in 15 minutes).</p>`,
-    }).catch((e) => console.error("Failed to send welcome email:", e.message));
+    sendWelcomeEmail(row).catch((e) => console.error("Failed to send welcome email:", e.message));
   }
   res.json({ ok: true });
 });
