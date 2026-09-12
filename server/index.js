@@ -281,11 +281,20 @@ app.post("/api/admin/requests/:id/decide", requireAdmin, async (req, res) => {
 
 // ---------- reviews ----------
 
-function rowToReview(r) {
+// viewerEmail decides ownership; the reviewer's email is never sent to the client,
+// and an anonymous review hides the name from everyone but its author.
+function rowToReview(r, viewerEmail) {
+  const isMine = !!viewerEmail && r.reviewer_email === viewerEmail;
+  const anonymous = !!r.anonymous;
   return {
     id: r.id,
     date: r.date,
-    reviewer: { name: r.reviewer_name, credentials: r.reviewer_credentials, email: r.reviewer_email },
+    isMine,
+    anonymous,
+    reviewer: {
+      name: anonymous && !isMine ? "Anonymous CRNA" : r.reviewer_name,
+      credentials: r.reviewer_credentials,
+    },
     agencyName: r.agency_name,
     agentName: r.agent_name,
     agencyAgentRatings: JSON.parse(r.agency_agent_ratings),
@@ -306,7 +315,7 @@ function rowToReview(r) {
 
 app.get("/api/reviews", requireSession, (req, res) => {
   const rows = db.prepare("SELECT * FROM reviews ORDER BY date DESC").all();
-  res.json({ reviews: rows.map(rowToReview) });
+  res.json({ reviews: rows.map((r) => rowToReview(r, req.user.email)) });
 });
 
 app.post("/api/reviews", requireSession, (req, res) => {
@@ -321,8 +330,8 @@ app.post("/api/reviews", requireSession, (req, res) => {
     `INSERT INTO reviews (id, date, reviewer_name, reviewer_credentials, reviewer_email,
       agency_name, agent_name, agency_agent_ratings, agency_agent_would_return, agency_agent_comment, pay_rate,
       hospital_name, hospital_ratings, hospital_would_return, hospital_comment,
-      employment_type, group_name, group_ratings, group_would_return, group_comment)
-     VALUES (?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?)`
+      employment_type, group_name, group_ratings, group_would_return, group_comment, anonymous)
+     VALUES (?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?)`
   ).run(
     id,
     new Date().toISOString(),
@@ -343,10 +352,11 @@ app.post("/api/reviews", requireSession, (req, res) => {
     isStaff ? b.groupName : "",
     JSON.stringify(isStaff ? b.groupRatings : {}),
     isStaff ? (b.groupWouldReturn || "") : "",
-    isStaff ? (b.groupComment || "") : ""
+    isStaff ? (b.groupComment || "") : "",
+    b.anonymous ? 1 : 0
   );
   const row = db.prepare("SELECT * FROM reviews WHERE id = ?").get(id);
-  res.json({ review: rowToReview(row) });
+  res.json({ review: rowToReview(row, req.user.email) });
 });
 
 app.delete("/api/reviews/:id", requireSession, (req, res) => {
