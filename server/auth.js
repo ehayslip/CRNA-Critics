@@ -35,4 +35,23 @@ function verify(token) {
   return payload;
 }
 
-module.exports = { sign, verify };
+// Password hashing with Node's built-in scrypt — no extra dependency.
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  if (!stored || typeof stored !== "string" || !stored.includes(":")) return false;
+  const [salt, hash] = stored.split(":");
+  try {
+    const expected = Buffer.from(hash, "hex");
+    const actual = crypto.scryptSync(password, salt, 64);
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { sign, verify, hashPassword, verifyPassword };
