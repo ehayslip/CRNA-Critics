@@ -1,7 +1,13 @@
 const Database = require("better-sqlite3");
 const path = require("path");
+const fs = require("fs");
 
-const db = new Database(path.join(__dirname, "..", "data.db"));
+// On Railway, DATA_DIR points at the persistent volume (/data) so the
+// database survives redeploys. Locally it falls back to the project root.
+const dataDir = process.env.DATA_DIR || path.join(__dirname, "..");
+fs.mkdirSync(dataDir, { recursive: true });
+
+const db = new Database(path.join(dataDir, "data.db"));
 db.pragma("journal_mode = WAL");
 
 db.exec(`
