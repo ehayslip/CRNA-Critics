@@ -146,7 +146,7 @@ a.tiny-btn { text-decoration: none; }
 }
 .hero-sub { font-size: 15px; line-height: 1.55; color: #C9D6D2; margin: 0 auto 18px; max-width: 540px; }
 .hero-fine { font-size: 12px; color: #8FA39E; margin: 12px 0 0; }
-.hero-art { display: block; width: 100%; max-width: 480px; height: auto; margin: 26px auto 0; border: 1px solid #1F5C57; }
+.hero-art { display: block; width: 100%; max-width: 620px; height: auto; margin: 26px auto 0; border: 1px solid #1F5C57; }
 
 .cta-row { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
 .btn {
@@ -212,7 +212,7 @@ a.tiny-btn { text-decoration: none; }
   .landing section { padding: 48px 40px; }
   .hero { padding-top: 16px !important; }
   .hero-h { font-size: 36px; }
-  .hero-art { max-width: 540px; margin-top: 32px; }
+  .hero-art { max-width: 680px; margin-top: 32px; }
   .lp-h { font-size: 24px; }
   .feature-grid { grid-template-columns: repeat(2, 1fr); }
 }
