@@ -112,7 +112,8 @@ async function api(path, opts = {}) {
 // ---------- state ----------
 
 const state = {
-  view: "loading", // loading | home | gate | setpw | app | admin
+  view: "loading", // loading | home | gate | setpw | app | admin | terms
+  returnView: "home", // where the Terms page sends you back to
   user: null,
   reviews: [],
   tab: "search",
@@ -268,6 +269,7 @@ function render() {
   if (state.view === "setpw") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${setPasswordHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachSetPasswordHandlers(); return; }
   if (state.view === "employment") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${employmentHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachEmploymentHandlers(); return; }
   if (state.view === "admin") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body" id="admin-root"></div>` + footerHtml(); attachFooterHandlers(); renderAdmin(); return; }
+  if (state.view === "terms") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${termsPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachTermsPageHandlers(); return; }
   root.innerHTML = headerHtml() + toastHtml() + navHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
   attachFooterHandlers();
   attachNavHandlers();
@@ -295,12 +297,44 @@ function footerHtml() {
   return `
     <div class="footer">
       <div>Built by CRNAs, for CRNAs. No hospital, agency, or agent can pay to remove a review.</div>
+      <button type="button" class="inline-link" id="terms-link-btn" style="margin-top:8px">Terms of Use &amp; Member Agreement</button>
       <button type="button" class="admin-link" id="admin-link-btn">Site admin</button>
     </div>`;
 }
 function attachFooterHandlers() {
   document.getElementById("admin-link-btn").onclick = () => {
     state.view = state.view === "admin" ? (state.user ? "app" : "home") : "admin";
+    render();
+  };
+  const termsBtn = document.getElementById("terms-link-btn");
+  if (termsBtn) termsBtn.onclick = () => { openTerms(); };
+}
+
+// ---------- terms ----------
+
+function termsDocHtml() {
+  const t = window.CRNA_TERMS;
+  if (!t) return `<p class="hint-text">The terms could not be loaded. Refresh the page before continuing.</p>`;
+  return t.html;
+}
+function openTerms() {
+  if (state.view !== "terms") state.returnView = state.view;
+  state.view = "terms";
+  render();
+  window.scrollTo(0, 0);
+}
+function termsPageHtml() {
+  const t = window.CRNA_TERMS || {};
+  return `
+    <button class="back-btn" id="terms-back-btn" style="margin-bottom:10px">&larr; Back</button>
+    <div class="card">
+      <div class="section-label">${esc((t.title || "TERMS OF USE & MEMBER AGREEMENT").toUpperCase())}</div>
+      <div class="terms-doc">${termsDocHtml()}</div>
+    </div>`;
+}
+function attachTermsPageHandlers() {
+  document.getElementById("terms-back-btn").onclick = () => {
+    state.view = state.returnView === "terms" ? "home" : state.returnView || "home";
     render();
   };
 }
@@ -639,8 +673,21 @@ function requestFormHtml() {
       <label class="checkbox-row"><input type="checkbox" id="req-attest" />
         <span>I attest that I am a currently practicing CRNA — not an anesthesiologist (MD/DO), recruiter, or agency employee.</span>
       </label>
+
+      <div class="section-label" style="margin-top:18px">TERMS OF USE &amp; MEMBER AGREEMENT (v${esc((window.CRNA_TERMS || {}).version || "1.0")})</div>
+      <p class="hint-text" style="margin-top:0">You have to accept this before you can request access. Scroll to the bottom — it covers the release of liability, the rule against posting to harm a fellow CRNA, and how we may contact you.</p>
+      <div class="terms-box terms-doc" id="terms-scroll">${termsDocHtml()}</div>
+      <button type="button" class="inline-link" id="terms-open-full" style="margin-top:6px">Open in a full page / print a copy</button>
+
+      <label class="checkbox-row"><input type="checkbox" id="req-terms" />
+        <span><strong>I have read and agree to the Terms of Use &amp; Member Agreement</strong>, including the release of liability and covenant not to sue in Section 8, the indemnification in Section 9, the limitation of liability in Section 11, the arbitration and class-action waiver in Section 14, and the agreement in Section 3 not to post with the intention of harming a fellow CRNA. I agree that CRNA Critics and its affiliates may contact me at the email and phone number I gave above, and I understand my information will never be sold or rented.</span>
+      </label>
+      <label class="checkbox-row"><input type="checkbox" id="req-sms" />
+        <span>Optional: I also consent to automated calls and text messages at that number, including from an autodialer or prerecorded voice. Not required to join. Message and data rates may apply; reply STOP to stop.</span>
+      </label>
+
       <div id="gate-error" class="error-text"></div>
-      <button class="primary-btn" id="request-submit" style="margin-top:10px">Submit for verification</button>
+      <button class="primary-btn" id="request-submit" style="margin-top:10px" disabled>Agree &amp; submit for verification</button>
     </div>`;
 }
 function attachGateHandlers() {
@@ -694,18 +741,31 @@ function attachGateHandlers() {
       }
     };
   } else {
-    document.getElementById("request-submit").onclick = async () => {
+    const attestBox = document.getElementById("req-attest");
+    const termsBox = document.getElementById("req-terms");
+    const submitBtn = document.getElementById("request-submit");
+    const syncSubmit = () => { submitBtn.disabled = !(attestBox.checked && termsBox.checked); };
+    attestBox.onchange = syncSubmit;
+    termsBox.onchange = syncSubmit;
+    syncSubmit();
+    document.getElementById("terms-open-full").onclick = () => { openTerms(); };
+
+    submitBtn.onclick = async () => {
       const name = document.getElementById("req-name").value.trim();
       const nbcrnaNumber = document.getElementById("req-nbcrna").value.trim();
       const email = document.getElementById("req-email").value.trim();
       const phone = document.getElementById("req-phone").value.trim();
-      const attest = document.getElementById("req-attest").checked;
+      const attest = attestBox.checked;
+      const acceptedTerms = termsBox.checked;
+      const smsConsent = document.getElementById("req-sms").checked;
+      const termsVersion = (window.CRNA_TERMS || {}).version || "";
       const errEl = document.getElementById("gate-error");
       if (!name || !nbcrnaNumber || !email || !phone) { errEl.textContent = "Fill in every field — this is how we verify you're a practicing CRNA."; return; }
       if (!attest) { errEl.textContent = "Please confirm the attestation above."; return; }
+      if (!acceptedTerms) { errEl.textContent = "You have to accept the Terms of Use & Member Agreement to request access."; return; }
       errEl.textContent = "";
       try {
-        await api("/api/request-access", { method: "POST", body: { name, nbcrnaNumber, email, phone } });
+        await api("/api/request-access", { method: "POST", body: { name, nbcrnaNumber, email, phone, acceptedTerms, termsVersion, smsConsent } });
         document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Submitted.</p><p class="hint-text">An admin reviews every NBCRNA number by hand. You'll get an email once you're approved.</p></div>`;
       } catch (e) {
         errEl.textContent = "Something went wrong saving your request. Try again.";
@@ -1220,6 +1280,9 @@ async function renderAdmin() {
         <div style="font-weight:700">${esc(r.name)}</div>
         <div style="font-size:12px;color:#6B756F">NBCRNA ${esc(r.nbcrna_number)}</div>
         <div style="font-size:12px;color:#6B756F">${esc(r.email)} · ${esc(r.phone)}</div>
+        <div style="font-size:11px;color:#8A948E;margin-top:4px">${r.terms_accepted_at
+          ? `Terms v${esc(r.terms_version || "?")} accepted ${esc(new Date(r.terms_accepted_at).toLocaleString())} · IP ${esc(r.terms_ip || "unknown")}${r.sms_consent ? " · SMS opt-in" : ""}`
+          : "No terms acceptance on file (pre-dates the agreement)"}</div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="tiny-btn approve" data-decide="${r.id}::approved">Approve</button>
           <button class="tiny-btn reject" data-decide="${r.id}::rejected">Reject</button>
