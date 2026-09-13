@@ -61,6 +61,12 @@ addColumnIfMissing("reviews", "edited_at", "TEXT");
 addColumnIfMissing("reviews", "agent_ratings", "TEXT NOT NULL DEFAULT '{}'");
 addColumnIfMissing("reviews", "agent_would_return", "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("reviews", "agent_comment", "TEXT NOT NULL DEFAULT ''");
+// Terms of Use & Member Agreement acceptance, recorded at sign-up (click-wrap evidence).
+addColumnIfMissing("access_requests", "terms_version", "TEXT");
+addColumnIfMissing("access_requests", "terms_accepted_at", "TEXT");
+addColumnIfMissing("access_requests", "terms_ip", "TEXT");
+addColumnIfMissing("access_requests", "terms_user_agent", "TEXT");
+addColumnIfMissing("access_requests", "sms_consent", "INTEGER NOT NULL DEFAULT 0");
 // Pay is recorded as a bracket (e.g. "$201–220"), not a number or a score.
 addColumnIfMissing("reviews", "pay_range", "TEXT NOT NULL DEFAULT ''");
 
