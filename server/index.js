@@ -47,21 +47,27 @@ function requireAdmin(req, res, next) {
 // ---------- access requests ----------
 
 app.post("/api/request-access", async (req, res) => {
-  const { name, nbcrnaNumber, phone } = req.body || {};
+  const { name, nbcrnaNumber, phone, acceptedTerms, termsVersion, smsConsent } = req.body || {};
   const email = String(req.body?.email || "").trim().toLowerCase();
   if (!name || !nbcrnaNumber || !phone || !email) {
     return res.status(400).json({ error: "missing_fields" });
   }
+  // Click-wrap: no account request is accepted without an affirmative acceptance of the Terms.
+  if (!acceptedTerms) return res.status(400).json({ error: "terms_not_accepted" });
   const now = new Date().toISOString();
+  const termsV = String(termsVersion || "unknown").slice(0, 32);
+  const termsIp = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim().slice(0, 64);
+  const termsUa = String(req.headers["user-agent"] || "").slice(0, 300);
+  const sms = smsConsent ? 1 : 0;
   const existing = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
   if (existing) {
     db.prepare(
-      "UPDATE access_requests SET name=?, nbcrna_number=?, phone=?, status='pending', requested_at=?, decided_at=NULL WHERE email=?"
-    ).run(name, nbcrnaNumber, phone, now, email);
+      "UPDATE access_requests SET name=?, nbcrna_number=?, phone=?, status='pending', requested_at=?, decided_at=NULL, terms_version=?, terms_accepted_at=?, terms_ip=?, terms_user_agent=?, sms_consent=? WHERE email=?"
+    ).run(name, nbcrnaNumber, phone, now, termsV, now, termsIp, termsUa, sms, email);
   } else {
     db.prepare(
-      "INSERT INTO access_requests (id, name, nbcrna_number, email, phone, status, requested_at) VALUES (?,?,?,?,?, 'pending', ?)"
-    ).run(crypto.randomUUID(), name, nbcrnaNumber, email, phone, now);
+      "INSERT INTO access_requests (id, name, nbcrna_number, email, phone, status, requested_at, terms_version, terms_accepted_at, terms_ip, terms_user_agent, sms_consent) VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,?)"
+    ).run(crypto.randomUUID(), name, nbcrnaNumber, email, phone, now, termsV, now, termsIp, termsUa, sms);
   }
   const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
 
@@ -81,6 +87,7 @@ app.post("/api/request-access", async (req, res) => {
           <p>NBCRNA #: ${escapeHtml(row.nbcrna_number)}<br/>
              Email: ${escapeHtml(row.email)}<br/>
              Phone: ${escapeHtml(row.phone)}</p>
+          <p style="color:#555;font-size:12px;">Terms v${escapeHtml(String(row.terms_version || "?"))} accepted ${escapeHtml(String(row.terms_accepted_at || ""))} from ${escapeHtml(String(row.terms_ip || "unknown IP"))}${row.sms_consent ? " &middot; opted in to automated calls/texts" : ""}</p>
           <p style="margin-top:24px;">
             <a href="${approveUrl}" style="background:#1F5C57;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;margin-right:12px;">Approve</a>
             <a href="${rejectUrl}" style="background:#8C3A32;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Reject</a>
