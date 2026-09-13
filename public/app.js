@@ -32,12 +32,24 @@ const GROUP_CATEGORIES = [
   { key: "autonomy", label: "Practice Autonomy", weight: 0.15, anchors: [[5, "independent practice"], [3, "medically directed/supervised loosely"], [1, "medically directed"]] },
 ];
 
+// Agents are rated on their own — a short scorecard, separate from the agency they work for.
+const AGENT_CATEGORIES = [
+  { key: "trust", label: "Trustworthiness", weight: 0.3, anchors: [[5, "what they told you and what's in the contract is exactly what happened"], [3, "lived up to most of what they said, with a surprise or two"], [1, "said whatever it took to get you signed — reality was different"]] },
+  { key: "communication", label: "Communication & Responsiveness", weight: 0.25, anchors: [[5, "answers texts and emails within a few hours, after hours too when it matters"], [3, "answers by the end of the day"], [1, "business hours only, and sometimes days to hear back"]] },
+  { key: "advocacy", label: "Advocacy & Negotiation", weight: 0.2, anchors: [[5, "pushed for your rate, terms, and schedule — you felt represented"], [3, "passed along what you asked for but didn't push"], [1, "worked the facility's side — you had to fight for everything"]] },
+  { key: "followThrough", label: "Follow-through on Assignment", weight: 0.15, anchors: [[5, "when pay, housing, or scheduling went wrong, fixed it fast"], [3, "got it resolved eventually, after reminders"], [1, "went quiet once you signed"]] },
+  { key: "pressure", label: "Respect for Your Decision", weight: 0.1, anchors: [[5, "no pressure — gave you time and straight information"], [3, "some nudging and manufactured urgency"], [1, "high-pressure tactics and fake deadlines"]] },
+];
+
+// Pay is captured as a bracket, not a number, and is never scored.
+const PAY_RANGES = ["Under $180", "$181–200", "$201–220", "$221–240", "$241–260", "$261–280", "$281+"];
+
 const COLORS = { agency: "#123C3A", agent: "#B87F1E", hospital: "#8C3A32", group: "#3F5E8C" };
 
 // One place that knows, for each rateable thing, which review fields hold its data.
 const ENTITY = {
   agency:   { label: "Agency",           field: "agencyName",   ratings: "agencyAgentRatings", comment: "agencyAgentComment", ret: "agencyAgentWouldReturn", categories: AGENCY_CATEGORIES,   hasPay: true },
-  agent:    { label: "Agent",            field: "agentName",    ratings: "agencyAgentRatings", comment: "agencyAgentComment", ret: "agencyAgentWouldReturn", categories: AGENCY_CATEGORIES,   hasPay: true },
+  agent:    { label: "Agent",            field: "agentName",    ratings: "agentRatings",       comment: "agentComment",       ret: "agentWouldReturn",       categories: AGENT_CATEGORIES,    hasPay: false },
   group:    { label: "Anesthesia Group", field: "groupName",    ratings: "groupRatings",       comment: "groupComment",       ret: "groupWouldReturn",       categories: GROUP_CATEGORIES,    hasPay: false },
   hospital: { label: "Hospital",         field: "hospitalName", ratings: "hospitalRatings",    comment: "hospitalComment",    ret: "hospitalWouldReturn",    categories: HOSPITAL_CATEGORIES, hasPay: false },
 };
@@ -46,15 +58,11 @@ const EMPLOYMENT = {
   staff: { label: "Full-time / part-time staff", short: "Staff", reviews: "anesthesia groups and hospitals" },
 };
 
-function payScore(rate) {
-  const r = Number(rate);
-  if (!isFinite(r) || rate === "" || rate == null) return null;
-  if (r <= 180) return 0;
-  if (r <= 190) return 1;
-  if (r <= 210) return 2;
-  if (r <= 230) return 3;
-  if (r <= 250) return 4;
-  return 5;
+// Pay shown for a review: the bracket if one was chosen, else a legacy dollar figure.
+function payLabel(r) {
+  if (r.payRange) return r.payRange + "/hr";
+  if (r.payRate != null) return "$" + r.payRate + "/hr";
+  return "";
 }
 function weighted(categories, values) {
   let sum = 0, weightSum = 0;
@@ -117,16 +125,19 @@ const state = {
   editingId: null, // id of the member's own review being edited in the Post a review form
 };
 
-const aaForm = { agencyName: "", agentName: "", payRate: "", ratings: {}, wouldReturn: "", comment: "" };
+const aaForm = { agencyName: "", agentName: "", payRange: "", ratings: {}, wouldReturn: "", comment: "" };
+const agtForm = { ratings: {}, wouldReturn: "", comment: "" };
 const grpForm = { name: "", ratings: {}, wouldReturn: "", comment: "" };
 const hospForm = { name: "", ratings: {}, wouldReturn: "", comment: "" };
 const postOpts = { anonymous: false };
-const FORMS = { aa: { form: aaForm, categories: AGENCY_CATEGORIES }, grp: { form: grpForm, categories: GROUP_CATEGORIES }, hosp: { form: hospForm, categories: HOSPITAL_CATEGORIES } };
+const FORMS = { aa: { form: aaForm, categories: AGENCY_CATEGORIES }, agt: { form: agtForm, categories: AGENT_CATEGORIES }, grp: { form: grpForm, categories: GROUP_CATEGORIES }, hosp: { form: hospForm, categories: HOSPITAL_CATEGORIES } };
 function resetForms() {
   AGENCY_CATEGORIES.forEach((c) => (aaForm.ratings[c.key] = 0));
+  AGENT_CATEGORIES.forEach((c) => (agtForm.ratings[c.key] = 0));
+  agtForm.wouldReturn = ""; agtForm.comment = "";
   GROUP_CATEGORIES.forEach((c) => (grpForm.ratings[c.key] = 0));
   HOSPITAL_CATEGORIES.forEach((c) => (hospForm.ratings[c.key] = 0));
-  aaForm.agencyName = ""; aaForm.agentName = ""; aaForm.payRate = ""; aaForm.wouldReturn = ""; aaForm.comment = "";
+  aaForm.agencyName = ""; aaForm.agentName = ""; aaForm.payRange = ""; aaForm.wouldReturn = ""; aaForm.comment = "";
   grpForm.name = ""; grpForm.wouldReturn = ""; grpForm.comment = "";
   hospForm.name = ""; hospForm.wouldReturn = ""; hospForm.comment = "";
   postOpts.anonymous = false;
@@ -145,9 +156,11 @@ function formMode() {
 function loadReviewIntoForms(r) {
   resetForms();
   aaForm.agencyName = r.agencyName || ""; aaForm.agentName = r.agentName || "";
-  aaForm.payRate = r.payRate == null ? "" : String(r.payRate);
+  aaForm.payRange = r.payRange || "";
   AGENCY_CATEGORIES.forEach((c) => (aaForm.ratings[c.key] = (r.agencyAgentRatings || {})[c.key] || 0));
   aaForm.wouldReturn = r.agencyAgentWouldReturn || ""; aaForm.comment = r.agencyAgentComment || "";
+  AGENT_CATEGORIES.forEach((c) => (agtForm.ratings[c.key] = (r.agentRatings || {})[c.key] || 0));
+  agtForm.wouldReturn = r.agentWouldReturn || ""; agtForm.comment = r.agentComment || "";
   grpForm.name = r.groupName || "";
   GROUP_CATEGORIES.forEach((c) => (grpForm.ratings[c.key] = (r.groupRatings || {})[c.key] || 0));
   grpForm.wouldReturn = r.groupWouldReturn || ""; grpForm.comment = r.groupComment || "";
@@ -230,9 +243,9 @@ function searchResults() {
     byType[type].forEach((rows, name) => {
       if (q && !name.toLowerCase().includes(q)) return;
       const cats = ENTITY[type].categories;
-      const scores = rows.map((r) => weighted(cats, r[ENTITY[type].ratings]));
+      const scores = rows.map((r) => weighted(cats, r[ENTITY[type].ratings])).filter((v) => v > 0);
       const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
-      items.push({ type, name, count: rows.length, avg });
+      items.push({ type, name, count: scores.length, avg });
     });
   });
   items.sort((a, b) => (b.count - a.count) || (b.avg - a.avg) || a.name.localeCompare(b.name));
@@ -458,11 +471,11 @@ function landingHtml() {
         </div>
         <div class="feature f-agency">
           <div class="feature-kicker">AGENCIES</div>
-          <p>Pay and billing accuracy, contract terms, credentialing support, travel and housing logistics, and whether the assignment matched what you were sold.</p>
+          <p>Pay and billing accuracy, contract terms, credentialing support, travel and housing logistics, and whether the assignment matched what you were sold — plus the pay range they quoted.</p>
         </div>
         <div class="feature f-agent">
           <div class="feature-kicker">AGENTS &amp; RECRUITERS</div>
-          <p>Communication and responsiveness rated 0–5, from misinformation and pressure tactics at the low end to honest, transparent, trustworthy at the high end.</p>
+          <p>Rated on their own, apart from the agency: trustworthiness (does what they said and what's in the contract actually happen?), responsiveness, whether they advocate for you, follow-through when something goes wrong, and respect for your decision.</p>
         </div>
       </div>
     </section>
@@ -756,10 +769,16 @@ function detailHtml() {
   const isHospital = type === "hospital";
   const rows = state.reviews.filter((r) => r[ent.field] === name).sort((a, b) => b.date.localeCompare(a.date));
   const categories = ent.categories;
-  const scores = rows.map((r) => weighted(categories, r[ent.ratings]));
+  const scores = rows.map((r) => weighted(categories, r[ent.ratings])).filter((v) => v > 0);
   const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
-  const payRows = rows.filter((r) => r.payRate != null && ent.hasPay);
-  const avgPay = payRows.length ? payRows.reduce((a, b) => a + b.payRate, 0) / payRows.length : null;
+  // Pay: most common bracket quoted (agencies only).
+  let paySummary = "";
+  if (ent.hasPay) {
+    const tally = {};
+    rows.forEach((r) => { const l = payLabel(r); if (l) tally[l] = (tally[l] || 0) + 1; });
+    const top = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+    if (top) paySummary = `pay quoted: ${top[0]}${top[1] > 1 ? ` (${top[1]} of ${rows.length})` : ""}`;
+  }
 
   const rowsHtml = rows.map((r) => {
     const ratings = r[ent.ratings] || {};
@@ -775,11 +794,11 @@ function detailHtml() {
     return `
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-          <span style="font-weight:800;font-size:16px">${weighted(categories, ratings).toFixed(2)}</span>
+          <span style="font-weight:800;font-size:16px">${weighted(categories, ratings) > 0 ? weighted(categories, ratings).toFixed(2) : `<span style="font-size:12px;font-weight:500;color:#6B756F">not rated on these categories (older review)</span>`}</span>
           <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}${r.editedAt ? ` · <span title="Edited ${new Date(r.editedAt).toLocaleDateString()}">edited</span>` : ""}</span>
         </div>
         ${pairedLabel ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">${pairedLabel}</div>` : ""}
-        ${ent.hasPay && r.payRate != null ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Pay: $${r.payRate}/hr (pay score ${payScore(r.payRate)}/5)</div>` : ""}
+        ${ent.hasPay && payLabel(r) ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Pay quoted: ${esc(payLabel(r))}</div>` : ""}
         <div style="margin:6px 0">${chips}</div>
         <div style="margin:4px 0">${returnBadge(wouldReturn)}</div>
         ${comment ? `<p style="margin:6px 0">${esc(comment)}</p>` : ""}
@@ -824,8 +843,8 @@ function detailHtml() {
     <div class="card border-${type}" style="margin-top:10px">
       <div style="font-size:11px;letter-spacing:0.3px;color:${COLORS[type]};font-weight:700">${typeLabel(type).toUpperCase()}</div>
       <div style="font-family:'Special Elite',monospace;font-size:24px;margin:4px 0">${esc(name)}</div>
-      ${rows.length > 0
-        ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${starsHtml(Math.round(avg), 18)}<span style="font-weight:700">${avg.toFixed(2)}</span><span style="color:#6B756F;font-size:13px">overall · ${rows.length} review${rows.length !== 1 ? "s" : ""}</span>${avgPay != null ? `<span style="color:#6B756F;font-size:13px">· avg $${Math.round(avgPay)}/hr quoted</span>` : ""}</div>`
+      ${scores.length > 0
+        ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${starsHtml(Math.round(avg), 18)}<span style="font-weight:700">${avg.toFixed(2)}</span><span style="color:#6B756F;font-size:13px">overall · ${scores.length} rated review${scores.length !== 1 ? "s" : ""}</span>${paySummary ? `<span style="color:#6B756F;font-size:13px">· ${esc(paySummary)}</span>` : ""}</div>`
         : `<div style="color:#6B756F;font-size:13px">No reviews yet.</div>`}
     </div>
     ${statsHtml}
@@ -892,14 +911,12 @@ function submitHtml() {
     </div>`;
   const agencyCard = `
     <div class="card border-agency" style="margin-bottom:12px">
-      <div class="section-label" style="color:${COLORS.agency}">AGENCY &amp; AGENT</div>
+      <div class="section-label" style="color:${COLORS.agency}">AGENCY</div>
       <input id="aa-agency" placeholder="Agency name" value="${esc(aaForm.agencyName)}" />
-      <input id="aa-agent" style="margin-top:8px" placeholder="Agent / recruiter name" value="${esc(aaForm.agentName)}" />
       <div style="margin-top:12px">
-        <div style="font-size:13px;font-weight:600;margin-bottom:4px">Pay range</div>
-        <input id="aa-pay" type="number" placeholder="Hourly rate quoted ($/hr)" value="${esc(aaForm.payRate)}" />
-        <div id="aa-pay-score" class="hint-text">${payScore(aaForm.payRate) != null ? `Pay score: ${payScore(aaForm.payRate)}/5` : ""}</div>
-        <div class="hint-text">≤$180 → 0 · $181–190 → 1 · $191–210 → 2 · $211–230 → 3 · $231–250 → 4 · $251+ → 5. Scored separately, not part of the weighted score below.</div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px">Pay range quoted ($/hr)</div>
+        <div class="pay-grid" id="pay-grid">${PAY_RANGES.map((pr) => `<button type="button" class="return-btn${aaForm.payRange === pr ? " active" : ""}" data-pay="${esc(pr)}">${esc(pr)}</button>`).join("")}</div>
+        <div class="hint-text">Optional. Shown on the agency's page as the range CRNAs are being quoted — it's information, not a score.</div>
       </div>
       <div style="margin-top:14px">${AGENCY_CATEGORIES.map((c) => categoryRowHtml(c, "aa")).join("")}</div>
       <div class="score-row"><span style="font-size:12px;color:#6B756F">Weighted score</span><span class="big" id="aa-score">${weighted(AGENCY_CATEGORIES, aaForm.ratings).toFixed(2)}</span></div>
@@ -907,7 +924,19 @@ function submitHtml() {
         <div style="font-size:13px;font-weight:600;margin-bottom:4px">Would you work with them again?</div>
         ${returnToggleHtml(aaForm.wouldReturn, "aa")}
       </div>
-      <textarea id="aa-comment" style="margin-top:10px" rows="3" placeholder="Anything else another CRNA should know about this agency/agent?">${esc(aaForm.comment)}</textarea>
+      <textarea id="aa-comment" style="margin-top:10px" rows="3" placeholder="Anything else another CRNA should know about this agency?">${esc(aaForm.comment)}</textarea>
+    </div>
+    <div class="card border-agent" style="margin-bottom:12px">
+      <div class="section-label" style="color:${COLORS.agent}">YOUR AGENT / RECRUITER</div>
+      <p class="hint-text" style="margin-top:0">Agents are rated on their own, separate from the agency — not all agents are created equal. Leave the name blank to skip this section.</p>
+      <input id="aa-agent" placeholder="Agent / recruiter name" value="${esc(aaForm.agentName)}" />
+      <div style="margin-top:14px">${AGENT_CATEGORIES.map((c) => categoryRowHtml(c, "agt")).join("")}</div>
+      <div class="score-row"><span style="font-size:12px;color:#6B756F">Weighted score</span><span class="big" id="agt-score">${weighted(AGENT_CATEGORIES, agtForm.ratings).toFixed(2)}</span></div>
+      <div style="margin-top:8px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px">Would you use this agent again?</div>
+        ${returnToggleHtml(agtForm.wouldReturn, "agt")}
+      </div>
+      <textarea id="agt-comment" style="margin-top:10px" rows="2" placeholder="Anything else another CRNA should know about this agent?">${esc(agtForm.comment)}</textarea>
     </div>`;
   const hospitalCard = `
     <div class="card border-hospital" style="margin-bottom:12px">
@@ -938,12 +967,17 @@ function attachSubmitHandlers() {
   if (mode === "locum") {
     document.getElementById("aa-agency").oninput = (e) => (aaForm.agencyName = e.target.value);
     document.getElementById("aa-agent").oninput = (e) => (aaForm.agentName = e.target.value);
-    document.getElementById("aa-pay").oninput = (e) => {
-      aaForm.payRate = e.target.value;
-      const ps = payScore(aaForm.payRate);
-      document.getElementById("aa-pay-score").textContent = ps != null ? `Pay score: ${ps}/5` : "";
-    };
     document.getElementById("aa-comment").oninput = (e) => (aaForm.comment = e.target.value);
+    document.getElementById("agt-comment").oninput = (e) => (agtForm.comment = e.target.value);
+    const bindPay = () => document.querySelectorAll("#pay-grid [data-pay]").forEach((btn) => {
+      btn.onclick = () => {
+        aaForm.payRange = aaForm.payRange === btn.dataset.pay ? "" : btn.dataset.pay; // click again to clear
+        document.querySelectorAll("#pay-grid [data-pay]").forEach((b) => b.classList.toggle("active", b.dataset.pay === aaForm.payRange));
+      };
+    });
+    bindPay();
+    AGENT_CATEGORIES.forEach((c) => attachSubmitHandlers.rebindStars("agt", c.key));
+    rebindReturnToggle("agt");
   } else {
     document.getElementById("grp-name").oninput = (e) => (grpForm.name = e.target.value);
     document.getElementById("grp-comment").oninput = (e) => (grpForm.comment = e.target.value);
@@ -965,7 +999,11 @@ function attachSubmitHandlers() {
     }
     const firstRated = FORMS[first].categories.every((c) => FORMS[first].form.ratings[c.key] > 0);
     const hospRated = HOSPITAL_CATEGORIES.every((c) => hospForm.ratings[c.key] > 0);
-    if (!firstRated || !hospRated) { errEl.textContent = "Give a star rating for every category in both sections."; return; }
+    if (!firstRated || !hospRated) { errEl.textContent = "Give a star rating for every category in each section."; return; }
+    const hasAgent = mode === "locum" && aaForm.agentName.trim();
+    if (hasAgent && !AGENT_CATEGORIES.every((c) => agtForm.ratings[c.key] > 0)) {
+      errEl.textContent = "You named an agent — rate every agent category too, or clear the agent name to skip it."; return;
+    }
     errEl.textContent = "";
     const body = {
       employmentType: mode,
@@ -980,8 +1018,9 @@ function attachSubmitHandlers() {
     } else {
       Object.assign(body, {
         agencyName: aaForm.agencyName.trim(), agentName: aaForm.agentName.trim(),
-        payRate: aaForm.payRate === "" ? null : Number(aaForm.payRate),
+        payRange: aaForm.payRange, payRate: null,
         agencyAgentRatings: aaForm.ratings, agencyAgentWouldReturn: aaForm.wouldReturn, agencyAgentComment: aaForm.comment.trim(),
+        agentRatings: hasAgent ? agtForm.ratings : {}, agentWouldReturn: hasAgent ? agtForm.wouldReturn : "", agentComment: hasAgent ? agtForm.comment.trim() : "",
       });
     }
     try {
@@ -1061,14 +1100,25 @@ function mineHtml() {
       </div>` : ""}
       ${r.agencyName ? `
       <div style="margin-bottom:10px;padding-left:10px;border-left:3px solid ${COLORS.agency}">
-        <div style="font-size:11px;color:${COLORS.agency};font-weight:700">AGENCY: ${esc(r.agencyName)}${r.agentName ? ` · AGENT: ${esc(r.agentName)}` : ""}</div>
+        <div style="font-size:11px;color:${COLORS.agency};font-weight:700">AGENCY: ${esc(r.agencyName)}</div>
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0">
           ${starsHtml(Math.round(weighted(AGENCY_CATEGORIES, r.agencyAgentRatings)), 14)}
           <span style="font-size:13px;font-weight:700">${weighted(AGENCY_CATEGORIES, r.agencyAgentRatings).toFixed(2)}</span>
-          ${r.payRate != null ? `<span style="font-size:12px;color:#6B756F">· $${r.payRate}/hr (pay ${payScore(r.payRate)}/5)</span>` : ""}
+          ${payLabel(r) ? `<span style="font-size:12px;color:#6B756F">· pay quoted ${esc(payLabel(r))}</span>` : ""}
         </div>
         ${returnBadge(r.agencyAgentWouldReturn)}
         ${r.agencyAgentComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.agencyAgentComment)}</p>` : ""}
+      </div>` : ""}
+      ${r.agentName ? `
+      <div style="margin-bottom:10px;padding-left:10px;border-left:3px solid ${COLORS.agent}">
+        <div style="font-size:11px;color:${COLORS.agent};font-weight:700">AGENT: ${esc(r.agentName)}</div>
+        ${weighted(AGENT_CATEGORIES, r.agentRatings) > 0 ? `
+        <div style="display:flex;align-items:center;gap:8px;margin:4px 0">
+          ${starsHtml(Math.round(weighted(AGENT_CATEGORIES, r.agentRatings)), 14)}
+          <span style="font-size:13px;font-weight:700">${weighted(AGENT_CATEGORIES, r.agentRatings).toFixed(2)}</span>
+        </div>
+        ${returnBadge(r.agentWouldReturn)}
+        ${r.agentComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.agentComment)}</p>` : ""}` : `<div class="hint-text" style="margin-top:2px">Not rated separately (posted before agent scorecards). Edit this review to add one.</div>`}
       </div>` : ""}
       <div style="padding-left:10px;border-left:3px solid ${COLORS.hospital}">
         <div style="font-size:11px;color:${COLORS.hospital};font-weight:700">HOSPITAL: ${esc(r.hospitalName)}</div>
