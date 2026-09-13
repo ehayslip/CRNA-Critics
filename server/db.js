@@ -57,5 +57,11 @@ addColumnIfMissing("reviews", "group_comment", "TEXT NOT NULL DEFAULT ''");
 // Anonymous reviews hide the reviewer's name from other members (still tied to the account).
 addColumnIfMissing("reviews", "anonymous", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("reviews", "edited_at", "TEXT");
+// Agents are rated on their own short scorecard, separate from the agency.
+addColumnIfMissing("reviews", "agent_ratings", "TEXT NOT NULL DEFAULT '{}'");
+addColumnIfMissing("reviews", "agent_would_return", "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("reviews", "agent_comment", "TEXT NOT NULL DEFAULT ''");
+// Pay is recorded as a bracket (e.g. "$201–220"), not a number or a score.
+addColumnIfMissing("reviews", "pay_range", "TEXT NOT NULL DEFAULT ''");
 
 module.exports = db;
