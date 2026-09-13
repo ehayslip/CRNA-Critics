@@ -216,3 +216,18 @@ a.tiny-btn { text-decoration: none; }
   .lp-h { font-size: 24px; }
   .feature-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---------- terms of use ---------- */
+.terms-box {
+  max-height: 300px; overflow-y: auto; border: 1px solid #C9D2C6; background: #FCFDFB;
+  padding: 12px 14px; margin-top: 4px; -webkit-overflow-scrolling: touch;
+}
+.terms-doc { font-size: 12.5px; line-height: 1.6; color: #3C4A45; }
+.terms-doc h3 { font-size: 13px; margin: 16px 0 4px; color: #123C3A; }
+.terms-doc h3:first-child { margin-top: 0; }
+.terms-doc p { margin: 6px 0; }
+.terms-doc ul { margin: 6px 0; padding-left: 18px; }
+.terms-doc li { margin-bottom: 5px; }
+.terms-doc strong { color: #14231F; }
+.terms-doc a { color: #123C3A; }
+.terms-doc .terms-meta { font-size: 11px; color: #8A948E; margin-top: 0; }
