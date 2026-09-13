@@ -470,7 +470,7 @@ function landingHtml() {
         </div>
         <p class="hero-fine">Free for CRNAs. No agency, hospital, or group can pay to remove a review.</p>
       </div>
-      ${heroArtHtml()}
+      <img class="hero-art" src="image.jpg" alt="CRNA holding a locum contract full of red flags - CRNA Beware, know before you sign">
     </section>
 
     <section class="lp-section">
