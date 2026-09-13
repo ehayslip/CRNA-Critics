@@ -84,6 +84,9 @@ textarea { resize: vertical; }
 .return-toggle { display: flex; gap: 6px; margin-top: 4px; }
 .return-btn { flex: 1; padding: 6px 0; font-size: 12px; font-weight: 700; border: 1px solid #C9D2C6; background: #fff; color: #14231F; cursor: pointer; }
 .return-btn.active { background: #123C3A; color: #fff; border-color: #123C3A; }
+/* one straight row, lowest to highest; scrolls sideways on narrow phones */
+.pay-grid { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+.pay-grid .return-btn { flex: 1 0 88px; padding: 8px 4px; white-space: nowrap; }
 
 .badge { font-size: 10px; font-weight: 700; color: #fff; padding: 2px 6px; letter-spacing: 0.3px; display: inline-block; }
 .badge.y { background: #1F5C57; }
