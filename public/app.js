@@ -728,7 +728,7 @@ function attachGateHandlers() {
       try {
         const data = await api("/api/auth/request-link", { method: "POST", body: { email } });
         if (data.ok) {
-          document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Check your email.</p><p class="hint-text">We sent a sign-in link to ${esc(email)}. It expires in 15 minutes.</p></div>`;
+          document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Check your email.</p><p class="hint-text">We sent a sign-in link to ${esc(email)}. It expires in 48 hours.</p></div>`;
         } else if (data.reason === "pending") {
           errEl.textContent = "Your verification is still pending review.";
         } else if (data.reason === "rejected") {
