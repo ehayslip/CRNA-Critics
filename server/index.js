@@ -14,6 +14,7 @@ const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE || "";
 const isProd = process.env.NODE_ENV === "production";
 const SESSION_SECONDS = 60 * 60 * 24 * 90; // members stay signed in for 90 days per device
+const LINK_SECONDS = 60 * 60 * 48; // emailed sign-in links (welcome + forgot-password) are good for 48 hours
 const MIN_PASSWORD_LENGTH = 8;
 
 app.use(express.json());
@@ -137,7 +138,7 @@ app.get("/api/admin/decide/:token", async (req, res) => {
 // Emailed links remain available as a "forgot password" fallback.
 
 function sendWelcomeEmail(row) {
-  const loginToken = sign({ email: row.email, purpose: "login" }, 60 * 60 * 24);
+  const loginToken = sign({ email: row.email, purpose: "login" }, LINK_SECONDS);
   const loginUrl = `${BASE_URL}/api/auth/verify?token=${loginToken}`;
   return sendEmail({
     to: row.email,
@@ -148,7 +149,7 @@ function sendWelcomeEmail(row) {
         <p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics.</p>
         <p>Use the button below to sign in for the first time and create your password. After that, you'll sign in with your email and password — no more links.</p>
         <p><a href="${loginUrl}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Sign in &amp; create password</a></p>
-        <p style="color:#888;font-size:12px;">This link expires in 24 hours. If it expires, use "Forgot password" on the sign-in screen to get a new one.</p>
+        <p style="color:#888;font-size:12px;">This link expires in 48 hours. If it expires, use "Forgot password" on the sign-in screen to get a new one.</p>
       </div>
     `,
   });
@@ -209,7 +210,7 @@ app.post("/api/auth/request-link", async (req, res) => {
   if (!row) return res.json({ ok: false, reason: "not_found" });
   if (row.status !== "approved") return res.json({ ok: false, reason: row.status });
 
-  const token = sign({ email, purpose: "login" }, 60 * 15);
+  const token = sign({ email, purpose: "login" }, LINK_SECONDS);
   const loginUrl = `${BASE_URL}/api/auth/verify?token=${token}`;
   await sendEmail({
     to: email,
@@ -219,7 +220,7 @@ app.post("/api/auth/request-link", async (req, res) => {
         <h2 style="color:#123C3A;">Sign in to CRNA Critics</h2>
         <p>This one-time link signs you in. Once you're in, you can set a new password from the sign-in prompt.</p>
         <p><a href="${loginUrl}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Sign in</a></p>
-        <p style="color:#888;font-size:12px;">This link expires in 15 minutes.</p>
+        <p style="color:#888;font-size:12px;">This link expires in 48 hours.</p>
       </div>
     `,
   }).catch((e) => console.error("Failed to send login email:", e.message));
