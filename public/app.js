@@ -51,6 +51,36 @@ const FAMILY_INSURANCE_RANGES = ["Under $400", "$401–450", "$451–500", "Abov
 // Paid time off, counted in weeks per year.
 const PTO_RANGES = ["Under 5 weeks", "6 weeks", "7 weeks", "8 weeks", "9+ weeks"];
 
+// ---------- merging the same name written a dozen ways ----------
+// One company, one page. Each rule maps every spelling members actually type onto a single
+// canonical name; `test` gets the name lowercased with punctuation and extra spaces stripped.
+// `exact: true` means the whole name has to be the alias, so "Aya Locum Tenens" is left alone.
+const NAME_RULES = [
+  { canonical: "Envision / Envoy", test: (s) => /envision|envidion|envoy/.test(s) },
+  { canonical: "HCA Fort Walton Beach", test: (s) => /\bhca\b/.test(s) && /(fort|ft) ?walton/.test(s) },
+  { canonical: "LocumTenens.com", test: (s) => /^(lt ?com|lt|locum ?tenens( ?com)?)$/.test(s), exact: true },
+  { canonical: "Royal Surgical Associates (RSA)", test: (s) => /^rsa$/.test(s) || /royal surgical/.test(s) },
+];
+function normalizeName(name) {
+  return String(name == null ? "" : name).toLowerCase().replace(/[.,'"’&\/\-_]/g, " ").replace(/\s+/g, " ").trim();
+}
+// The name a review should be filed under. Unmatched names keep their own spelling.
+function canonicalName(name) {
+  const s = normalizeName(name);
+  if (!s) return String(name || "");
+  const hit = NAME_RULES.find((r) => r.test(s));
+  return hit ? hit.canonical : String(name).trim();
+}
+// Every spelling members used for a merged name, so the page can say what it absorbed.
+function spellingsFor(rows, field, canonical) {
+  const seen = [];
+  rows.forEach((r) => {
+    const raw = String(r[field] || "").trim();
+    if (raw && raw !== canonical && !seen.includes(raw)) seen.push(raw);
+  });
+  return seen;
+}
+
 const US_STATES = ["AL","AK","AZ","AR","CA","CO","CT","DE","DC","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","PR","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"];
 
 // "Chattanooga, TN" from whatever parts a review actually has.
@@ -78,6 +108,14 @@ function commonLocation(rows) {
 }
 
 const COLORS = { agency: "#123C3A", agent: "#B87F1E", hospital: "#8C3A32", group: "#3F5E8C" };
+
+// The order search results are grouped in, and the heading over each block.
+const SEARCH_SECTIONS = [
+  ["hospital", "HOSPITALS"],
+  ["group", "ANESTHESIA GROUPS"],
+  ["agency", "AGENCIES"],
+  ["agent", "AGENTS &amp; RECRUITERS"],
+];
 
 // One place that knows, for each rateable thing, which review fields hold its data.
 const ENTITY = {
@@ -276,8 +314,10 @@ function searchResults() {
   types.forEach((t) => (byType[t] = new Map()));
   state.reviews.forEach((r) => {
     types.forEach((t) => {
-      const name = r[ENTITY[t].field];
-      if (name) byType[t].set(name, (byType[t].get(name) || []).concat(r));
+      const raw = r[ENTITY[t].field];
+      if (!raw) return;
+      const name = canonicalName(raw); // "LT.com" and "Locum Tenens" land on the same page
+      byType[t].set(name, (byType[t].get(name) || []).concat(r));
     });
   });
   const items = [];
@@ -830,12 +870,11 @@ function searchResultsHtml(results) {
   if (results.length === 0) {
     return `<div class="empty-box"><p style="margin:0">Nothing matches "${esc(state.query)}" yet. If you've worked with them, post the first review.</p></div>`;
   }
-  const intro = `<p class="hint-text" style="margin:0 0 10px">Every review of a name is combined into one score. Tap a name to see the cumulative score for each category, what each star means, and every individual review behind the average.</p>`;
-  return intro + results.map((item) => `
+  const intro = `<p class="hint-text" style="margin:0 0 12px">Every review of a name is combined into one score, and different spellings of the same company are merged. Tap a name to see the cumulative score for each category, what each star means, and every individual review behind the average.</p>`;
+  const cardHtml = (item) => `
     <button class="card clickable border-${item.type}" data-open="${item.type}::${esc(item.name)}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
         <div>
-          <div style="font-size:11px;letter-spacing:0.3px;color:${COLORS[item.type]};font-weight:700;margin-bottom:3px">${typeLabel(item.type).toUpperCase()}</div>
           <div style="font-family:'Special Elite',monospace;font-size:18px">${esc(item.name)}</div>
           ${item.location ? `<div style="font-size:12px;color:#6B756F;margin-top:2px">${esc(item.location)}</div>` : ""}
         </div>
@@ -847,7 +886,21 @@ function searchResultsHtml(results) {
              </div>`
           : `<div style="font-size:11px;color:#6B756F;flex-shrink:0">no ratings yet${item.total ? ` · ${item.total} review${item.total !== 1 ? "s" : ""} on file` : ""}</div>`}
       </div>
-    </button>`).join("");
+    </button>`;
+  // One section per kind, in a fixed order, so hospitals aren't shuffled in with recruiters.
+  const sections = SEARCH_SECTIONS.map(([type, heading]) => {
+    const group = results.filter((r) => r.type === type);
+    if (group.length === 0) return "";
+    return `
+      <div class="result-group">
+        <div class="result-head" style="border-color:${COLORS[type]}">
+          <span style="color:${COLORS[type]}">${heading}</span>
+          <span class="result-count">${group.length}</span>
+        </div>
+        ${group.map(cardHtml).join("")}
+      </div>`;
+  }).join("");
+  return intro + sections;
 }
 function attachSearchHandlers() {
   const box = document.getElementById("search-box");
@@ -874,7 +927,8 @@ function detailHtml() {
   const { type, name } = state.detail;
   const ent = ENTITY[type];
   const isHospital = type === "hospital";
-  const rows = state.reviews.filter((r) => r[ent.field] === name).sort((a, b) => b.date.localeCompare(a.date));
+  const rows = state.reviews.filter((r) => r[ent.field] && canonicalName(r[ent.field]) === name).sort((a, b) => b.date.localeCompare(a.date));
+  const otherSpellings = spellingsFor(rows, ent.field, name);
   const categories = ent.categories;
   const scores = rows.map((r) => weighted(categories, r[ent.ratings])).filter((v) => v > 0);
   const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
@@ -981,6 +1035,7 @@ function detailHtml() {
       <div style="font-size:11px;letter-spacing:0.3px;color:${COLORS[type]};font-weight:700">${typeLabel(type).toUpperCase()}</div>
       <div style="font-family:'Special Elite',monospace;font-size:24px;margin:4px 0">${esc(name)}</div>
       ${locLabel ? `<div style="font-size:13px;color:#6B756F;margin-bottom:4px">${esc(locLabel)}</div>` : ""}
+      ${otherSpellings.length ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Also posted as: ${esc(otherSpellings.join(" · "))}</div>` : ""}
       ${scores.length > 0
         ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${starsHtml(Math.round(avg), 18)}<span style="font-weight:800;font-size:18px">${avg.toFixed(1)} out of 5.0</span><span style="color:#6B756F;font-size:13px">overall · averaged from ${scores.length} rated review${scores.length !== 1 ? "s" : ""}</span>${paySummary ? `<span style="color:#6B756F;font-size:13px">· ${esc(paySummary)}</span>` : ""}</div>`
         : `<div style="color:#6B756F;font-size:13px">No reviews yet.</div>`}
