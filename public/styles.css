@@ -183,12 +183,20 @@ a.tiny-btn { text-decoration: none; }
 .hero-sub { font-size: 15px; line-height: 1.55; color: #C9D6D2; margin: 0 auto 18px; max-width: 540px; }
 .hero-fine { font-size: 12px; color: #8FA39E; margin: 12px 0 0; }
 .hero-warning {
-  display: inline-block; margin: 16px auto 0; padding: 8px 14px;
-  border: 2px solid #E3A73B; color: #E3A73B; background: rgba(227, 167, 59, 0.08);
+  display: block; margin: 16px auto 0; color: #E3A73B;
   font-family: 'Special Elite', monospace; font-size: 14px; font-weight: 700;
   letter-spacing: 1.2px; line-height: 1.35;
 }
-@media (min-width: 760px) { .hero-warning { font-size: 17px; padding: 10px 18px; } }
+@media (min-width: 760px) { .hero-warning { font-size: 17px; } }
+
+/* search results, grouped by what's being rated */
+.result-group { margin-bottom: 20px; }
+.result-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  border-bottom: 2px solid; padding-bottom: 5px; margin-bottom: 8px;
+  font-family: 'Special Elite', monospace; font-size: 13px; letter-spacing: 1.2px;
+}
+.result-count { font-family: Inter, sans-serif; font-size: 11px; font-weight: 700; color: #8A948E; letter-spacing: 0; }
 .hero-art { display: block; width: 100%; max-width: 620px; height: auto; margin: 26px auto 0; border: 1px solid #1F5C57; }
 
 .cta-row { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
