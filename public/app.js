@@ -64,10 +64,13 @@ const NAME_RULES = [
 function normalizeName(name) {
   return String(name == null ? "" : name).toLowerCase().replace(/[.,'"’&\/\-_()\[\]]/g, " ").replace(/\s+/g, " ").trim();
 }
-// The name a review should be filed under. Unmatched names keep their own spelling.
+// The name a review should be filed under: an admin-approved merge first (those are
+// specific decisions), then the built-in rules, else the name as typed.
 function canonicalName(name) {
   const s = normalizeName(name);
   if (!s) return String(name || "");
+  const merged = state.aliases[s];
+  if (merged) return merged;
   const hit = NAME_RULES.find((r) => r.test(s));
   return hit ? hit.canonical : String(name).trim();
 }
@@ -265,6 +268,16 @@ const state = {
   gateMode: "signin", // signin | request | link
   adminUnlocked: false,
   adminRequests: [],
+  aliases: {},        // normalized spelling -> canonical name (admin-approved merges)
+  adminNames: null,   // { agency: [...], agent: [...], group: [...], hospital: [...] }
+  adminAliases: [],   // rows from name_aliases, for the "merged names" list
+  adminIgnores: [],   // pairs the admin marked as not the same
+  adminMergeNote: "",
+  adminTab: "members",       // members | names
+  adminNameType: "hospital", // which directory tab is open
+  adminNameFilter: "",
+  adminPicked: [],    // names ticked in the directory, for a multi-way merge
+  adminKeep: "",      // which of the ticked names survives
   editingId: null, // id of the member's own review being edited in the Post a review form
 };
 
@@ -366,6 +379,13 @@ function nextViewAfterAuth() {
 }
 
 async function loadReviews() {
+  // Merges have to be in hand before any name is rendered, or the same company
+  // would show up twice for a moment.
+  try {
+    const alias = await api("/api/aliases");
+    state.aliases = {};
+    (alias.aliases || []).forEach((a) => (state.aliases[a.alias_norm] = a.canonical));
+  } catch { /* merges are an enhancement — the built-in rules still apply */ }
   const data = await api("/api/reviews");
   state.reviews = data.reviews;
 }
@@ -1649,6 +1669,248 @@ function memberCardHtml(r) {
     </div>`;
 }
 
+// ---------- duplicate detection (admin) ----------
+
+// Pairs of names on file that look like the same thing. Uses the same matcher as the
+// review-form suggestions, with a higher bar — these become a merge recommendation.
+const DUPLICATE_THRESHOLD = 60;
+function duplicateCandidates() {
+  if (!state.adminNames) return [];
+  const ignored = new Set(state.adminIgnores.map((p) => [normalizeName(p.a_name), normalizeName(p.b_name)].sort().join("||")));
+  const out = [];
+  Object.entries(state.adminNames).forEach(([type, list]) => {
+    // Compare canonical names only — already-merged spellings aren't duplicates any more.
+    const seen = new Map();
+    list.forEach((item) => {
+      const name = canonicalName(item.name);
+      if (!seen.has(name)) seen.set(name, { name, count: 0, sub: item.sub || "" });
+      const e = seen.get(name);
+      e.count += item.count;
+      if (!e.sub && item.sub) e.sub = item.sub;
+    });
+    const names = [...seen.values()];
+    for (let i = 0; i < names.length; i++) {
+      for (let j = i + 1; j < names.length; j++) {
+        const a = names[i], b = names[j];
+        const key = [normalizeName(a.name), normalizeName(b.name)].sort().join("||");
+        if (ignored.has(key)) continue;
+        const score = Math.max(matchScore(a.name, b.name), matchScore(b.name, a.name));
+        if (score >= DUPLICATE_THRESHOLD) out.push({ type, a, b, score, key });
+      }
+    }
+  });
+  return out.sort((x, y) => y.score - x.score);
+}
+
+function duplicatesHtml() {
+  if (!state.adminNames) return "";
+  const pairs = duplicateCandidates();
+  const merged = state.adminAliases;
+  const mergedHtml = merged.length === 0 ? "" : `
+    <div class="card">
+      <div class="section-label">MERGED NAMES (${merged.length})</div>
+      <table class="stats-table">
+        ${merged.map((m) => `
+          <tr>
+            <td class="stats-label">${esc(m.alias_raw || m.alias_norm)} &rarr; <strong>${esc(m.canonical)}</strong></td>
+            <td style="text-align:right"><button class="tiny-btn" data-unmerge="${esc(m.id)}">Undo</button></td>
+          </tr>`).join("")}
+      </table>
+      <p class="hint-text">Undoing puts the reviews back under the spelling they were posted with.</p>
+    </div>`;
+  const pairsHtml = pairs.length === 0
+    ? `<p class="hint-text">Nothing looks like a duplicate right now.</p>`
+    : pairs.map((p) => `
+      <div class="card border-${p.type}">
+        <div style="font-size:11px;letter-spacing:0.3px;color:${COLORS[p.type]};font-weight:700">${typeLabel(p.type).toUpperCase()} · ${p.score}% similar</div>
+        <div class="dupe-pair">
+          <div class="dupe-side">
+            <div class="dupe-name">${esc(p.a.name)}</div>
+            <div class="dupe-sub">${esc(p.a.sub || "")}${p.a.sub ? " · " : ""}${p.a.count} review${p.a.count !== 1 ? "s" : ""}</div>
+          </div>
+          <div class="dupe-side">
+            <div class="dupe-name">${esc(p.b.name)}</div>
+            <div class="dupe-sub">${esc(p.b.sub || "")}${p.b.sub ? " · " : ""}${p.b.count} review${p.b.count !== 1 ? "s" : ""}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <button class="tiny-btn approve" data-merge="${esc(p.b.name)}::${esc(p.a.name)}">Keep &ldquo;${esc(p.a.name)}&rdquo;</button>
+          <button class="tiny-btn approve" data-merge="${esc(p.a.name)}::${esc(p.b.name)}">Keep &ldquo;${esc(p.b.name)}&rdquo;</button>
+          <button class="tiny-btn" data-not-dupe="${esc(p.a.name)}::${esc(p.b.name)}">Not the same</button>
+        </div>
+      </div>`).join("");
+  return `
+    <div class="section-label" style="margin:18px 0 8px">POSSIBLE DUPLICATES (${pairs.length})</div>
+    <p class="hint-text" style="margin-top:0">Names that look like the same company. "Keep" files every review under that spelling, everywhere on the site, straight away. "Not the same" retires the suggestion for good.</p>
+    ${state.adminMergeNote ? `<p class="hint-text" style="color:#1F5C57"><strong>${esc(state.adminMergeNote)}</strong></p>` : ""}
+    ${pairsHtml}
+    ${mergedHtml}`;
+}
+
+// ---------- the full name directory (admin) ----------
+
+// Every canonical name on file for one type, with its review count and (hospitals) location.
+function directoryNames(type) {
+  const list = (state.adminNames && state.adminNames[type]) || [];
+  const seen = new Map();
+  list.forEach((item) => {
+    const name = canonicalName(item.name);
+    if (!seen.has(name)) seen.set(name, { name, count: 0, sub: "", spellings: [] });
+    const e = seen.get(name);
+    e.count += item.count;
+    if (!e.sub && item.sub) e.sub = item.sub;
+    if (item.name !== name && !e.spellings.includes(item.name)) e.spellings.push(item.name);
+  });
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function directoryHtml() {
+  if (!state.adminNames) return "";
+  const q = state.adminNameFilter.trim().toLowerCase();
+  const all = directoryNames(state.adminNameType);
+  const rows = all.filter((r) => !q || r.name.toLowerCase().includes(q) || (r.sub || "").toLowerCase().includes(q));
+  const picked = state.adminPicked;
+  const tabs = SEARCH_SECTIONS.map(([type, heading]) => {
+    const n = directoryNames(type).length;
+    return `<button class="nav-btn${state.adminNameType === type ? " active" : ""}" data-name-type="${type}">${heading} <span style="color:#8A948E">${n}</span></button>`;
+  }).join("");
+  const mergeBar = picked.length < 2 ? "" : `
+    <div class="card merge-bar">
+      <div style="font-weight:700;font-size:13px">Merge ${picked.length} names into one</div>
+      <div class="hint-text" style="margin-top:2px">Pick the spelling to keep. Every review under the others moves to it, everywhere on the site.</div>
+      <select id="merge-keep" style="margin-top:8px">
+        ${picked.map((n) => `<option value="${esc(n)}"${state.adminKeep === n ? " selected" : ""}>${esc(n)}</option>`).join("")}
+      </select>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="tiny-btn approve" id="merge-go">Merge into the name above</button>
+        <button class="tiny-btn" id="merge-clear">Clear selection</button>
+      </div>
+    </div>`;
+  return `
+    <div class="section-label" style="margin:18px 0 8px">ALL NAMES ON FILE</div>
+    <p class="hint-text" style="margin-top:0">Tick two or more spellings of the same company, then choose which one to keep.</p>
+    <div class="nav dir-tabs">${tabs}</div>
+    <input id="dir-filter" class="search-input" type="search" style="margin-top:10px" placeholder="Filter these names" value="${esc(state.adminNameFilter)}" />
+    ${mergeBar}
+    ${rows.length === 0 ? `<p class="hint-text">${q ? "Nothing matches that." : "No names yet."}</p>` : ""}
+    <div class="dir-list">
+      ${rows.map((r) => `
+        <label class="dir-row${picked.includes(r.name) ? " picked" : ""}">
+          <input type="checkbox" data-pick-name="${esc(r.name)}"${picked.includes(r.name) ? " checked" : ""} />
+          <span class="dir-main">
+            <span class="dir-name">${esc(r.name)}</span>
+            ${r.sub ? `<span class="dir-sub">${esc(r.sub)}</span>` : ""}
+            ${r.spellings.length ? `<span class="dir-sub">merged from: ${esc(r.spellings.join(" · "))}</span>` : ""}
+          </span>
+          <span class="dir-n">${r.count}</span>
+        </label>`).join("")}
+    </div>`;
+}
+
+function attachDirectoryHandlers() {
+  document.querySelectorAll("[data-name-type]").forEach((btn) => {
+    btn.onclick = () => {
+      state.adminNameType = btn.dataset.nameType;
+      state.adminPicked = []; state.adminKeep = ""; state.adminNameFilter = "";
+      paintAdmin();
+    };
+  });
+  const filter = document.getElementById("dir-filter");
+  if (filter) {
+    filter.oninput = () => {
+      state.adminNameFilter = filter.value;
+      const at = filter.selectionStart;
+      paintAdmin();
+      const again = document.getElementById("dir-filter");
+      if (again) { again.focus(); again.setSelectionRange(at, at); }
+    };
+  }
+  document.querySelectorAll("[data-pick-name]").forEach((box) => {
+    box.onchange = () => {
+      const name = box.dataset.pickName;
+      state.adminPicked = box.checked
+        ? state.adminPicked.concat([name])
+        : state.adminPicked.filter((n) => n !== name);
+      if (!state.adminPicked.includes(state.adminKeep)) state.adminKeep = state.adminPicked[0] || "";
+      paintAdmin();
+    };
+  });
+  const keep = document.getElementById("merge-keep");
+  if (keep) keep.onchange = () => { state.adminKeep = keep.value; };
+  const go = document.getElementById("merge-go");
+  if (go) {
+    go.onclick = async () => {
+      const canonical = (document.getElementById("merge-keep") || {}).value || state.adminKeep;
+      const aliases = state.adminPicked.filter((n) => n !== canonical);
+      if (!canonical || aliases.length === 0) return;
+      go.disabled = true;
+      try {
+        await api("/api/admin/aliases", { method: "POST", body: { canonical, aliases } });
+        state.adminMergeNote = `${aliases.length + 1} names now file under "${canonical}".`;
+        state.adminPicked = []; state.adminKeep = "";
+        await loadAdminNames();
+      } catch {
+        state.adminMergeNote = "Couldn't save that merge — try again.";
+        paintAdmin();
+      }
+    };
+  }
+  const clear = document.getElementById("merge-clear");
+  if (clear) clear.onclick = () => { state.adminPicked = []; state.adminKeep = ""; paintAdmin(); };
+}
+
+function attachDuplicateHandlers() {
+  document.querySelectorAll("[data-merge]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [alias, canonical] = btn.dataset.merge.split("::");
+      btn.disabled = true;
+      try {
+        await api("/api/admin/aliases", { method: "POST", body: { canonical, aliases: [alias] } });
+        state.adminMergeNote = `"${alias}" now files under "${canonical}".`;
+        await loadAdminNames();
+      } catch {
+        state.adminMergeNote = "Couldn't save that merge — try again.";
+        paintAdmin();
+      }
+    };
+  });
+  document.querySelectorAll("[data-not-dupe]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [a, b] = btn.dataset.notDupe.split("::");
+      btn.disabled = true;
+      try {
+        await api("/api/admin/name-ignores", { method: "POST", body: { a, b } });
+        state.adminMergeNote = `Kept "${a}" and "${b}" separate.`;
+        await loadAdminNames();
+      } catch { paintAdmin(); }
+    };
+  });
+  document.querySelectorAll("[data-unmerge]").forEach((btn) => {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        await api(`/api/admin/aliases/${btn.dataset.unmerge}`, { method: "DELETE" });
+        state.adminMergeNote = "Merge undone.";
+        await loadAdminNames();
+      } catch { paintAdmin(); }
+    };
+  });
+}
+
+// Pulls the name list + merge state, refreshes the member-facing alias map too,
+// so a merge shows up on the search page without a reload.
+async function loadAdminNames() {
+  try {
+    const data = await api("/api/admin/names");
+    state.adminNames = data.names;
+    state.adminAliases = data.aliases || [];
+    state.adminIgnores = data.ignores || [];
+    state.aliases = {};
+    state.adminAliases.forEach((a) => (state.aliases[a.alias_norm] = a.canonical));
+  } catch { state.adminNames = null; }
+  paintAdmin();
+}
+
 async function renderAdmin() {
   const el = document.getElementById("admin-root");
   if (!state.adminUnlocked) {
@@ -1685,6 +1947,7 @@ async function renderAdmin() {
   }
   state.adminRequests = data.requests;
   paintAdmin();
+  loadAdminNames(); // second pass — the member list shouldn't wait on the name scan
 }
 
 // Draws the dashboard from what's already in state — no fetch — so filtering and
@@ -1699,11 +1962,9 @@ function paintAdmin() {
     .filter((r) => !q || `${r.name} ${r.email} ${r.phone || ""} ${r.nbcrna_number || ""}`.toLowerCase().includes(q))
     .sort(byLastName);
 
-  el.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <button class="back-btn" id="admin-back-btn">&larr; Close admin</button>
-      <button class="tiny-btn" id="admin-refresh">Refresh</button>
-    </div>
+  const tab = state.adminTab === "names" ? "names" : "members";
+  const dupeCount = state.adminNames ? duplicateCandidates().length : 0;
+  const membersSection = `
     <div class="section-label" style="margin:10px 0">PENDING VERIFICATION (${pending.length})</div>
     ${pending.length === 0 ? `<p class="hint-text">Nothing waiting.</p>` : ""}
     ${pending.map((r) => `
@@ -1724,8 +1985,29 @@ function paintAdmin() {
     ${members.length === 0 ? `<p class="hint-text">${q ? "No one matches that." : "None yet."}</p>` : ""}
     ${members.map(memberCardHtml).join("")}`;
 
+  const namesSection = state.adminNames === null
+    ? `<p class="hint-text">Reading the names on file…</p>`
+    : duplicatesHtml() + directoryHtml();
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <button class="back-btn" id="admin-back-btn">&larr; Close admin</button>
+      <button class="tiny-btn" id="admin-refresh">Refresh</button>
+    </div>
+    <div class="nav admin-tabs">
+      <button class="nav-btn${tab === "members" ? " active" : ""}" data-admin-tab="members">Members${pending.length ? ` <span class="tab-badge">${pending.length}</span>` : ""}</button>
+      <button class="nav-btn${tab === "names" ? " active" : ""}" data-admin-tab="names">Names${dupeCount ? ` <span class="tab-badge">${dupeCount}</span>` : ""}</button>
+    </div>
+    ${tab === "members" ? membersSection : namesSection}`;
+
+  document.querySelectorAll("[data-admin-tab]").forEach((btn) => {
+    btn.onclick = () => { state.adminTab = btn.dataset.adminTab; state.adminMergeNote = ""; paintAdmin(); };
+  });
+
   document.getElementById("admin-back-btn").onclick = () => { state.view = state.user ? "app" : "home"; render(); };
   document.getElementById("admin-refresh").onclick = () => renderAdmin();
+  attachDuplicateHandlers();
+  attachDirectoryHandlers();
   document.querySelectorAll("[data-decide]").forEach((btn) => {
     btn.onclick = async () => {
       const [id, decision] = btn.dataset.decide.split("::");
