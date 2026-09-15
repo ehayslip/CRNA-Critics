@@ -112,6 +112,10 @@ async function api(path, opts = {}) {
 // ---------- state ----------
 
 const state = {
+  adminOpenId: null,   // which member row is expanded
+  adminFilter: "",     // name/email filter in the member list
+  adminConfirmId: null, // member row showing the delete confirmation
+  adminNotes: {},      // id -> last action message shown on that row
   view: "loading", // loading | home | gate | setpw | app | admin | terms
   returnView: "home", // where the Terms page sends you back to
   user: null,
@@ -1230,6 +1234,92 @@ renderTab = function () {
 
 // ---------- admin ----------
 
+// Sorting people by last name from a single free-text field: honor "Smith, John"
+// if a comma is there, otherwise take the last word that isn't a credential or suffix.
+const NAME_TAIL = new Set(["crna", "aprn", "np", "dnp", "dnap", "msn", "bsn", "phd", "mba", "aa", "jr", "sr", "ii", "iii", "iv", "v"]);
+function lastNameOf(name) {
+  let s = String(name == null ? "" : name).trim();
+  if (s.includes(",")) {
+    const [head, ...rest] = s.split(",").map((x) => x.trim());
+    const tailWords = rest.join(" ").replace(/[.]/g, "").split(/\s+/).filter(Boolean);
+    // "Smith, CRNA" is a credential, not a first name — "Smith, John" is.
+    const allCredentials = tailWords.length > 0 && tailWords.every((w) => NAME_TAIL.has(w.toLowerCase()));
+    if (head && !allCredentials && tailWords.length > 0) return head.toLowerCase();
+    s = head;
+  }
+  const parts = s.replace(/[.]/g, "").split(/\s+/).filter(Boolean);
+  while (parts.length > 1 && NAME_TAIL.has(parts[parts.length - 1].toLowerCase())) parts.pop();
+  return (parts[parts.length - 1] || "").toLowerCase();
+}
+function byLastName(a, b) {
+  const c = lastNameOf(a.name).localeCompare(lastNameOf(b.name));
+  return c !== 0 ? c : String(a.name || "").localeCompare(String(b.name || ""));
+}
+function adminDate(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  return isNaN(d) ? esc(v) : esc(d.toLocaleDateString());
+}
+function termsLine(r) {
+  return r.terms_accepted_at
+    ? `Terms v${esc(r.terms_version || "?")} accepted ${esc(new Date(r.terms_accepted_at).toLocaleString())} · IP ${esc(r.terms_ip || "unknown")}${r.sms_consent ? " · SMS opt-in" : ""}`
+    : "No terms acceptance on file (pre-dates the agreement)";
+}
+
+// One expandable member row: name + status on the closed row, everything on file
+// plus the per-member actions once it's open.
+function memberCardHtml(r) {
+  const open = state.adminOpenId === r.id;
+  const confirming = state.adminConfirmId === r.id;
+  const note = state.adminNotes[r.id] || "";
+  const statusColor = r.status === "approved" ? "#1F5C57" : "#8C3A32";
+  return `
+    <div class="card member-card${open ? " open" : ""}">
+      <button type="button" class="member-head" data-member="${r.id}">
+        <span>
+          <span class="member-name">${esc(r.name)}</span>
+          <span class="member-sub">${esc(r.email)}</span>
+        </span>
+        <span style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <span style="font-size:10px;font-weight:700;color:${statusColor}">${esc(r.status.toUpperCase())}</span>
+          <span class="member-caret">${open ? "▾" : "▸"}</span>
+        </span>
+      </button>
+      ${!open ? "" : `
+      <div class="member-body">
+        <table class="stats-table">
+          <tr><td class="stats-label">Email</td><td><a href="mailto:${esc(r.email)}">${esc(r.email)}</a></td></tr>
+          <tr><td class="stats-label">Phone</td><td>${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : "—"}</td></tr>
+          <tr><td class="stats-label">NBCRNA #</td><td>${esc(r.nbcrna_number)}</td></tr>
+          <tr><td class="stats-label">Work type</td><td>${r.employment_type ? esc(r.employment_type === "staff" ? "Staff (W-2)" : "Locum (1099)") : "not chosen yet"}</td></tr>
+          <tr><td class="stats-label">Password</td><td>${r.hasPassword ? "set by member" : "<em>not set yet</em>"}</td></tr>
+          <tr><td class="stats-label">Reviews posted</td><td>${r.reviewCount}</td></tr>
+          <tr><td class="stats-label">Requested</td><td>${adminDate(r.requested_at)}</td></tr>
+          <tr><td class="stats-label">Decided</td><td>${adminDate(r.decided_at)}</td></tr>
+        </table>
+        <p class="hint-text" style="font-size:11px">${termsLine(r)}</p>
+        <p class="hint-text" style="font-size:11px">Passwords are stored one-way encrypted, so no one — including you — can read a member's password. Use the reset button to let them set a new one.</p>
+        ${note ? `<p class="hint-text" style="color:#1F5C57;font-weight:600">${esc(note)}</p>` : ""}
+        ${confirming ? `
+          <div class="empty-box" style="margin-top:10px;border-color:#8C3A32">
+            <p style="margin:0;font-weight:700;font-size:13px">Delete ${esc(r.name)}?</p>
+            <p class="hint-text">This can't be undone. They'd have to re-apply and be verified again.</p>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+              <button class="tiny-btn reject" data-del="${r.id}::0">Delete account, keep reviews</button>
+              <button class="tiny-btn reject" data-del="${r.id}::1">Delete account + ${r.reviewCount} review${r.reviewCount === 1 ? "" : "s"}</button>
+              <button class="tiny-btn" data-del-cancel="${r.id}">Cancel</button>
+            </div>
+          </div>` : `
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
+            ${r.status === "approved" ? `
+              <button class="tiny-btn" data-link="${r.id}::welcome">Resend login link</button>
+              <button class="tiny-btn" data-link="${r.id}::reset">Send password reset</button>` : ""}
+            <button class="tiny-btn reject" data-del-start="${r.id}">Delete</button>
+          </div>`}
+      </div>`}
+    </div>`;
+}
+
 async function renderAdmin() {
   const el = document.getElementById("admin-root");
   if (!state.adminUnlocked) {
@@ -1265,8 +1355,20 @@ async function renderAdmin() {
     return;
   }
   state.adminRequests = data.requests;
+  paintAdmin();
+}
+
+// Draws the dashboard from what's already in state — no fetch — so filtering and
+// opening a row stay instant and don't disturb the filter box.
+function paintAdmin() {
+  const el = document.getElementById("admin-root");
+  if (!el) return;
   const pending = state.adminRequests.filter((r) => r.status === "pending");
-  const decided = state.adminRequests.filter((r) => r.status !== "pending");
+  const q = state.adminFilter.trim().toLowerCase();
+  const members = state.adminRequests
+    .filter((r) => r.status !== "pending")
+    .filter((r) => !q || `${r.name} ${r.email} ${r.phone || ""} ${r.nbcrna_number || ""}`.toLowerCase().includes(q))
+    .sort(byLastName);
 
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center">
@@ -1288,16 +1390,10 @@ async function renderAdmin() {
           <button class="tiny-btn reject" data-decide="${r.id}::rejected">Reject</button>
         </div>
       </div>`).join("")}
-    <div class="section-label" style="margin:14px 0 10px">DECIDED</div>
-    ${decided.length === 0 ? `<p class="hint-text">None yet.</p>` : ""}
-    ${decided.map((r) => `
-      <div class="card" style="opacity:0.7">
-        <div style="display:flex;justify-content:space-between">
-          <span style="font-weight:700">${esc(r.name)}</span>
-          <span style="font-size:11px;font-weight:700;color:${r.status === "approved" ? "#1F5C57" : "#8C3A32"}">${r.status.toUpperCase()}</span>
-        </div>
-        <div style="font-size:12px;color:#6B756F">NBCRNA ${esc(r.nbcrna_number)}</div>
-      </div>`).join("")}`;
+    <div class="section-label" style="margin:14px 0 8px">MEMBERS (${members.length}) &middot; BY LAST NAME</div>
+    <input id="admin-filter" class="search-input" type="search" placeholder="Filter by name, email, phone, NBCRNA #" value="${esc(state.adminFilter)}" />
+    ${members.length === 0 ? `<p class="hint-text">${q ? "No one matches that." : "None yet."}</p>` : ""}
+    ${members.map(memberCardHtml).join("")}`;
 
   document.getElementById("admin-back-btn").onclick = () => { state.view = state.user ? "app" : "home"; render(); };
   document.getElementById("admin-refresh").onclick = () => renderAdmin();
@@ -1306,6 +1402,68 @@ async function renderAdmin() {
       const [id, decision] = btn.dataset.decide.split("::");
       await api(`/api/admin/requests/${id}/decide`, { method: "POST", body: { decision } });
       renderAdmin();
+    };
+  });
+
+  const filterEl = document.getElementById("admin-filter");
+  if (filterEl) {
+    // Filter without a round trip: the list is already in state.
+    filterEl.oninput = () => {
+      state.adminFilter = filterEl.value;
+      const cursor = filterEl.selectionStart;
+      paintAdmin();
+      const again = document.getElementById("admin-filter");
+      if (again) { again.focus(); again.setSelectionRange(cursor, cursor); }
+    };
+  }
+  attachMemberHandlers();
+}
+
+
+function attachMemberHandlers() {
+  document.querySelectorAll("[data-member]").forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.dataset.member;
+      const wasOpen = state.adminOpenId === id;
+      state.adminOpenId = wasOpen ? null : id;
+      if (!wasOpen) state.adminConfirmId = null;
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-link]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [id, kind] = btn.dataset.link.split("::");
+      btn.disabled = true;
+      btn.textContent = "Sending…";
+      try {
+        const out = await api(`/api/admin/requests/${id}/send-link`, { method: "POST", body: { kind } });
+        state.adminNotes[id] = `${kind === "reset" ? "Password reset" : "Login link"} sent to ${out.sentTo} — good for 48 hours.`;
+      } catch (e) {
+        state.adminNotes[id] = `Couldn't send that email (${e.message}). Check the Resend key and try again.`;
+      }
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-del-start]").forEach((btn) => {
+    btn.onclick = () => { state.adminConfirmId = btn.dataset.delStart; paintAdmin(); };
+  });
+  document.querySelectorAll("[data-del-cancel]").forEach((btn) => {
+    btn.onclick = () => { state.adminConfirmId = null; paintAdmin(); };
+  });
+  document.querySelectorAll("[data-del]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [id, withReviews] = btn.dataset.del.split("::");
+      btn.disabled = true;
+      try {
+        const out = await api(`/api/admin/requests/${id}?reviews=${withReviews}`, { method: "DELETE" });
+        state.adminConfirmId = null;
+        state.adminOpenId = null;
+        delete state.adminNotes[id];
+        flash(`Deleted ${out.name}${out.deletedReviews ? ` and ${out.deletedReviews} review${out.deletedReviews === 1 ? "" : "s"}` : ""}.`);
+      } catch (e) {
+        state.adminNotes[id] = `Couldn't delete that account (${e.message}).`;
+        paintAdmin();
+      }
     };
   });
 }
