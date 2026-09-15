@@ -73,7 +73,7 @@ function fillTokens(text, ctx) {
 // Plain text -> HTML paragraphs. {{cta}} on its own becomes the button. Everything
 // else is escaped; bare URLs become links.
 function bodyToHtml(text, ctx) {
-  const ctaHtml = `<p style="margin:22px 0;"><a href="${ctx.baseUrl}" style="background:#123C3A;color:#fff;padding:13px 22px;text-decoration:none;border-radius:4px;font-weight:bold;display:inline-block;">Open CRNA Critics</a></p>`;
+  const ctaHtml = `<p style="margin:22px 0;"><a href="${ctx.baseUrl}" style="background:#0B1526;color:#fff;padding:13px 22px;text-decoration:none;border-radius:4px;font-weight:bold;display:inline-block;">Open CRNA Critics</a></p>`;
   return fillTokens(text, ctx)
     .split(/\n{2,}/)
     .map((block) => {
@@ -83,7 +83,7 @@ function bodyToHtml(text, ctx) {
       const html = escapeHtml(trimmed)
         .replace(/\{\{\s*cta\s*\}\}/gi, "")
         // Trailing sentence punctuation stays outside the link.
-        .replace(/(https?:\/\/[^\s<]*[^\s<.,;:!?)\]])/g, '<a href="$1" style="color:#1F5C57;">$1</a>')
+        .replace(/(https?:\/\/[^\s<]*[^\s<.,;:!?)\]])/g, '<a href="$1" style="color:#13A15A;">$1</a>')
         .replace(/\n/g, "<br/>");
       return `<p style="margin:0 0 14px;font-size:15px;line-height:1.55;">${html}</p>`;
     })
