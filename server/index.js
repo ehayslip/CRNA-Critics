@@ -6,7 +6,7 @@ const path = require("path");
 
 const db = require("./db");
 const { sign, verify, hashPassword, verifyPassword } = require("./auth");
-const { sendEmail, escapeHtml, campaignHtml, fillTokens, TOKENS } = require("./email");
+const { sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, TOKENS } = require("./email");
 const { EMAIL_LOGO_PNG_BASE64, emailHeaderHtml } = require("./brand");
 
 const app = express();
@@ -81,6 +81,8 @@ app.post("/api/request-access", async (req, res) => {
   if (process.env.ADMIN_EMAIL) {
     sendEmail({
       to: process.env.ADMIN_EMAIL,
+      // Replying to the alert writes to the CRNA who just applied, not to the site.
+      replyTo: row.email,
       subject: `CRNA Critics — verify ${escapeHtml(name)}?`,
       html: `
         <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
@@ -144,6 +146,7 @@ function sendWelcomeEmail(row) {
   const loginUrl = `${BASE_URL}/api/auth/verify?token=${loginToken}`;
   return sendEmail({
     to: row.email,
+    replyTo: REPLY_TO,
     subject: "You're verified on CRNA Critics",
     html: `
       <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
@@ -485,6 +488,7 @@ async function runCampaign(campaignId, subject, body) {
           to: member.email,
           subject: fillTokens(subject, ctx),
           html: campaignHtml({ body, ctx, unsubscribeUrl: unsubscribeUrlFor(member.email) }),
+          replyTo: REPLY_TO,
         });
         sent += 1;
         markRecipient.run("sent", "", new Date().toISOString(), r.id);
