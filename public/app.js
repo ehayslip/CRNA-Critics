@@ -305,6 +305,30 @@ const state = {
   adminNameFilter: "",
   adminPicked: [],    // names ticked in the directory, for a multi-way merge
   adminKeep: "",      // which of the ticked names survives
+  // --- admin: reviews ---
+  adminReviews: null,        // every review, newest first (admin sees the author)
+  adminReviewFilter: "",
+  adminMemberReviews: {},    // member id -> their reviews, loaded when the row is opened
+  adminMemberReviewsOpen: null,
+  // --- admin: member email ---
+  emailPane: "compose",      // compose | templates | sent
+  emailTemplates: null,      // rows from email_templates
+  emailTokens: [],           // merge tokens the server supports
+  emailRecipients: null,     // approved members, with opt-out + review counts
+  emailPicked: [],           // ids ticked for this send
+  emailRecipientFilter: "",
+  emailSubject: "",
+  emailBody: "",
+  emailTemplateName: "",     // which template the draft came from (recorded on the campaign)
+  emailTemplateId: "",       // keeps the picker showing that template after a repaint
+  emailEditing: null,        // { id, name, category, subject, body } being edited in the CMS
+  emailPreview: null,        // rendered HTML of the draft for one member
+  emailNote: "",
+  emailConfirming: false,
+  emailCampaigns: [],
+  emailProgress: null,       // the campaign currently being polled
+  emailOpenCampaign: null,   // campaign id expanded in the Sent list
+  emailCampaignDetail: null,
   editingId: null, // id of the member's own review being edited in the Post a review form
 };
 
@@ -1548,6 +1572,15 @@ function mineHtml() {
         <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}${r.editedAt ? " · edited" : ""}${r.anonymous ? ` · <span class="badge anon">🔒 ANONYMOUS</span>` : ""}</span>
         <span style="display:flex;gap:6px"><button class="tiny-btn" data-edit="${r.id}">Edit</button><span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span></span>
       </div>
+      ${reviewBodyHtml(r)}
+    </div>`).join("");
+}
+
+// The scored sections of one review — group / agency / agent / hospital — without any
+// header or buttons around them. Shared by "My reviews" and the admin review views so
+// the admin sees exactly what the member posted.
+function reviewBodyHtml(r) {
+  return `
       ${r.groupName ? `
       <div style="margin-bottom:10px;padding-left:10px;border-left:3px solid ${COLORS.group}">
         <div style="font-size:11px;color:${COLORS.group};font-weight:700">ANESTHESIA GROUP: ${esc(r.groupName)}</div>
@@ -1597,8 +1630,7 @@ function mineHtml() {
         ${returnBadge(r.hospitalWouldReturn)}
         ${categoryNotesHtml(r, HOSPITAL_CATEGORIES, "hospitalNotes", "hospitalRatings")}
         ${r.hospitalComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.hospitalComment)}</p>` : ""}
-      </div>
-    </div>`).join("");
+      </div>`;
 }
 function attachMineHandlers() {
   attachDeleteHandlers();
@@ -1699,6 +1731,7 @@ function memberCardHtml(r) {
           <tr><td class="stats-label">Work type</td><td>${r.employment_type ? esc(r.employment_type === "staff" ? "Staff (W-2)" : "Locum (1099)") : "not chosen yet"}</td></tr>
           <tr><td class="stats-label">Password</td><td>${r.hasPassword ? "set by member" : "<em>not set yet</em>"}</td></tr>
           <tr><td class="stats-label">Reviews posted</td><td>${r.reviewCount}</td></tr>
+          <tr><td class="stats-label">Mailings</td><td>${r.bulk_unsubscribed ? "<strong>opted out</strong> (account email still sends)" : "subscribed"}</td></tr>
           <tr><td class="stats-label">Requested</td><td>${adminDate(r.requested_at)}</td></tr>
           <tr><td class="stats-label">Decided</td><td>${adminDate(r.decided_at)}</td></tr>
         </table>
@@ -1716,11 +1749,14 @@ function memberCardHtml(r) {
             </div>
           </div>` : `
           <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
+            <button class="tiny-btn${state.adminMemberReviewsOpen === r.id ? " active-btn" : ""}" data-member-reviews="${r.id}">${state.adminMemberReviewsOpen === r.id ? "Hide" : "View"} reviews (${r.reviewCount})</button>
             ${r.status === "approved" ? `
               <button class="tiny-btn" data-link="${r.id}::welcome">Resend login link</button>
-              <button class="tiny-btn" data-link="${r.id}::reset">Send password reset</button>` : ""}
+              <button class="tiny-btn" data-link="${r.id}::reset">Send password reset</button>
+              <button class="tiny-btn" data-unsub="${r.id}::${r.bulk_unsubscribed ? 0 : 1}">${r.bulk_unsubscribed ? "Put back on mailings" : "Opt out of mailings"}</button>` : ""}
             <button class="tiny-btn reject" data-del-start="${r.id}">Delete</button>
           </div>`}
+        ${memberReviewsHtml(r)}
       </div>`}
     </div>`;
 }
@@ -2018,7 +2054,7 @@ function paintAdmin() {
     .filter((r) => !q || `${r.name} ${r.email} ${r.phone || ""} ${r.nbcrna_number || ""}`.toLowerCase().includes(q))
     .sort(byLastName);
 
-  const tab = state.adminTab === "names" ? "names" : "members";
+  const tab = ["members", "reviews", "email", "names"].includes(state.adminTab) ? state.adminTab : "members";
   const dupeCount = state.adminNames ? duplicateCandidates().length : 0;
   const membersSection = `
     <div class="section-label" style="margin:10px 0">PENDING VERIFICATION (${pending.length})</div>
@@ -2052,16 +2088,29 @@ function paintAdmin() {
     </div>
     <div class="nav admin-tabs">
       <button class="nav-btn${tab === "members" ? " active" : ""}" data-admin-tab="members">Members${pending.length ? ` <span class="tab-badge">${pending.length}</span>` : ""}</button>
+      <button class="nav-btn${tab === "reviews" ? " active" : ""}" data-admin-tab="reviews">Reviews${state.adminReviews ? ` <span class="tab-badge">${state.adminReviews.length}</span>` : ""}</button>
+      <button class="nav-btn${tab === "email" ? " active" : ""}" data-admin-tab="email">Email</button>
       <button class="nav-btn${tab === "names" ? " active" : ""}" data-admin-tab="names">Names${dupeCount ? ` <span class="tab-badge">${dupeCount}</span>` : ""}</button>
     </div>
-    ${tab === "members" ? membersSection : namesSection}`;
+    ${tab === "members" ? membersSection : tab === "reviews" ? adminReviewsSection() : tab === "email" ? emailSection() : namesSection}`;
 
   document.querySelectorAll("[data-admin-tab]").forEach((btn) => {
-    btn.onclick = () => { state.adminTab = btn.dataset.adminTab; state.adminMergeNote = ""; paintAdmin(); };
+    btn.onclick = () => {
+      state.adminTab = btn.dataset.adminTab;
+      state.adminMergeNote = "";
+      paintAdmin();
+      // Each tab loads its own data the first time it's opened.
+      if (state.adminTab === "reviews") loadAdminReviews();
+      if (state.adminTab === "email") loadEmailData();
+    };
   });
 
   document.getElementById("admin-back-btn").onclick = () => { state.view = state.user ? "app" : "home"; render(); };
-  document.getElementById("admin-refresh").onclick = () => renderAdmin();
+  document.getElementById("admin-refresh").onclick = () => {
+    if (state.adminTab === "reviews") loadAdminReviews(true);
+    if (state.adminTab === "email") loadEmailData(true);
+    renderAdmin();
+  };
   attachDuplicateHandlers();
   attachDirectoryHandlers();
   document.querySelectorAll("[data-decide]").forEach((btn) => {
@@ -2084,6 +2133,8 @@ function paintAdmin() {
     };
   }
   attachMemberHandlers();
+  attachAdminReviewHandlers();
+  attachEmailHandlers();
 }
 
 
@@ -2111,6 +2162,36 @@ function attachMemberHandlers() {
       paintAdmin();
     };
   });
+  document.querySelectorAll("[data-member-reviews]").forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.dataset.memberReviews;
+      const wasOpen = state.adminMemberReviewsOpen === id;
+      state.adminMemberReviewsOpen = wasOpen ? null : id;
+      paintAdmin();
+      if (!wasOpen && !state.adminMemberReviews[id]) loadMemberReviews(id);
+    };
+  });
+  document.querySelectorAll("[data-unsub]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [id, value] = btn.dataset.unsub.split("::");
+      btn.disabled = true;
+      try {
+        const out = await api(`/api/admin/requests/${id}/unsubscribe`, { method: "POST", body: { unsubscribed: value === "1" } });
+        const row = state.adminRequests.find((x) => x.id === id);
+        if (row) row.bulk_unsubscribed = out.unsubscribed ? 1 : 0;
+        state.adminNotes[id] = out.unsubscribed
+          ? "Taken off member mailings. Account email (sign-in links, password resets) still sends."
+          : "Back on member mailings.";
+        // Keep the Email tab's picker in step without a refetch.
+        const rcpt = (state.emailRecipients || []).find((x) => x.id === id);
+        if (rcpt) rcpt.unsubscribed = !!out.unsubscribed;
+        if (out.unsubscribed) state.emailPicked = state.emailPicked.filter((x) => x !== id);
+      } catch (e) {
+        state.adminNotes[id] = `Couldn't change that (${e.message}).`;
+      }
+      paintAdmin();
+    };
+  });
   document.querySelectorAll("[data-del-start]").forEach((btn) => {
     btn.onclick = () => { state.adminConfirmId = btn.dataset.delStart; paintAdmin(); };
   });
@@ -2133,6 +2214,554 @@ function attachMemberHandlers() {
       }
     };
   });
+}
+
+// ---------- admin: reviews ----------
+
+async function loadAdminReviews(force) {
+  if (state.adminReviews && !force) return;
+  try {
+    const data = await api("/api/admin/reviews");
+    state.adminReviews = data.reviews;
+  } catch {
+    state.adminReviews = [];
+  }
+  paintAdmin();
+}
+
+// Everything one review mentions, flattened for the filter box.
+function reviewHaystack(r) {
+  return [
+    r.reviewer && r.reviewer.name, r.reviewerEmail, r.hospitalName, r.hospitalCity, r.hospitalState,
+    r.agencyName, r.agentName, r.groupName, r.hospitalComment, r.agencyAgentComment, r.agentComment, r.groupComment,
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+// One review as the admin sees it: who wrote it (even when it's posted anonymously),
+// how to reach them, and the full scorecard exactly as it appears on the site.
+function adminReviewCardHtml(r) {
+  return `
+    <div class="card">
+      <div class="admin-review-head">
+        <span>
+          <span class="member-name">${esc(r.reviewer ? r.reviewer.name : "Unknown")}</span>
+          <span class="member-sub">${r.reviewerEmail ? `<a href="mailto:${esc(r.reviewerEmail)}">${esc(r.reviewerEmail)}</a>` : ""}</span>
+        </span>
+        <span style="text-align:right;flex-shrink:0">
+          <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}${r.editedAt ? " · edited" : ""}</span>
+          ${r.anonymous ? `<div><span class="badge anon">🔒 POSTED ANONYMOUSLY</span></div>` : ""}
+        </span>
+      </div>
+      ${reviewBodyHtml(r)}
+    </div>`;
+}
+
+function adminReviewsSection() {
+  if (state.adminReviews === null) return `<p class="hint-text">Reading the reviews on file…</p>`;
+  const q = state.adminReviewFilter.trim().toLowerCase();
+  const rows = state.adminReviews.filter((r) => !q || reviewHaystack(r).includes(q));
+  const anon = state.adminReviews.filter((r) => r.anonymous).length;
+  return `
+    <div class="section-label" style="margin:10px 0 6px">REVIEWS (${state.adminReviews.length}) &middot; NEWEST FIRST</div>
+    <p class="hint-text" style="margin-top:0">${anon} posted anonymously — the site hides those names from members, but you see them here.</p>
+    <input id="admin-review-filter" class="search-input" type="search" placeholder="Filter by CRNA, hospital, agency, agent, group or comment" value="${esc(state.adminReviewFilter)}" />
+    ${rows.length === 0 ? `<p class="hint-text">${q ? "Nothing matches that." : "No reviews posted yet."}</p>` : ""}
+    ${rows.map(adminReviewCardHtml).join("")}`;
+}
+
+function attachAdminReviewHandlers() {
+  const el = document.getElementById("admin-review-filter");
+  if (!el) return;
+  el.oninput = () => {
+    state.adminReviewFilter = el.value;
+    const cursor = el.selectionStart;
+    paintAdmin();
+    const again = document.getElementById("admin-review-filter");
+    if (again) { again.focus(); again.setSelectionRange(cursor, cursor); }
+  };
+}
+
+// The reviews panel that opens inside a member's row on the Members tab.
+async function loadMemberReviews(id) {
+  try {
+    const data = await api(`/api/admin/requests/${id}/reviews`);
+    state.adminMemberReviews[id] = data.reviews;
+  } catch {
+    state.adminMemberReviews[id] = [];
+  }
+  paintAdmin();
+}
+
+function memberReviewsHtml(r) {
+  if (state.adminMemberReviewsOpen !== r.id) return "";
+  const rows = state.adminMemberReviews[r.id];
+  if (!rows) return `<p class="hint-text">Loading their reviews…</p>`;
+  if (rows.length === 0) return `<p class="hint-text">${esc(r.name)} hasn't posted a review yet.</p>`;
+  return `<div class="member-reviews">${rows.map((rev) => `
+    <div class="card" style="margin:8px 0">
+      <div style="font-size:12px;color:#6B756F;margin-bottom:6px">${new Date(rev.date).toLocaleDateString()}${rev.editedAt ? " · edited" : ""}${rev.anonymous ? ` · <span class="badge anon">🔒 ANONYMOUS</span>` : ""}</div>
+      ${reviewBodyHtml(rev)}
+    </div>`).join("")}</div>`;
+}
+
+// ---------- admin: member email ----------
+
+async function loadEmailData(force) {
+  if (state.emailTemplates && !force) return;
+  try {
+    const [t, r, c] = await Promise.all([
+      api("/api/admin/templates"),
+      api("/api/admin/email/recipients"),
+      api("/api/admin/campaigns"),
+    ]);
+    state.emailTemplates = t.templates || [];
+    state.emailTokens = t.tokens || [];
+    state.emailRecipients = r.recipients || [];
+    state.emailCampaigns = c.campaigns || [];
+  } catch {
+    state.emailTemplates = state.emailTemplates || [];
+    state.emailRecipients = state.emailRecipients || [];
+  }
+  paintAdmin();
+}
+
+function mailableRecipients() {
+  return (state.emailRecipients || []).filter((r) => !r.unsubscribed);
+}
+
+function filteredRecipients() {
+  const q = state.emailRecipientFilter.trim().toLowerCase();
+  return (state.emailRecipients || []).filter(
+    (r) => !q || `${r.name} ${r.email}`.toLowerCase().includes(q)
+  );
+}
+
+function recipientRowHtml(r) {
+  const picked = state.emailPicked.includes(r.id);
+  const last = r.lastReviewAt ? new Date(r.lastReviewAt).toLocaleDateString() : "never posted";
+  return `
+    <label class="rcpt-row${r.unsubscribed ? " out" : ""}${picked ? " picked" : ""}">
+      <input type="checkbox" data-rcpt="${r.id}" ${picked ? "checked" : ""} ${r.unsubscribed ? "disabled" : ""}/>
+      <span class="rcpt-main">
+        <span class="rcpt-name">${esc(r.name)}</span>
+        <span class="rcpt-sub">${esc(r.email)}</span>
+      </span>
+      <span class="rcpt-meta">${r.reviewCount} review${r.reviewCount === 1 ? "" : "s"}<br/><span style="color:#8A948E">last: ${esc(last)}</span></span>
+      ${r.unsubscribed ? `<span class="badge out-badge">OPTED OUT</span>` : ""}
+    </label>`;
+}
+
+function composePaneHtml() {
+  const recipients = filteredRecipients();
+  const picked = state.emailPicked.length;
+  const totalMailable = mailableRecipients().length;
+  const optedOut = (state.emailRecipients || []).length - totalMailable;
+  const templates = state.emailTemplates || [];
+  const prog = state.emailProgress;
+  const done = prog && prog.status === "done";
+  return `
+    ${prog ? `
+      <div class="card" style="border-color:#1F5C57">
+        <div class="section-label">${done ? "SEND COMPLETE" : "SENDING…"}</div>
+        <p style="margin:4px 0;font-weight:700">${prog.sent} of ${prog.total} sent${prog.failed ? ` · ${prog.failed} failed` : ""}${prog.skipped ? ` · ${prog.skipped} skipped` : ""}</p>
+        <div class="send-bar"><span style="width:${prog.total ? Math.round(((prog.sent + prog.failed + prog.skipped) / prog.total) * 100) : 0}%"></span></div>
+        ${prog.last_error ? `<p class="hint-text" style="color:#8C3A32">Last error: ${esc(prog.last_error)}</p>` : ""}
+        ${done ? `<button class="tiny-btn" id="email-clear-progress" style="margin-top:8px">Done</button>` : `<p class="hint-text">Leave this tab open — one message goes out every second or so.</p>`}
+      </div>` : ""}
+
+    <div class="card">
+      <div class="section-label">START FROM A TEMPLATE</div>
+      ${templates.length === 0
+        ? `<p class="hint-text">No templates yet — build one on the Templates tab.</p>`
+        : `<select id="email-template-pick" class="search-input">
+             <option value="">— write from scratch —</option>
+             ${templates.map((t) => `<option value="${esc(t.id)}"${state.emailTemplateId === t.id ? " selected" : ""}>${esc(t.category ? `${t.category} · ` : "")}${esc(t.name)}</option>`).join("")}
+           </select>
+           <p class="hint-text">Picking one loads its subject and body below. Edits here don't change the saved template.</p>`}
+    </div>
+
+    <div class="card">
+      <div class="section-label">MESSAGE</div>
+      <input id="email-subject" class="search-input" type="text" placeholder="Subject line" value="${esc(state.emailSubject)}" />
+      <textarea id="email-body" rows="14" placeholder="Write the email. Blank lines start new paragraphs.">${esc(state.emailBody)}</textarea>
+      <p class="hint-text" style="margin-bottom:4px">These fill in per person:</p>
+      <div class="token-list">
+        ${(state.emailTokens || []).map((t) => `<button type="button" class="token-chip" data-token="${esc(t.token)}" title="${esc(t.what)}">${esc(t.token)}</button>`).join("")}
+      </div>
+      <p class="hint-text">Click a token to drop it into the body. An unsubscribe line is added to every mailing automatically.</p>
+    </div>
+
+    <div class="card">
+      <div class="section-label">RECIPIENTS (${picked} picked of ${totalMailable})</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+        <button class="tiny-btn" id="rcpt-all">Select all ${totalMailable}</button>
+        <button class="tiny-btn" id="rcpt-none">Clear</button>
+        <button class="tiny-btn" id="rcpt-noreviews">Only those with no reviews</button>
+        <button class="tiny-btn" id="rcpt-shown">Select everyone shown</button>
+      </div>
+      <input id="rcpt-filter" class="search-input" type="search" placeholder="Filter by name or email" value="${esc(state.emailRecipientFilter)}" />
+      ${optedOut ? `<p class="hint-text">${optedOut} member${optedOut === 1 ? " has" : "s have"} opted out of mailings and can't be picked. They still get account email.</p>` : ""}
+      <div class="rcpt-list">
+        ${recipients.length === 0 ? `<p class="hint-text">No one matches that.</p>` : recipients.map(recipientRowHtml).join("")}
+      </div>
+    </div>
+
+    ${state.emailNote ? `<p class="hint-text" style="color:#1F5C57;font-weight:600">${esc(state.emailNote)}</p>` : ""}
+
+    <div class="card">
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        <button class="tiny-btn" id="email-preview-btn">Preview</button>
+        ${state.emailConfirming
+          ? `<button class="primary-btn" id="email-send-confirm" style="margin:0">Yes — send to ${picked}</button>
+             <button class="tiny-btn" id="email-send-cancel">Cancel</button>`
+          : `<button class="primary-btn" id="email-send-btn" style="margin:0" ${picked === 0 || !state.emailSubject.trim() || !state.emailBody.trim() ? "disabled" : ""}>Send to ${picked} member${picked === 1 ? "" : "s"}</button>`}
+      </div>
+      ${state.emailConfirming ? `<p class="hint-text" style="color:#8C3A32;font-weight:600">This sends for real, right now. There's no recall.</p>` : ""}
+    </div>
+
+    ${state.emailPreview ? `
+      <div class="card">
+        <div class="section-label">PREVIEW — AS ${esc(state.emailPreview.to || "a member")} WOULD GET IT</div>
+        <p style="margin:4px 0;font-weight:700;font-size:14px">${esc(state.emailPreview.subject)}</p>
+        <iframe class="email-preview" srcdoc="${esc(state.emailPreview.html)}"></iframe>
+      </div>` : ""}`;
+}
+
+function templatesPaneHtml() {
+  const list = state.emailTemplates || [];
+  const ed = state.emailEditing;
+  if (ed) {
+    return `
+      <div class="card">
+        <div class="section-label">${ed.id ? "EDIT TEMPLATE" : "NEW TEMPLATE"}</div>
+        <input id="tpl-name" class="search-input" type="text" placeholder="Template name (what you'll see in the list)" value="${esc(ed.name)}" />
+        <input id="tpl-category" class="search-input" type="text" placeholder="Category — Feedback, Reminder, Growth…" value="${esc(ed.category)}" />
+        <input id="tpl-subject" class="search-input" type="text" placeholder="Subject line" value="${esc(ed.subject)}" />
+        <textarea id="tpl-body" rows="16" placeholder="Body. Blank lines start new paragraphs.">${esc(ed.body)}</textarea>
+        <div class="token-list">
+          ${(state.emailTokens || []).map((t) => `<button type="button" class="token-chip" data-tpl-token="${esc(t.token)}" title="${esc(t.what)}">${esc(t.token)}</button>`).join("")}
+        </div>
+        <p class="hint-text">${(state.emailTokens || []).map((t) => `${esc(t.token)} — ${esc(t.what)}`).join("<br/>")}</p>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="primary-btn" id="tpl-save" style="margin:0">Save template</button>
+          <button class="tiny-btn" id="tpl-cancel">Cancel</button>
+        </div>
+      </div>`;
+  }
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0">
+      <div class="section-label" style="margin:0">TEMPLATES (${list.length})</div>
+      <button class="tiny-btn" id="tpl-new">+ New template</button>
+    </div>
+    ${state.emailNote ? `<p class="hint-text" style="color:#1F5C57;font-weight:600">${esc(state.emailNote)}</p>` : ""}
+    ${list.length === 0 ? `<p class="hint-text">No templates yet.</p>` : ""}
+    ${list.map((t) => `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
+          <div>
+            ${t.category ? `<div style="font-size:11px;font-weight:700;color:#1F5C57">${esc(String(t.category).toUpperCase())}</div>` : ""}
+            <div style="font-weight:700">${esc(t.name)}</div>
+            <div style="font-size:13px;color:#6B756F">${esc(t.subject)}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="tiny-btn" data-tpl-use="${esc(t.id)}">Use</button>
+            <button class="tiny-btn" data-tpl-edit="${esc(t.id)}">Edit</button>
+            <button class="tiny-btn reject" data-tpl-del="${esc(t.id)}">Delete</button>
+          </div>
+        </div>
+        <p class="tpl-body">${esc(t.body)}</p>
+      </div>`).join("")}`;
+}
+
+function sentPaneHtml() {
+  const list = state.emailCampaigns || [];
+  if (list.length === 0) return `<p class="hint-text">Nothing has been sent yet.</p>`;
+  return `
+    <div class="section-label" style="margin:10px 0">SENT MAILINGS (${list.length})</div>
+    ${list.map((c) => {
+      const open = state.emailOpenCampaign === c.id;
+      const detail = open ? state.emailCampaignDetail : null;
+      return `
+      <div class="card">
+        <button type="button" class="member-head" data-campaign="${esc(c.id)}">
+          <span>
+            <span class="member-name">${esc(c.subject)}</span>
+            <span class="member-sub">${new Date(c.created_at).toLocaleString()}${c.template_name ? ` · ${esc(c.template_name)}` : ""}</span>
+          </span>
+          <span style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+            <span style="font-size:11px;font-weight:700;color:${c.failed ? "#8C3A32" : "#1F5C57"}">${c.sent}/${c.total} SENT${c.failed ? ` · ${c.failed} FAILED` : ""}</span>
+            <span class="member-caret">${open ? "▾" : "▸"}</span>
+          </span>
+        </button>
+        ${!open ? "" : `
+          <div class="member-body">
+            ${c.status !== "done" ? `<p class="hint-text">Still sending…</p>` : ""}
+            ${c.last_error ? `<p class="hint-text" style="color:#8C3A32">Last error: ${esc(c.last_error)}</p>` : ""}
+            ${!detail ? `<p class="hint-text">Loading…</p>` : `
+              <table class="stats-table">
+                ${detail.recipients.map((r) => `
+                  <tr>
+                    <td class="stats-label">${esc(r.name || r.email)}<br/><span style="font-weight:400;color:#8A948E">${esc(r.email)}</span></td>
+                    <td style="text-align:right;font-size:12px;color:${r.status === "sent" ? "#1F5C57" : r.status === "failed" ? "#8C3A32" : "#6B756F"}">${esc(String(r.status).toUpperCase())}${r.error ? `<br/><span style="color:#8A948E">${esc(r.error)}</span>` : ""}</td>
+                  </tr>`).join("")}
+              </table>`}
+            <p class="tpl-body">${esc(c.body)}</p>
+          </div>`}
+      </div>`;
+    }).join("")}`;
+}
+
+function emailSection() {
+  if (state.emailTemplates === null) return `<p class="hint-text">Opening the mail room…</p>`;
+  const pane = state.emailPane;
+  return `
+    <div class="nav admin-subtabs">
+      <button class="nav-btn${pane === "compose" ? " active" : ""}" data-email-pane="compose">Compose</button>
+      <button class="nav-btn${pane === "templates" ? " active" : ""}" data-email-pane="templates">Templates</button>
+      <button class="nav-btn${pane === "sent" ? " active" : ""}" data-email-pane="sent">Sent</button>
+    </div>
+    ${pane === "compose" ? composePaneHtml() : pane === "templates" ? templatesPaneHtml() : sentPaneHtml()}`;
+}
+
+// Drops a token in at the cursor of whichever box is open.
+function insertAtCursor(el, text, onChange) {
+  if (!el) return;
+  const start = el.selectionStart == null ? el.value.length : el.selectionStart;
+  const end = el.selectionEnd == null ? el.value.length : el.selectionEnd;
+  el.value = el.value.slice(0, start) + text + el.value.slice(end);
+  el.focus();
+  el.setSelectionRange(start + text.length, start + text.length);
+  onChange(el.value);
+}
+
+function attachEmailHandlers() {
+  document.querySelectorAll("[data-email-pane]").forEach((btn) => {
+    btn.onclick = () => {
+      state.emailPane = btn.dataset.emailPane;
+      state.emailEditing = null;
+      state.emailNote = "";
+      paintAdmin();
+    };
+  });
+
+  // --- compose ---
+  const pick = document.getElementById("email-template-pick");
+  if (pick) {
+    pick.onchange = () => {
+      const t = (state.emailTemplates || []).find((x) => x.id === pick.value);
+      if (t) { state.emailSubject = t.subject; state.emailBody = t.body; state.emailTemplateName = t.name; state.emailTemplateId = t.id; }
+      else { state.emailTemplateName = ""; state.emailTemplateId = ""; }
+      state.emailPreview = null;
+      paintAdmin();
+    };
+  }
+  const subjectEl = document.getElementById("email-subject");
+  if (subjectEl) subjectEl.oninput = () => { state.emailSubject = subjectEl.value; };
+  const bodyEl = document.getElementById("email-body");
+  if (bodyEl) bodyEl.oninput = () => { state.emailBody = bodyEl.value; };
+  document.querySelectorAll("[data-token]").forEach((btn) => {
+    btn.onclick = () => insertAtCursor(document.getElementById("email-body"), btn.dataset.token, (v) => { state.emailBody = v; });
+  });
+
+  const setPicked = (ids) => { state.emailPicked = ids; state.emailConfirming = false; paintAdmin(); };
+  const allBtn = document.getElementById("rcpt-all");
+  if (allBtn) allBtn.onclick = () => setPicked(mailableRecipients().map((r) => r.id));
+  const noneBtn = document.getElementById("rcpt-none");
+  if (noneBtn) noneBtn.onclick = () => setPicked([]);
+  const noRevBtn = document.getElementById("rcpt-noreviews");
+  if (noRevBtn) noRevBtn.onclick = () => setPicked(mailableRecipients().filter((r) => r.reviewCount === 0).map((r) => r.id));
+  const shownBtn = document.getElementById("rcpt-shown");
+  if (shownBtn) shownBtn.onclick = () => setPicked([...new Set([...state.emailPicked, ...filteredRecipients().filter((r) => !r.unsubscribed).map((r) => r.id)])]);
+
+  document.querySelectorAll("[data-rcpt]").forEach((box) => {
+    box.onchange = () => {
+      const id = box.dataset.rcpt;
+      state.emailPicked = box.checked
+        ? [...new Set([...state.emailPicked, id])]
+        : state.emailPicked.filter((x) => x !== id);
+      state.emailConfirming = false;
+      paintAdmin();
+    };
+  });
+
+  const rcptFilter = document.getElementById("rcpt-filter");
+  if (rcptFilter) {
+    rcptFilter.oninput = () => {
+      state.emailRecipientFilter = rcptFilter.value;
+      const cursor = rcptFilter.selectionStart;
+      paintAdmin();
+      const again = document.getElementById("rcpt-filter");
+      if (again) { again.focus(); again.setSelectionRange(cursor, cursor); }
+    };
+  }
+
+  const previewBtn = document.getElementById("email-preview-btn");
+  if (previewBtn) {
+    previewBtn.onclick = async () => {
+      previewBtn.disabled = true;
+      previewBtn.textContent = "Rendering…";
+      try {
+        state.emailPreview = await api("/api/admin/email/preview", {
+          method: "POST",
+          body: { subject: state.emailSubject, body: state.emailBody, memberId: state.emailPicked[0] || null },
+        });
+        state.emailNote = "";
+      } catch (e) {
+        state.emailNote = `Couldn't render the preview (${e.message}).`;
+      }
+      paintAdmin();
+    };
+  }
+  const sendBtn = document.getElementById("email-send-btn");
+  if (sendBtn) sendBtn.onclick = () => { state.emailConfirming = true; paintAdmin(); };
+  const cancelBtn = document.getElementById("email-send-cancel");
+  if (cancelBtn) cancelBtn.onclick = () => { state.emailConfirming = false; paintAdmin(); };
+  const confirmBtn = document.getElementById("email-send-confirm");
+  if (confirmBtn) {
+    confirmBtn.onclick = async () => {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "Starting…";
+      try {
+        const out = await api("/api/admin/email/send", {
+          method: "POST",
+          body: {
+            subject: state.emailSubject,
+            body: state.emailBody,
+            templateName: state.emailTemplateName,
+            recipientIds: state.emailPicked,
+          },
+        });
+        state.emailConfirming = false;
+        state.emailNote = `Sending to ${out.total} member${out.total === 1 ? "" : "s"}.`;
+        state.emailProgress = { id: out.campaignId, status: "sending", total: out.total, sent: 0, failed: 0, skipped: 0, last_error: "" };
+        paintAdmin();
+        pollCampaign(out.campaignId);
+      } catch (e) {
+        state.emailConfirming = false;
+        state.emailNote = e.message === "no_recipients"
+          ? "Nobody in that selection can be mailed — they've all opted out."
+          : `Couldn't start the send (${e.message}).`;
+        paintAdmin();
+      }
+    };
+  }
+  const clearProg = document.getElementById("email-clear-progress");
+  if (clearProg) clearProg.onclick = () => { state.emailProgress = null; state.emailNote = ""; paintAdmin(); };
+
+  // --- templates ---
+  const newBtn = document.getElementById("tpl-new");
+  if (newBtn) newBtn.onclick = () => { state.emailEditing = { id: null, name: "", category: "", subject: "", body: "" }; state.emailNote = ""; paintAdmin(); };
+  document.querySelectorAll("[data-tpl-edit]").forEach((btn) => {
+    btn.onclick = () => {
+      const t = (state.emailTemplates || []).find((x) => x.id === btn.dataset.tplEdit);
+      if (t) state.emailEditing = { id: t.id, name: t.name, category: t.category || "", subject: t.subject, body: t.body };
+      state.emailNote = "";
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-tpl-use]").forEach((btn) => {
+    btn.onclick = () => {
+      const t = (state.emailTemplates || []).find((x) => x.id === btn.dataset.tplUse);
+      if (!t) return;
+      state.emailSubject = t.subject; state.emailBody = t.body; state.emailTemplateName = t.name; state.emailTemplateId = t.id;
+      state.emailPane = "compose"; state.emailPreview = null;
+      state.emailNote = `Loaded "${t.name}" into the compose box.`;
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-tpl-del]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.tplDel;
+      // Two taps to delete — the first one arms the button, so nothing goes on a mis-tap.
+      if (btn.dataset.armed !== "1") {
+        btn.dataset.armed = "1";
+        btn.textContent = "Tap again to delete";
+        return;
+      }
+      try {
+        await api(`/api/admin/templates/${id}`, { method: "DELETE" });
+        state.emailTemplates = (state.emailTemplates || []).filter((t) => t.id !== id);
+        state.emailNote = "Template deleted.";
+      } catch (e) {
+        state.emailNote = `Couldn't delete that template (${e.message}).`;
+      }
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-tpl-token]").forEach((btn) => {
+    btn.onclick = () => insertAtCursor(document.getElementById("tpl-body"), btn.dataset.tplToken, (v) => {
+      if (state.emailEditing) state.emailEditing.body = v;
+    });
+  });
+  [["tpl-name", "name"], ["tpl-category", "category"], ["tpl-subject", "subject"], ["tpl-body", "body"]].forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.oninput = () => { if (state.emailEditing) state.emailEditing[key] = el.value; };
+  });
+  const tplCancel = document.getElementById("tpl-cancel");
+  if (tplCancel) tplCancel.onclick = () => { state.emailEditing = null; paintAdmin(); };
+  const tplSave = document.getElementById("tpl-save");
+  if (tplSave) {
+    tplSave.onclick = async () => {
+      const ed = state.emailEditing;
+      if (!ed) return;
+      if (!ed.name.trim() || !ed.subject.trim() || !ed.body.trim()) {
+        state.emailNote = "A template needs a name, a subject and a body.";
+        paintAdmin();
+        return;
+      }
+      tplSave.disabled = true;
+      tplSave.textContent = "Saving…";
+      try {
+        const out = ed.id
+          ? await api(`/api/admin/templates/${ed.id}`, { method: "PUT", body: ed })
+          : await api("/api/admin/templates", { method: "POST", body: ed });
+        const list = (state.emailTemplates || []).filter((t) => t.id !== out.template.id);
+        state.emailTemplates = [...list, out.template].sort(
+          (a, b) => `${a.category}${a.name}`.localeCompare(`${b.category}${b.name}`)
+        );
+        state.emailEditing = null;
+        state.emailNote = `Saved "${out.template.name}".`;
+      } catch (e) {
+        state.emailNote = `Couldn't save that template (${e.message}).`;
+      }
+      paintAdmin();
+    };
+  }
+
+  // --- sent ---
+  document.querySelectorAll("[data-campaign]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.campaign;
+      if (state.emailOpenCampaign === id) { state.emailOpenCampaign = null; state.emailCampaignDetail = null; paintAdmin(); return; }
+      state.emailOpenCampaign = id;
+      state.emailCampaignDetail = null;
+      paintAdmin();
+      try {
+        state.emailCampaignDetail = await api(`/api/admin/campaigns/${id}`);
+      } catch { state.emailCampaignDetail = { recipients: [] }; }
+      paintAdmin();
+    };
+  });
+}
+
+// Follows a send until the server says it's finished. The send runs server-side, so
+// closing the tab doesn't stop it — this only keeps the count on screen honest.
+async function pollCampaign(id) {
+  try {
+    const data = await api(`/api/admin/campaigns/${id}`);
+    state.emailProgress = data.campaign;
+    if (state.adminTab === "email") paintAdmin();
+    if (data.campaign.status !== "done") {
+      setTimeout(() => pollCampaign(id), 2000);
+      return;
+    }
+    const c = await api("/api/admin/campaigns");
+    state.emailCampaigns = c.campaigns || [];
+    if (state.adminTab === "email") paintAdmin();
+  } catch {
+    setTimeout(() => pollCampaign(id), 5000);
+  }
 }
 
 init();
