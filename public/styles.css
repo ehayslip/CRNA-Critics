@@ -339,3 +339,34 @@ a.tiny-btn { text-decoration: none; }
 .terms-doc strong { color: #14231F; }
 .terms-doc a { color: #123C3A; }
 .terms-doc .terms-meta { font-size: 11px; color: #8A948E; margin-top: 0; }
+
+/* ---- CRNA BEWARE stamp: any overall score of 2.0 or lower ---- */
+/* Struck on at an angle, like a rubber stamp on a chart. */
+.beware-mark {
+  display: inline-block; color: #C62828; border: 3px solid #C62828; border-radius: 3px;
+  font-family: 'Special Elite', monospace; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 2px; line-height: 1; white-space: nowrap;
+  transform: rotate(-12deg); transform-origin: center;
+  background: rgba(198, 40, 40, 0.06); opacity: 0.92;
+}
+/* The rotation makes the box overhang its line, so the margins keep it off the text above and below. */
+.beware-sm { font-size: 12px; padding: 4px 8px; margin: 7px 8px 5px; }
+.beware-lg { font-size: 19px; padding: 8px 14px; margin: 9px 12px; border-width: 4px; }
+@media (min-width: 620px) { .beware-lg { font-size: 26px; padding: 10px 18px; letter-spacing: 3px; } }
+.card.beware-card { border-color: #C62828; box-shadow: inset 0 0 0 1px rgba(198, 40, 40, 0.18); }
+.beware-note { margin: 10px 0 0; font-size: 13px; font-weight: 700; color: #C62828; }
+
+/* ---- per-category comments ---- */
+/* On the review form: a small box under each category's star anchors. */
+.cat-comment {
+  width: 100%; margin-top: 6px; font-family: Inter, sans-serif; font-size: 13px;
+  padding: 7px 8px; border: 1px solid #C9D2C6; background: #FCFDFB; resize: vertical;
+}
+.cat-comment:focus { outline: none; border-color: #123C3A; background: #fff; }
+/* On a posted review: each comment kept under its category's title. */
+.cat-notes { margin: 8px 0 2px; border-left: 2px solid #E0E5DD; padding-left: 10px; }
+.cat-note { margin-bottom: 7px; }
+.cat-note:last-child { margin-bottom: 0; }
+.cat-note-head { font-size: 11.5px; font-weight: 700; letter-spacing: 0.2px; color: #3C4A45; }
+.cat-note-score { color: #B87F1E; font-weight: 800; }
+.cat-note-body { font-size: 13px; line-height: 1.5; margin-top: 1px; }
