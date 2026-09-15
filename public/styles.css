@@ -256,7 +256,7 @@ a.tiny-btn { text-decoration: none; }
   font-family: 'Special Elite', monospace; font-size: 13px; letter-spacing: 1.2px;
 }
 .result-count { font-family: Inter, sans-serif; font-size: 11px; font-weight: 700; color: #8A948E; letter-spacing: 0; }
-.hero-art { display: block; width: 100%; max-width: 620px; height: auto; margin: 26px auto 0; border: 1px solid #243654; }
+.hero-art { display: block; width: 100%; max-width: 400px; height: auto; margin: 26px auto 0; border: 1px solid #243654; }
 
 .cta-row { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
 .btn {
@@ -322,7 +322,14 @@ a.tiny-btn { text-decoration: none; }
   .landing section { padding: 48px 40px; }
   .hero { padding-top: 16px !important; }
   .hero-h { font-size: 36px; }
-  .hero-art { max-width: 680px; margin-top: 32px; }
+  /* Side by side: copy on the left, the CRNA BEWARE photo on the right, both in one glance. */
+  .hero { display: grid; grid-template-columns: 1fr minmax(0, 540px) minmax(0, 400px) 1fr; column-gap: 36px; align-items: center; text-align: left; padding: 24px 40px 44px !important; }
+  .hero-copy { grid-column: 2; margin: 0; max-width: none; }
+  .hero-art { grid-column: 3; }
+  .hero-sub { margin-left: 0; }
+  .hero .cta-row { justify-content: flex-start; }
+  .hero-warning { margin-left: 0; }
+  .hero-art { margin: 0; max-width: none; }
   .lp-h { font-size: 24px; }
   .feature-grid { grid-template-columns: repeat(2, 1fr); }
 }
