@@ -310,6 +310,8 @@ const state = {
   adminReviewFilter: "",
   adminMemberReviews: {},    // member id -> their reviews, loaded when the row is opened
   adminMemberReviewsOpen: null,
+  adminMemberFeedback: {},   // member id -> their beta feedback submissions, loaded when the row is opened
+  adminMemberFeedbackOpen: null,
   // --- admin: member email ---
   emailPane: "compose",      // compose | templates | sent
   emailTemplates: null,      // rows from email_templates
@@ -1731,6 +1733,7 @@ function memberCardHtml(r) {
           <tr><td class="stats-label">Work type</td><td>${r.employment_type ? esc(r.employment_type === "staff" ? "Staff (W-2)" : "Locum (1099)") : "not chosen yet"}</td></tr>
           <tr><td class="stats-label">Password</td><td>${r.hasPassword ? "set by member" : "<em>not set yet</em>"}</td></tr>
           <tr><td class="stats-label">Reviews posted</td><td>${r.reviewCount}</td></tr>
+          <tr><td class="stats-label">Feedback form</td><td>${feedbackStatusLabel(r)}</td></tr>
           <tr><td class="stats-label">Mailings</td><td>${r.bulk_unsubscribed ? "<strong>opted out</strong> (account email still sends)" : "subscribed"}</td></tr>
           <tr><td class="stats-label">Requested</td><td>${adminDate(r.requested_at)}</td></tr>
           <tr><td class="stats-label">Decided</td><td>${adminDate(r.decided_at)}</td></tr>
@@ -1753,12 +1756,26 @@ function memberCardHtml(r) {
             ${r.status === "approved" ? `
               <button class="tiny-btn" data-link="${r.id}::welcome">Resend login link</button>
               <button class="tiny-btn" data-link="${r.id}::reset">Send password reset</button>
+              <button class="tiny-btn" data-feedback-send="${r.id}">${r.feedback_sent_at ? "Resend" : "Send"} feedback form</button>
+              ${r.feedbackSubmittedAt ? `<button class="tiny-btn${state.adminMemberFeedbackOpen === r.id ? " active-btn" : ""}" data-feedback-view="${r.id}">${state.adminMemberFeedbackOpen === r.id ? "Hide" : "View"} feedback</button>` : ""}
               <button class="tiny-btn" data-unsub="${r.id}::${r.bulk_unsubscribed ? 0 : 1}">${r.bulk_unsubscribed ? "Put back on mailings" : "Opt out of mailings"}</button>` : ""}
             <button class="tiny-btn reject" data-del-start="${r.id}">Delete</button>
           </div>`}
         ${memberReviewsHtml(r)}
+        ${memberFeedbackHtml(r)}
       </div>`}
     </div>`;
+}
+
+// One-line status for the Feedback form row in a member's stats table.
+function feedbackStatusLabel(r) {
+  if (r.feedbackSubmittedAt) {
+    return `<span style="color:#1F5C57;font-weight:700">✓ complete</span> — ${adminDate(r.feedbackSubmittedAt)}`;
+  }
+  if (r.feedback_sent_at) {
+    return `sent ${adminDate(r.feedback_sent_at)} — awaiting response`;
+  }
+  return "not sent yet";
 }
 
 // ---------- duplicate detection (admin) ----------
@@ -2171,6 +2188,31 @@ function attachMemberHandlers() {
       if (!wasOpen && !state.adminMemberReviews[id]) loadMemberReviews(id);
     };
   });
+  document.querySelectorAll("[data-feedback-send]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.feedbackSend;
+      btn.disabled = true;
+      btn.textContent = "Sending…";
+      try {
+        const out = await api(`/api/admin/requests/${id}/send-feedback`, { method: "POST" });
+        const row = state.adminRequests.find((x) => x.id === id);
+        if (row) row.feedback_sent_at = new Date().toISOString();
+        state.adminNotes[id] = `Feedback form sent to ${out.sentTo}.`;
+      } catch (e) {
+        state.adminNotes[id] = `Couldn't send that email (${e.message}).`;
+      }
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-feedback-view]").forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.dataset.feedbackView;
+      const wasOpen = state.adminMemberFeedbackOpen === id;
+      state.adminMemberFeedbackOpen = wasOpen ? null : id;
+      paintAdmin();
+      if (!wasOpen && !state.adminMemberFeedback[id]) loadMemberFeedback(id);
+    };
+  });
   document.querySelectorAll("[data-unsub]").forEach((btn) => {
     btn.onclick = async () => {
       const [id, value] = btn.dataset.unsub.split("::");
@@ -2301,6 +2343,32 @@ function memberReviewsHtml(r) {
     <div class="card" style="margin:8px 0">
       <div style="font-size:12px;color:#6B756F;margin-bottom:6px">${new Date(rev.date).toLocaleDateString()}${rev.editedAt ? " · edited" : ""}${rev.anonymous ? ` · <span class="badge anon">🔒 ANONYMOUS</span>` : ""}</div>
       ${reviewBodyHtml(rev)}
+    </div>`).join("")}</div>`;
+}
+
+// The beta-feedback panel that opens inside a member's row on the Members tab.
+async function loadMemberFeedback(id) {
+  try {
+    const data = await api(`/api/admin/requests/${id}/feedback`);
+    state.adminMemberFeedback[id] = data.submissions;
+  } catch {
+    state.adminMemberFeedback[id] = [];
+  }
+  paintAdmin();
+}
+
+function memberFeedbackHtml(r) {
+  if (state.adminMemberFeedbackOpen !== r.id) return "";
+  const rows = state.adminMemberFeedback[r.id];
+  if (!rows) return `<p class="hint-text">Loading their feedback…</p>`;
+  if (rows.length === 0) return `<p class="hint-text">Nothing submitted yet.</p>`;
+  return `<div class="member-reviews">${rows.map((sub) => `
+    <div class="card" style="margin:8px 0">
+      <div style="font-size:12px;color:#6B756F;margin-bottom:6px">${new Date(sub.submittedAt).toLocaleString()} · ${esc(sub.name)}</div>
+      ${sub.answers.map((a) => `
+        <div style="font-size:13.5px;margin-bottom:6px"><strong>${esc(a.title)}:</strong> ${esc(a.answer || "(no answer)")}${a.comment ? ` <span style="color:#6B756F;font-style:italic">— "${esc(a.comment)}"</span>` : ""}</div>
+      `).join("")}
+      ${sub.finalComment ? `<div style="font-size:13.5px;margin-top:8px;padding-top:8px;border-top:1px solid #E1E6EB"><strong>Anything else:</strong> ${esc(sub.finalComment)}</div>` : ""}
     </div>`).join("")}</div>`;
 }
 
