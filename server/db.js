@@ -90,6 +90,8 @@ addColumnIfMissing("reviews", "agent_notes", "TEXT NOT NULL DEFAULT '{}'");
 // resets — ignores this flag completely; only campaigns honor it.
 addColumnIfMissing("access_requests", "bulk_unsubscribed", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("access_requests", "unsubscribed_at", "TEXT");
+// Beta feedback form: when the admin last sent a member the link (resend overwrites this).
+addColumnIfMissing("access_requests", "feedback_sent_at", "TEXT");
 
 // Admin-approved name merges. `alias_norm` is the normalized spelling a member typed;
 // `canonical` is the one name it should be filed under. Kept in the database, not in code,
@@ -239,5 +241,22 @@ function seedTemplates() {
   });
 }
 seedTemplates();
+
+// ---------- beta feedback ----------
+//
+// One row per submission of the beta tester checklist. Kept separate from
+// access_requests (rather than columns on it) so a member can submit more than
+// once as the site changes; only the newest is shown in admin by default.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS beta_feedback (
+    id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    answers TEXT NOT NULL,
+    final_comment TEXT NOT NULL DEFAULT '',
+    submitted_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_beta_feedback_request ON beta_feedback (request_id);
+`);
 
 module.exports = db;
