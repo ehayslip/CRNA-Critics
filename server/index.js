@@ -432,6 +432,27 @@ app.get("/api/admin/names", requireAdmin, (req, res) => {
 
 // ---------- reviews ----------
 
+// Per-category notes are stored as a JSON object; a legacy row (or a corrupted value)
+// should never take the whole review list down.
+function safeJson(text) {
+  try {
+    const v = JSON.parse(text || "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch { return {}; }
+}
+
+// Trims a { categoryKey: comment } map down to non-empty strings, capped so one
+// review can't carry an essay per category.
+function cleanNotes(obj) {
+  const out = {};
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return out;
+  Object.keys(obj).slice(0, 40).forEach((k) => {
+    const text = String(obj[k] == null ? "" : obj[k]).trim().slice(0, 1000);
+    if (text) out[String(k).slice(0, 60)] = text;
+  });
+  return out;
+}
+
 // viewerEmail decides ownership; the reviewer's email is never sent to the client,
 // and an anonymous review hides the name from everyone but its author.
 function rowToReview(r, viewerEmail) {
@@ -452,26 +473,31 @@ function rowToReview(r, viewerEmail) {
     agencyAgentRatings: JSON.parse(r.agency_agent_ratings),
     agencyAgentWouldReturn: r.agency_agent_would_return,
     agencyAgentComment: r.agency_agent_comment,
+    agencyAgentNotes: safeJson(r.agency_agent_notes),
     payRate: r.pay_rate,
     payRange: r.pay_range || "",
     agentRatings: JSON.parse(r.agent_ratings || "{}"),
     agentWouldReturn: r.agent_would_return || "",
     agentComment: r.agent_comment || "",
+    agentNotes: safeJson(r.agent_notes),
     hospitalName: r.hospital_name,
     hospitalCity: r.hospital_city || "",
     hospitalState: r.hospital_state || "",
     hospitalRatings: JSON.parse(r.hospital_ratings),
     hospitalWouldReturn: r.hospital_would_return,
     hospitalComment: r.hospital_comment,
+    hospitalNotes: safeJson(r.hospital_notes),
     employmentType: r.employment_type || "locum",
     staffPayType: r.staff_pay_type || "",
     staffPayRange: r.staff_pay_range || "",
     familyInsurance: r.family_insurance || "",
     ptoWeeks: r.pto_weeks || "",
+    prnRate: r.prn_rate || "",
     groupName: r.group_name || "",
     groupRatings: JSON.parse(r.group_ratings || "{}"),
     groupWouldReturn: r.group_would_return || "",
     groupComment: r.group_comment || "",
+    groupNotes: safeJson(r.group_notes),
   };
 }
 
@@ -495,26 +521,31 @@ function reviewColumns(b) {
       agency_agent_ratings: JSON.stringify(isStaff ? {} : b.agencyAgentRatings),
       agency_agent_would_return: isStaff ? "" : (b.agencyAgentWouldReturn || ""),
       agency_agent_comment: isStaff ? "" : (b.agencyAgentComment || ""),
+      agency_agent_notes: JSON.stringify(isStaff ? {} : cleanNotes(b.agencyAgentNotes)),
       pay_rate: isStaff || b.payRate === "" || b.payRate == null ? null : Number(b.payRate),
       pay_range: isStaff ? "" : String(b.payRange || ""),
       agent_ratings: JSON.stringify(isStaff || !b.agentName ? {} : (b.agentRatings || {})),
       agent_would_return: isStaff || !b.agentName ? "" : (b.agentWouldReturn || ""),
       agent_comment: isStaff || !b.agentName ? "" : (b.agentComment || ""),
+      agent_notes: JSON.stringify(isStaff || !b.agentName ? {} : cleanNotes(b.agentNotes)),
       hospital_name: b.hospitalName,
       hospital_city: String(b.hospitalCity || "").trim(),
       hospital_state: String(b.hospitalState || "").trim().toUpperCase().slice(0, 2),
       hospital_ratings: JSON.stringify(b.hospitalRatings),
       hospital_would_return: b.hospitalWouldReturn || "",
       hospital_comment: b.hospitalComment || "",
+      hospital_notes: JSON.stringify(cleanNotes(b.hospitalNotes)),
       employment_type: employmentType,
       staff_pay_type: isStaff ? String(b.staffPayType || "") : "",
       staff_pay_range: isStaff ? String(b.staffPayRange || "") : "",
       family_insurance: isStaff ? String(b.familyInsurance || "") : "",
       pto_weeks: isStaff ? String(b.ptoWeeks || "") : "",
+      prn_rate: isStaff ? String(b.prnRate || "") : "",
       group_name: isStaff ? b.groupName : "",
       group_ratings: JSON.stringify(isStaff ? b.groupRatings : {}),
       group_would_return: isStaff ? (b.groupWouldReturn || "") : "",
       group_comment: isStaff ? (b.groupComment || "") : "",
+      group_notes: JSON.stringify(isStaff ? cleanNotes(b.groupNotes) : {}),
       anonymous: b.anonymous ? 1 : 0,
     },
   };
