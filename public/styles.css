@@ -370,3 +370,48 @@ a.tiny-btn { text-decoration: none; }
 .cat-note-head { font-size: 11.5px; font-weight: 700; letter-spacing: 0.2px; color: #3C4A45; }
 .cat-note-score { color: #B87F1E; font-weight: 800; }
 .cat-note-body { font-size: 13px; line-height: 1.5; margin-top: 1px; }
+
+/* ---------- admin: reviews tab ---------- */
+.admin-review-head {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
+  padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px solid #EEF2ED;
+}
+.member-reviews { margin-top: 12px; border-top: 1px solid #EEF2ED; padding-top: 6px; }
+.member-reviews .card { background: #F7F8F5; }
+.tiny-btn.active-btn { background: #123C3A; color: #fff; border-color: #123C3A; }
+
+/* ---------- admin: member email ---------- */
+.admin-subtabs { position: static; margin: 10px 0 4px; border-bottom: 1px solid #C9D2C6; }
+.admin-subtabs .nav-btn { flex: 1 1 0; font-size: 12.5px; }
+
+.token-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
+.token-chip {
+  background: #F1F4EF; border: 1px solid #C9D2C6; color: #123C3A; font-family: monospace;
+  font-size: 11.5px; padding: 4px 7px; cursor: pointer;
+}
+.token-chip:hover { background: #E4EAE0; }
+
+.rcpt-list { border: 1px solid #C9D2C6; background: #fff; max-height: 420px; overflow-y: auto; }
+.rcpt-row {
+  display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+  border-bottom: 1px solid #EEF2ED; cursor: pointer; font-size: 13px;
+}
+.rcpt-row:last-child { border-bottom: none; }
+.rcpt-row.picked { background: #F1F6F0; }
+.rcpt-row.out { opacity: 0.55; cursor: default; }
+.rcpt-row input { width: auto; margin: 0; flex-shrink: 0; }
+.rcpt-main { flex: 1; min-width: 0; }
+.rcpt-name { display: block; font-weight: 700; font-size: 13px; }
+.rcpt-sub { display: block; font-size: 11.5px; color: #6B756F; word-break: break-all; }
+.rcpt-meta { font-size: 11px; color: #6B756F; text-align: right; flex-shrink: 0; line-height: 1.35; }
+.badge.out-badge { background: #8C3A32; flex-shrink: 0; }
+
+.send-bar { height: 8px; background: #E4EAE0; border: 1px solid #C9D2C6; margin: 6px 0; }
+.send-bar span { display: block; height: 100%; background: #1F5C57; transition: width .3s ease; }
+
+.email-preview { width: 100%; height: 420px; border: 1px solid #C9D2C6; background: #fff; }
+.tpl-body {
+  white-space: pre-wrap; font-size: 12.5px; line-height: 1.5; color: #3C4A45;
+  background: #F7F8F5; border: 1px solid #EEF2ED; padding: 9px 11px; margin: 10px 0 0;
+  max-height: 260px; overflow-y: auto;
+}
