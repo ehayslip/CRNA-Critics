@@ -7,6 +7,7 @@ const path = require("path");
 const db = require("./db");
 const { sign, verify, hashPassword, verifyPassword } = require("./auth");
 const { sendEmail, escapeHtml, campaignHtml, fillTokens, TOKENS } = require("./email");
+const { EMAIL_LOGO_PNG_BASE64, emailHeaderHtml } = require("./brand");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -83,6 +84,7 @@ app.post("/api/request-access", async (req, res) => {
       subject: `CRNA Critics — verify ${escapeHtml(name)}?`,
       html: `
         <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+          ${emailHeaderHtml(BASE_URL, 480)}
           <h2 style="color:#123C3A;">New CRNA verification request</h2>
           <p><strong>${escapeHtml(name)}</strong></p>
           <p>NBCRNA #: ${escapeHtml(row.nbcrna_number)}<br/>
@@ -145,6 +147,7 @@ function sendWelcomeEmail(row) {
     subject: "You're verified on CRNA Critics",
     html: `
       <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+        ${emailHeaderHtml(BASE_URL, 480)}
         <h2 style="color:#123C3A;">You're verified</h2>
         <p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics.</p>
         <p>Use the button below to sign in for the first time and create your password. After that, you'll sign in with your email and password — no more links.</p>
@@ -165,6 +168,7 @@ function sendResetEmail(row) {
     subject: "Reset your CRNA Critics password",
     html: `
       <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+        ${emailHeaderHtml(BASE_URL, 480)}
         <h2 style="color:#123C3A;">Set a new password</h2>
         <p>Hi ${escapeHtml(row.name)}, an administrator started a password reset for your CRNA Critics account.</p>
         <p>The button below signs you in once and takes you straight to the create-password screen.</p>
@@ -237,6 +241,7 @@ app.post("/api/auth/request-link", async (req, res) => {
     subject: "Your CRNA Critics sign-in link",
     html: `
       <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+        ${emailHeaderHtml(BASE_URL, 480)}
         <h2 style="color:#123C3A;">Sign in to CRNA Critics</h2>
         <p>This one-time link signs you in. Once you're in, you can set a new password from the sign-in prompt.</p>
         <p><a href="${loginUrl}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Sign in</a></p>
@@ -882,6 +887,15 @@ app.delete("/api/reviews/:id", requireSession, (req, res) => {
 });
 
 // ---------- static frontend ----------
+
+// The email logo, served from base64 in server/brand.js so the whole asset lives in
+// source control as text. Immutable — bump the filename if the art ever changes.
+const EMAIL_LOGO_BYTES = Buffer.from(EMAIL_LOGO_PNG_BASE64, "base64");
+app.get("/email-logo.png", (req, res) => {
+  res.set("Content-Type", "image/png");
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
+  res.send(EMAIL_LOGO_BYTES);
+});
 
 app.use(express.static(path.join(__dirname, "..", "public")));
 app.get("*", (req, res) => {
