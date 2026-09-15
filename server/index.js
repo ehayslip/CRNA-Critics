@@ -344,6 +344,92 @@ app.delete("/api/admin/requests/:id", requireAdmin, (req, res) => {
   res.json({ ok: true, deletedReviews, name: row.name });
 });
 
+// ---------- name merges ----------
+
+// Must match normalizeName() in public/app.js — the client and the server have to agree
+// on what counts as "the same spelling".
+function normalizeName(s) {
+  return String(s == null ? "" : s).toLowerCase().replace(/[.,'"’&\/\-_()\[\]]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+// Every member needs the merge list to render names consistently.
+app.get("/api/aliases", requireSession, (req, res) => {
+  const aliases = db.prepare("SELECT alias_norm, canonical FROM name_aliases").all();
+  const ignores = db.prepare("SELECT a_name, b_name FROM name_pair_ignores").all();
+  res.json({ aliases, ignores });
+});
+
+// Merge one or more spellings into a canonical name. Re-points any alias that
+// previously pointed at a name that is itself being merged, so chains can't form.
+app.post("/api/admin/aliases", requireAdmin, (req, res) => {
+  const canonical = String(req.body?.canonical || "").trim();
+  const list = Array.isArray(req.body?.aliases) ? req.body.aliases : [];
+  if (!canonical || list.length === 0) return res.status(400).json({ error: "missing_fields" });
+  const now = new Date().toISOString();
+  const insert = db.prepare(
+    `INSERT INTO name_aliases (id, alias_norm, alias_raw, canonical, created_at) VALUES (?,?,?,?,?)
+     ON CONFLICT(alias_norm) DO UPDATE SET canonical = excluded.canonical, created_at = excluded.created_at`
+  );
+  const repoint = db.prepare("UPDATE name_aliases SET canonical = ? WHERE canonical = ?");
+  const run = db.transaction(() => {
+    list.forEach((raw) => {
+      const norm = normalizeName(raw);
+      if (!norm || norm === normalizeName(canonical)) return;
+      insert.run(crypto.randomUUID(), norm, String(raw).trim(), canonical, now);
+      repoint.run(canonical, String(raw).trim()); // anything filed under the old name follows
+    });
+  });
+  run();
+  res.json({ ok: true, aliases: db.prepare("SELECT * FROM name_aliases ORDER BY created_at DESC").all() });
+});
+
+// Undo a merge.
+app.delete("/api/admin/aliases/:id", requireAdmin, (req, res) => {
+  const changed = db.prepare("DELETE FROM name_aliases WHERE id = ?").run(req.params.id).changes;
+  if (!changed) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true });
+});
+
+// "These two are not the same" — remembered so the suggestion never comes back.
+app.post("/api/admin/name-ignores", requireAdmin, (req, res) => {
+  const a = String(req.body?.a || "").trim();
+  const b = String(req.body?.b || "").trim();
+  if (!a || !b) return res.status(400).json({ error: "missing_fields" });
+  const key = [normalizeName(a), normalizeName(b)].sort().join("||");
+  db.prepare(
+    "INSERT INTO name_pair_ignores (pair_key, a_name, b_name, created_at) VALUES (?,?,?,?) ON CONFLICT(pair_key) DO NOTHING"
+  ).run(key, a, b, new Date().toISOString());
+  res.json({ ok: true });
+});
+
+// Admin view of the merge state, plus every distinct name on file per entity type
+// so the browser can run the similarity pass without loading every review.
+app.get("/api/admin/names", requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    `SELECT agency_name, agent_name, group_name, hospital_name, hospital_city, hospital_state FROM reviews`
+  ).all();
+  const buckets = { agency: {}, agent: {}, group: {}, hospital: {} };
+  const add = (type, name, sub) => {
+    const key = String(name || "").trim();
+    if (!key) return;
+    if (!buckets[type][key]) buckets[type][key] = { name: key, count: 0, sub: "" };
+    buckets[type][key].count += 1;
+    if (sub && !buckets[type][key].sub) buckets[type][key].sub = sub;
+  };
+  rows.forEach((r) => {
+    add("agency", r.agency_name);
+    add("agent", r.agent_name);
+    add("group", r.group_name);
+    const loc = [r.hospital_city, r.hospital_state].filter(Boolean).join(", ");
+    add("hospital", r.hospital_name, loc);
+  });
+  res.json({
+    names: Object.fromEntries(Object.entries(buckets).map(([t, m]) => [t, Object.values(m)])),
+    aliases: db.prepare("SELECT * FROM name_aliases ORDER BY canonical, alias_raw").all(),
+    ignores: db.prepare("SELECT a_name, b_name FROM name_pair_ignores").all(),
+  });
+});
+
 // ---------- reviews ----------
 
 // viewerEmail decides ownership; the reviewer's email is never sent to the client,
