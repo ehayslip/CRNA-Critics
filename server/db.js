@@ -78,6 +78,14 @@ addColumnIfMissing("reviews", "staff_pay_type", "TEXT NOT NULL DEFAULT ''");   /
 addColumnIfMissing("reviews", "staff_pay_range", "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("reviews", "family_insurance", "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("reviews", "pto_weeks", "TEXT NOT NULL DEFAULT ''");
+// What the group pays for PRN / extra shifts, as an hourly bracket. Informational — never scored.
+addColumnIfMissing("reviews", "prn_rate", "TEXT NOT NULL DEFAULT ''");
+// Per-category comments: { categoryKey: "what they wrote" } for each scorecard, so a 1-star
+// on one category can carry its own explanation alongside the overall comment.
+addColumnIfMissing("reviews", "hospital_notes", "TEXT NOT NULL DEFAULT '{}'");
+addColumnIfMissing("reviews", "group_notes", "TEXT NOT NULL DEFAULT '{}'");
+addColumnIfMissing("reviews", "agency_agent_notes", "TEXT NOT NULL DEFAULT '{}'");
+addColumnIfMissing("reviews", "agent_notes", "TEXT NOT NULL DEFAULT '{}'");
 
 // Admin-approved name merges. `alias_norm` is the normalized spelling a member typed;
 // `canonical` is the one name it should be filed under. Kept in the database, not in code,
