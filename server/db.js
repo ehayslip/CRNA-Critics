@@ -69,5 +69,14 @@ addColumnIfMissing("access_requests", "terms_user_agent", "TEXT");
 addColumnIfMissing("access_requests", "sms_consent", "INTEGER NOT NULL DEFAULT 0");
 // Pay is recorded as a bracket (e.g. "$201–220"), not a number or a score.
 addColumnIfMissing("reviews", "pay_range", "TEXT NOT NULL DEFAULT ''");
+// Where the hospital actually is — two CRNAs comparing offers need the city, not just the name.
+addColumnIfMissing("reviews", "hospital_city", "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("reviews", "hospital_state", "TEXT NOT NULL DEFAULT ''");
+// Staff (full-time / part-time) reviews: how they're paid, the annual bracket, and what
+// family health coverage costs per month. Informational — never scored.
+addColumnIfMissing("reviews", "staff_pay_type", "TEXT NOT NULL DEFAULT ''");   // 'W-2' | '1099'
+addColumnIfMissing("reviews", "staff_pay_range", "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("reviews", "family_insurance", "TEXT NOT NULL DEFAULT ''");
+addColumnIfMissing("reviews", "pto_weeks", "TEXT NOT NULL DEFAULT ''");
 
 module.exports = db;
