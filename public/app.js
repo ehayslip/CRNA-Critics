@@ -62,7 +62,7 @@ const NAME_RULES = [
   { canonical: "Royal Surgical Associates (RSA)", test: (s) => /^rsa$/.test(s) || /royal surgical/.test(s) },
 ];
 function normalizeName(name) {
-  return String(name == null ? "" : name).toLowerCase().replace(/[.,'"’&\/\-_]/g, " ").replace(/\s+/g, " ").trim();
+  return String(name == null ? "" : name).toLowerCase().replace(/[.,'"’&\/\-_()\[\]]/g, " ").replace(/\s+/g, " ").trim();
 }
 // The name a review should be filed under. Unmatched names keep their own spelling.
 function canonicalName(name) {
@@ -79,6 +79,73 @@ function spellingsFor(rows, field, canonical) {
     if (raw && raw !== canonical && !seen.includes(raw)) seen.push(raw);
   });
   return seen;
+}
+
+// ---------- name suggestions (stop duplicates at the keyboard) ----------
+// Words that carry no identity — dropped before comparing, so "HCA Fort Walton Beach Medical
+// Center" and "HCA Fort Walton Beach" look alike.
+const NOISE_WORDS = new Set(["the", "of", "and", "inc", "llc", "lp", "pc", "pa", "co", "corp", "group",
+  "health", "healthcare", "medical", "center", "centre", "hospital", "regional", "system", "services",
+  "staffing", "locums", "anesthesia", "associates", "partners"]);
+// Abbreviations expanded for matching only (never for storage), so "Ft" finds "Fort".
+// Single letters stay as they are — "S Wright" is an initial, not "South".
+const ABBREV = { ft: "fort", st: "saint", mt: "mount" };
+function nameTokens(s) {
+  return normalizeName(s).split(" ").filter((w) => w && !NOISE_WORDS.has(w)).map((w) => ABBREV[w] || w);
+}
+// Initials of a multi-word name: "royal surgical associates" -> "rsa".
+function initialsOf(s) {
+  const words = normalizeName(s).split(" ").filter(Boolean);
+  return words.length > 1 ? words.map((w) => w[0]).join("") : "";
+}
+// Dice coefficient on letter pairs — a typo-tolerant 0–1 similarity.
+function bigramScore(a, b) {
+  const pairs = (s) => { const out = []; for (let i = 0; i < s.length - 1; i++) out.push(s.slice(i, i + 2)); return out; };
+  const A = pairs(a.replace(/ /g, "")), B = pairs(b.replace(/ /g, ""));
+  if (!A.length || !B.length) return a === b ? 1 : 0;
+  const pool = B.slice();
+  let hits = 0;
+  A.forEach((p) => { const i = pool.indexOf(p); if (i >= 0) { pool.splice(i, 1); hits++; } });
+  return (2 * hits) / (A.length + B.length);
+}
+// How well `typed` matches an existing `name`, 0–100. Higher is a better suggestion.
+function matchScore(typed, name) {
+  const q = normalizeName(typed), n = normalizeName(name);
+  if (!q) return 0;
+  if (q === n) return 100;
+  if (n.startsWith(q)) return 92;
+  if (q === initialsOf(name)) return 88;            // "rsa" -> Royal Surgical Associates
+  const qt = nameTokens(typed), nt = nameTokens(name);
+  if (qt.length && qt.every((t) => nt.some((w) => w.startsWith(t)))) return 84;
+  // Substring only at a word boundary, and never for one or two letters — otherwise "lt"
+  // matches the middle of "Fort Walton".
+  if (q.length >= 3 && n.includes(" " + q)) return 76;
+  const sim = bigramScore(q, n);                     // typo tolerance: "envidion" -> "envision"
+  return sim >= 0.45 ? Math.round(40 + sim * 40) : 0;
+}
+// Every canonical name already on the site for one kind of entity, with a hospital's location.
+function knownNames(type) {
+  const field = ENTITY[type].field;
+  const map = new Map();
+  state.reviews.forEach((r) => {
+    const raw = r[field];
+    if (!raw) return;
+    const name = canonicalName(raw);
+    if (!map.has(name)) map.set(name, []);
+    map.get(name).push(r);
+  });
+  return [...map.entries()].map(([name, rows]) => ({
+    name,
+    count: rows.length,
+    sub: type === "hospital" ? commonLocation(rows) : "",
+  }));
+}
+function suggestionsFor(type, typed, limit) {
+  return knownNames(type)
+    .map((item) => ({ ...item, score: matchScore(typed, item.name) }))
+    .filter((item) => item.score > 0 && item.score < 100)   // an exact match needs no suggesting
+    .sort((a, b) => b.score - a.score || b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0, limit || 6);
 }
 
 const US_STATES = ["AL","AK","AZ","AR","CA","CO","CT","DE","DC","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","PR","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"];
@@ -1095,6 +1162,86 @@ function bindChoiceRows() {
   });
 }
 
+// A name input that suggests names already on the site. `key` is only used to build element ids.
+function suggestInputHtml(id, type, placeholder, value) {
+  return `
+    <div class="suggest-wrap" data-suggest="${id}" data-type="${type}">
+      <input id="${id}" placeholder="${esc(placeholder)}" value="${esc(value)}" autocomplete="off" />
+      <div class="suggest-list" id="${id}-list" hidden></div>
+      <div class="suggest-hint" id="${id}-hint" hidden></div>
+    </div>`;
+}
+
+// Wires one suggest input. onPick(name) writes the chosen name into the form model.
+function attachSuggest(id, type, onPick) {
+  const input = document.getElementById(id);
+  if (!input) return;
+  const list = document.getElementById(id + "-list");
+  const hint = document.getElementById(id + "-hint");
+  let items = [];
+  let active = -1;
+
+  const close = () => { list.hidden = true; list.innerHTML = ""; items = []; active = -1; };
+  const paint = () => {
+    list.innerHTML = items.map((it, i) => `
+      <button type="button" class="suggest-item${i === active ? " active" : ""}" data-pick="${i}">
+        <span class="suggest-name">${esc(it.name)}</span>
+        ${it.sub ? `<span class="suggest-sub">${esc(it.sub)}</span>` : ""}
+        <span class="suggest-n">${it.count} review${it.count !== 1 ? "s" : ""}</span>
+      </button>`).join("");
+    list.hidden = items.length === 0;
+    // mousedown, not click: the input's blur would tear the list down before a click landed.
+    list.querySelectorAll("[data-pick]").forEach((btn) => {
+      btn.onmousedown = (e) => { e.preventDefault(); choose(items[Number(btn.dataset.pick)].name); };
+    });
+  };
+  const choose = (name) => {
+    input.value = name;
+    onPick(name);
+    hint.hidden = true;
+    close();
+  };
+  const refresh = () => {
+    hint.hidden = true;
+    items = input.value.trim().length >= 2 ? suggestionsFor(type, input.value, 6) : [];
+    active = -1;
+    paint();
+  };
+
+  input.addEventListener("input", refresh);
+  input.addEventListener("focus", refresh);
+  input.addEventListener("keydown", (e) => {
+    if (list.hidden) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      active = (active + (e.key === "ArrowDown" ? 1 : items.length - 1) + (active < 0 && e.key === "ArrowUp" ? 1 : 0)) % items.length;
+      paint();
+    } else if (e.key === "Enter" && active >= 0) {
+      e.preventDefault();
+      choose(items[active].name);
+    } else if (e.key === "Escape") {
+      close();
+    }
+  });
+  // Moving on without picking: if what they typed is nearly an existing name, say so.
+  input.addEventListener("blur", () => {
+    close();
+    const typed = input.value.trim();
+    if (!typed) { hint.hidden = true; return; }
+    const known = knownNames(type).map((k) => k.name);
+    if (known.some((n) => normalizeName(n) === normalizeName(typed))) { hint.hidden = true; return; }
+    const near = suggestionsFor(type, typed, 1)[0];
+    // 55 catches a one-letter typo ("Erlangor"); it's only advice, with a button to accept it.
+    if (near && near.score >= 55) {
+      hint.innerHTML = `Did you mean <strong>${esc(near.name)}</strong>? <button type="button" class="inline-link" data-use-hint>Use it</button>`;
+      hint.hidden = false;
+      hint.querySelector("[data-use-hint]").onmousedown = (e) => { e.preventDefault(); choose(near.name); };
+    } else {
+      hint.hidden = true;
+    }
+  });
+}
+
 function submitHtml() {
   const mode = formMode();
   const editing = state.editingId ? state.reviews.find((x) => x.id === state.editingId) : null;
@@ -1118,7 +1265,7 @@ function submitHtml() {
   const groupCard = `
     <div class="card border-group" style="margin-bottom:12px">
       <div class="section-label" style="color:${COLORS.group}">ANESTHESIA GROUP</div>
-      <input id="grp-name" placeholder="Anesthesia group / practice name" value="${esc(grpForm.name)}" />
+      ${suggestInputHtml("grp-name", "group", "Anesthesia group / practice name", grpForm.name)}
       ${choiceRowHtml("payType", "How are you paid?", "", STAFF_PAY_TYPES, grpForm.payType)}
       ${choiceRowHtml("payRange", "Annual pay range", "Optional. Shown on the group's page as what CRNAs report earning — information, not a score.", STAFF_PAY_RANGES, grpForm.payRange)}
       ${choiceRowHtml("familyInsurance", "Family health insurance — your cost per month", "Optional. What comes out of your check for family coverage.", FAMILY_INSURANCE_RANGES, grpForm.familyInsurance)}
@@ -1134,7 +1281,7 @@ function submitHtml() {
   const agencyCard = `
     <div class="card border-agency" style="margin-bottom:12px">
       <div class="section-label" style="color:${COLORS.agency}">AGENCY</div>
-      <input id="aa-agency" placeholder="Agency name" value="${esc(aaForm.agencyName)}" />
+      ${suggestInputHtml("aa-agency", "agency", "Agency name", aaForm.agencyName)}
       <div style="margin-top:12px">
         <div style="font-size:13px;font-weight:600;margin-bottom:4px">Pay range quoted ($/hr)</div>
         <div class="pay-grid" id="pay-grid">${PAY_RANGES.map((pr) => `<button type="button" class="return-btn${aaForm.payRange === pr ? " active" : ""}" data-pay="${esc(pr)}">${esc(pr)}</button>`).join("")}</div>
@@ -1151,7 +1298,7 @@ function submitHtml() {
     <div class="card border-agent" style="margin-bottom:12px">
       <div class="section-label" style="color:${COLORS.agent}">YOUR AGENT / RECRUITER</div>
       <p class="hint-text" style="margin-top:0">Agents are rated on their own, separate from the agency — not all agents are created equal. Leave the name blank to skip this section.</p>
-      <input id="aa-agent" placeholder="Agent / recruiter name" value="${esc(aaForm.agentName)}" />
+      ${suggestInputHtml("aa-agent", "agent", "Agent / recruiter name", aaForm.agentName)}
       <div style="margin-top:14px">${AGENT_CATEGORIES.map((c) => categoryRowHtml(c, "agt")).join("")}</div>
       <div class="score-row"><span style="font-size:12px;color:#6B756F">Weighted score</span><span class="big" id="agt-score">${weighted(AGENT_CATEGORIES, agtForm.ratings).toFixed(2)}</span></div>
       <div style="margin-top:8px">
@@ -1163,7 +1310,7 @@ function submitHtml() {
   const hospitalCard = `
     <div class="card border-hospital" style="margin-bottom:12px">
       <div class="section-label" style="color:${COLORS.hospital}">HOSPITAL</div>
-      <input id="hosp-name" placeholder="Hospital / facility name" value="${esc(hospForm.name)}" />
+      ${suggestInputHtml("hosp-name", "hospital", "Hospital / facility name", hospForm.name)}
       <div style="font-size:13px;font-weight:600;margin:12px 0 4px">Hospital location</div>
       <div class="loc-row">
         <input id="hosp-city" placeholder="City" value="${esc(hospForm.city)}" />
@@ -1198,6 +1345,8 @@ function attachSubmitHandlers() {
   if (mode === "locum") {
     document.getElementById("aa-agency").oninput = (e) => (aaForm.agencyName = e.target.value);
     document.getElementById("aa-agent").oninput = (e) => (aaForm.agentName = e.target.value);
+    attachSuggest("aa-agency", "agency", (n) => (aaForm.agencyName = n));
+    attachSuggest("aa-agent", "agent", (n) => (aaForm.agentName = n));
     document.getElementById("aa-comment").oninput = (e) => (aaForm.comment = e.target.value);
     document.getElementById("agt-comment").oninput = (e) => (agtForm.comment = e.target.value);
     const bindPay = () => document.querySelectorAll("#pay-grid [data-pay]").forEach((btn) => {
@@ -1212,9 +1361,11 @@ function attachSubmitHandlers() {
   } else {
     document.getElementById("grp-name").oninput = (e) => (grpForm.name = e.target.value);
     document.getElementById("grp-comment").oninput = (e) => (grpForm.comment = e.target.value);
+    attachSuggest("grp-name", "group", (n) => (grpForm.name = n));
     bindChoiceRows();
   }
   document.getElementById("hosp-name").oninput = (e) => (hospForm.name = e.target.value);
+  attachSuggest("hosp-name", "hospital", (n) => (hospForm.name = n));
   document.getElementById("hosp-city").oninput = (e) => (hospForm.city = e.target.value);
   document.getElementById("hosp-state").onchange = (e) => (hospForm.state = e.target.value);
   document.getElementById("hosp-comment").oninput = (e) => (hospForm.comment = e.target.value);
