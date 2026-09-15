@@ -155,6 +155,26 @@ function sendWelcomeEmail(row) {
   });
 }
 
+// Sent when the admin resets someone by hand from the dashboard. Same one-time
+// link machinery as "forgot password" — it lands on the create-password screen.
+function sendResetEmail(row) {
+  const token = sign({ email: row.email, purpose: "login" }, LINK_SECONDS);
+  const url = `${BASE_URL}/api/auth/verify?token=${token}`;
+  return sendEmail({
+    to: row.email,
+    subject: "Reset your CRNA Critics password",
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+        <h2 style="color:#123C3A;">Set a new password</h2>
+        <p>Hi ${escapeHtml(row.name)}, an administrator started a password reset for your CRNA Critics account.</p>
+        <p>The button below signs you in once and takes you straight to the create-password screen.</p>
+        <p><a href="${url}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Set a new password</a></p>
+        <p style="color:#888;font-size:12px;">This link expires in 48 hours. If you didn't expect this, you can ignore it — your current password still works until you change it.</p>
+      </div>
+    `,
+  });
+}
+
 // Simple in-memory brute-force guard: 5 failed attempts locks an email for 15 minutes.
 const loginFailures = new Map();
 function loginLocked(email) {
@@ -269,9 +289,17 @@ app.post("/api/admin/logout", (req, res) => {
   res.json({ ok: true });
 });
 
+// The admin list never carries the password hash off the server. What the admin
+// gets instead is whether a password exists — resetting it is the only way in.
+function adminRow(r) {
+  const { password_hash, ...rest } = r;
+  const counted = db.prepare("SELECT COUNT(*) AS n FROM reviews WHERE reviewer_email = ?").get(r.email);
+  return { ...rest, hasPassword: !!password_hash, reviewCount: counted ? counted.n : 0 };
+}
+
 app.get("/api/admin/requests", requireAdmin, (req, res) => {
   const rows = db.prepare("SELECT * FROM access_requests ORDER BY requested_at DESC").all();
-  res.json({ requests: rows });
+  res.json({ requests: rows.map(adminRow) });
 });
 
 app.post("/api/admin/requests/:id/decide", requireAdmin, async (req, res) => {
@@ -285,6 +313,35 @@ app.post("/api/admin/requests/:id/decide", requireAdmin, async (req, res) => {
     sendWelcomeEmail(row).catch((e) => console.error("Failed to send welcome email:", e.message));
   }
   res.json({ ok: true });
+});
+
+// Resend the welcome/sign-in link, or send a password reset, for one member.
+app.post("/api/admin/requests/:id/send-link", requireAdmin, async (req, res) => {
+  const kind = req.body?.kind === "reset" ? "reset" : "welcome";
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.status !== "approved") return res.status(400).json({ error: "not_approved" });
+  try {
+    await (kind === "reset" ? sendResetEmail(row) : sendWelcomeEmail(row));
+  } catch (e) {
+    console.error(`Failed to send ${kind} link to ${row.email}:`, e.message);
+    return res.status(502).json({ error: "send_failed" });
+  }
+  res.json({ ok: true, kind, sentTo: row.email });
+});
+
+// Remove a member. Their reviews only go with them when the admin says so;
+// otherwise the reviews stay up and the account is gone.
+app.delete("/api/admin/requests/:id", requireAdmin, (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const alsoReviews = req.query.reviews === "1";
+  let deletedReviews = 0;
+  if (alsoReviews) {
+    deletedReviews = db.prepare("DELETE FROM reviews WHERE reviewer_email = ?").run(row.email).changes;
+  }
+  db.prepare("DELETE FROM access_requests WHERE id = ?").run(row.id);
+  res.json({ ok: true, deletedReviews, name: row.name });
 });
 
 // ---------- reviews ----------
