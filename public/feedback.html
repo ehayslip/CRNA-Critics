@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRNA Critics — Beta Feedback</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  body{ background:#F4F6F8; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; margin:0; color:#0B1526; line-height:1.5; }
+  .fb-wrap{ max-width:640px; margin:0 auto; padding:28px 18px 60px; }
+  .fb-eyebrow{ display:inline-block; font-size:12px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:#13A15A; margin-bottom:6px; }
+  .fb-h1{ font-size:24px; margin:0 0 6px; letter-spacing:-0.01em; }
+  .fb-sub{ color:#5A6472; font-size:15px; margin:0; }
+  .fb-prev{ background:#FFF9E6; border:1px solid #F5B301; border-radius:10px; padding:10px 14px; font-size:13px; color:#5A6472; margin:16px 0; }
+  .fb-card{ background:#fff; border:1px solid #E1E6EB; border-radius:12px; padding:18px; margin-bottom:14px; box-shadow:0 1px 2px rgba(11,21,38,0.06),0 4px 14px rgba(11,21,38,0.06); }
+  .fb-num{ display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:6px; background:#0B1526; color:#fff; font-size:12px; font-weight:700; margin-right:8px; flex:none; }
+  .fb-qtitle{ font-size:15.5px; font-weight:700; display:flex; align-items:center; margin-bottom:4px; }
+  .fb-qhelp{ font-size:13.5px; color:#5A6472; margin:0 0 12px 30px; }
+  .fb-opts{ display:flex; flex-direction:column; gap:8px; margin-left:30px; }
+  .fb-opt{ display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid #C7CFD6; border-radius:9px; cursor:pointer; }
+  .fb-opt:hover{ border-color:#13A15A; }
+  .fb-opt input{ accent-color:#13A15A; width:17px; height:17px; flex:none; }
+  .fb-opt span{ font-size:14.5px; }
+  .fb-opt.selected{ border-color:#13A15A; background:rgba(19,161,90,0.07); }
+  .fb-wrap textarea{ margin-left:30px; margin-top:10px; width:calc(100% - 30px); padding:10px 12px; border:1px solid #C7CFD6; border-radius:9px; font-size:14px; font-family:inherit; resize:vertical; min-height:56px; box-sizing:border-box; }
+  .fb-final{ background:#fff; border:2px solid #13A15A; border-radius:12px; padding:18px; margin-bottom:22px; }
+  .fb-final .fb-qtitle{ margin-bottom:8px; }
+  .fb-final textarea{ margin-left:0; width:100%; min-height:100px; }
+  .fb-name{ background:#fff; border:1px solid #E1E6EB; border-radius:12px; padding:16px; margin:20px 0; }
+  .fb-name label{ font-size:13px; font-weight:600; color:#5A6472; display:block; margin-bottom:6px; }
+  .fb-name input{ width:100%; padding:10px 12px; border:1px solid #C7CFD6; border-radius:8px; font-size:15px; box-sizing:border-box; }
+  #fb-submit{ width:100%; padding:15px; border:none; border-radius:10px; background:#13A15A; color:#fff; font-size:16px; font-weight:700; cursor:pointer; }
+  #fb-submit:disabled{ opacity:.6; }
+  .fb-err{ color:#D14343; font-size:13px; text-align:center; margin-top:10px; display:none; }
+  .fb-thanks{ text-align:center; padding:50px 20px; background:#fff; border:2px solid #13A15A; border-radius:14px; }
+  .fb-thanks .big{ font-size:40px; margin-bottom:8px; }
+  .fb-note{ text-align:center; font-size:12px; color:#5A6472; margin-top:20px; }
+</style>
+</head>
+<body>
+<div class="fb-wrap" id="fb-app">
+  <div class="fb-sub">Loading…</div>
+</div>
+<script>
+const QUESTIONS = [
+  { title: "Sign-up & verification", help: "Getting verified and creating your account.",
+    options: ["Easy", "Some friction", "Confusing"] },
+  { title: "Site navigation", help: "Finding your way around — search, posting a review, My Reviews, etc.",
+    options: ["Easy to navigate", "Mostly fine", "Hard to navigate"] },
+  { title: "Glitches or bugs", help: "Anything that broke, froze, looked wrong, or didn't save?",
+    options: ["None found", "Ran into something (describe below)"] },
+  { title: "Clarity of instructions", help: "Was it clear what each step/section was for (verification, terms, posting, ratings)?",
+    options: ["Clear", "Mostly clear", "Confusing"] },
+  { title: "Design & layout", help: "Look, colors, layout — anything you'd change?",
+    options: ["Looks good as-is", "A few things I'd tweak (describe below)"] },
+  { title: "Content being reviewed", help: "Do the categories (hospital, agency, agent, group) cover what actually matters?",
+    options: ["Covers it well", "Something's missing or off (describe below)"] },
+  { title: "Value to the CRNA community", help: "Would something like this genuinely help CRNAs, especially locums?",
+    options: ["Yes, definitely", "Somewhat", "Not really"] }
+];
+
+const params = new URLSearchParams(location.search);
+const token = params.get('token') || '';
+const app = document.getElementById('fb-app');
+
+async function boot(){
+  if (!token) { app.innerHTML = '<div class="fb-card"><p>This link is missing its token. Ask Eric for a fresh one.</p></div>'; return; }
+  let info;
+  try {
+    const res = await fetch(`/api/feedback/${encodeURIComponent(token)}`);
+    if (!res.ok) throw new Error('bad');
+    info = await res.json();
+  } catch (e) {
+    app.innerHTML = '<div class="fb-card"><p>This link isn\'t valid or has expired. Ask Eric to resend it.</p></div>';
+    return;
+  }
+  renderForm(info);
+}
+
+function renderForm(info){
+  app.innerHTML = `
+    <span class="fb-eyebrow">Beta Tester Feedback</span>
+    <h1 class="fb-h1">CRNA Critics — Quick Feedback</h1>
+    <p class="fb-sub">Tap an answer for each question below. Add a note if you want — totally optional. Takes about 3 minutes.</p>
+    ${info.previousSubmittedAt ? `<div class="fb-prev">You already submitted feedback on ${new Date(info.previousSubmittedAt).toLocaleString()}. Submitting again will save a new response.</div>` : ""}
+    <div class="fb-name">
+      <label for="fb-testerName">Your name</label>
+      <input type="text" id="fb-testerName" value="${(info.name || "").replace(/"/g,'&quot;')}">
+    </div>
+    <div id="fb-questions"></div>
+    <div class="fb-final">
+      <div class="fb-qtitle">Anything else?</div>
+      <textarea id="fb-finalComment" placeholder="Ideas, concerns, features you expected to see, anything at all..."></textarea>
+    </div>
+    <button id="fb-submit">Send my feedback</button>
+    <p class="fb-err" id="fb-errMsg"></p>
+    <p class="fb-note">Tapping Send saves your answers straight to Eric — nothing to copy, no email needed.</p>
+  `;
+
+  const container = document.getElementById('fb-questions');
+  QUESTIONS.forEach((q, i) => {
+    const qDiv = document.createElement('div');
+    qDiv.className = 'fb-card';
+    qDiv.innerHTML = `
+      <div class="fb-qtitle"><span class="fb-num">${i+1}</span>${q.title}</div>
+      <p class="fb-qhelp">${q.help}</p>
+      <div class="fb-opts">
+        ${q.options.map(opt => `
+          <label class="fb-opt" data-qi="${i}">
+            <input type="radio" name="q${i}" value="${opt}">
+            <span>${opt}</span>
+          </label>
+        `).join('')}
+      </div>
+      <textarea id="fb-comment${i}" placeholder="Optional comment..."></textarea>
+    `;
+    container.appendChild(qDiv);
+  });
+
+  container.addEventListener('click', (e) => {
+    const label = e.target.closest('.fb-opt');
+    if (!label) return;
+    const qi = label.dataset.qi;
+    document.querySelectorAll(`.fb-opt[data-qi="${qi}"]`).forEach(o => o.classList.remove('selected'));
+    label.classList.add('selected');
+  });
+
+  document.getElementById('fb-submit').addEventListener('click', submitFeedback);
+}
+
+async function submitFeedback(){
+  const btn = document.getElementById('fb-submit');
+  const err = document.getElementById('fb-errMsg');
+  err.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+
+  const name = document.getElementById('fb-testerName').value.trim();
+  const answers = QUESTIONS.map((q, i) => {
+    const checked = document.querySelector(`input[name="q${i}"]:checked`);
+    return {
+      answer: checked ? checked.value : null,
+      comment: document.getElementById(`fb-comment${i}`).value.trim()
+    };
+  });
+  const finalComment = document.getElementById('fb-finalComment').value.trim();
+
+  try {
+    const res = await fetch(`/api/feedback/${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, answers, finalComment })
+    });
+    if (!res.ok) throw new Error((await res.json().catch(()=>({}))).error || 'send_failed');
+    app.innerHTML = `
+      <div class="fb-thanks">
+        <div class="big">✅</div>
+        <h2>Thanks — got it!</h2>
+        <p>Your feedback was sent straight to Eric. Appreciate you taking the time.</p>
+      </div>
+    `;
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Send my feedback';
+    err.textContent = "Couldn't send that — check your connection and try again.";
+    err.style.display = 'block';
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
