@@ -16,6 +16,7 @@ const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE || "";
 const isProd = process.env.NODE_ENV === "production";
 const SESSION_SECONDS = 60 * 60 * 24 * 90; // members stay signed in for 90 days per device
 const LINK_SECONDS = 60 * 60 * 48; // emailed sign-in links (welcome + forgot-password) are good for 48 hours
+const FEEDBACK_LINK_SECONDS = 60 * 60 * 24 * 60; // beta feedback links stay open for 60 days — testers take their time
 const MIN_PASSWORD_LENGTH = 8;
 
 app.use(express.json());
@@ -182,6 +183,27 @@ function sendResetEmail(row) {
   });
 }
 
+// Beta tester feedback link. No login required — the signed token in the URL
+// is the credential, same idea as the approve/reject links.
+function sendFeedbackRequestEmail(row, token) {
+  const url = `${BASE_URL}/feedback?token=${token}`;
+  return sendEmail({
+    to: row.email,
+    replyTo: REPLY_TO,
+    subject: "Quick favor — 3 min of feedback on CRNA Critics",
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+        ${emailHeaderHtml(BASE_URL, 480)}
+        <h2 style="color:#123C3A;">A quick favor</h2>
+        <p>Hi ${escapeHtml(row.name)}, thanks for trialing CRNA Critics. Since you're one of the first CRNAs on the site, your feedback will directly shape what gets fixed and built next.</p>
+        <p>Tap your answers below — no typing required unless you want to add a note. Takes about 3 minutes.</p>
+        <p><a href="${url}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Give feedback</a></p>
+        <p style="color:#888;font-size:12px;">This link works without signing in and stays open for 60 days.</p>
+      </div>
+    `,
+  });
+}
+
 // Simple in-memory brute-force guard: 5 failed attempts locks an email for 15 minutes.
 const loginFailures = new Map();
 function loginLocked(email) {
@@ -302,7 +324,15 @@ app.post("/api/admin/logout", (req, res) => {
 function adminRow(r) {
   const { password_hash, ...rest } = r;
   const counted = db.prepare("SELECT COUNT(*) AS n FROM reviews WHERE reviewer_email = ?").get(r.email);
-  return { ...rest, hasPassword: !!password_hash, reviewCount: counted ? counted.n : 0 };
+  const fb = db
+    .prepare("SELECT submitted_at FROM beta_feedback WHERE request_id = ? ORDER BY submitted_at DESC LIMIT 1")
+    .get(r.id);
+  return {
+    ...rest,
+    hasPassword: !!password_hash,
+    reviewCount: counted ? counted.n : 0,
+    feedbackSubmittedAt: fb ? fb.submitted_at : null,
+  };
 }
 
 app.get("/api/admin/requests", requireAdmin, (req, res) => {
@@ -336,6 +366,39 @@ app.post("/api/admin/requests/:id/send-link", requireAdmin, async (req, res) => 
     return res.status(502).json({ error: "send_failed" });
   }
   res.json({ ok: true, kind, sentTo: row.email });
+});
+
+// Email one member the beta feedback form. Re-sendable any time — a resend just
+// mints a fresh 60-day token, it doesn't clear what they already submitted.
+app.post("/api/admin/requests/:id/send-feedback", requireAdmin, async (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.status !== "approved") return res.status(400).json({ error: "not_approved" });
+  const token = sign({ id: row.id, purpose: "feedback" }, FEEDBACK_LINK_SECONDS);
+  try {
+    await sendFeedbackRequestEmail(row, token);
+  } catch (e) {
+    console.error(`Failed to send feedback link to ${row.email}:`, e.message);
+    return res.status(502).json({ error: "send_failed" });
+  }
+  db.prepare("UPDATE access_requests SET feedback_sent_at = ? WHERE id = ?").run(new Date().toISOString(), row.id);
+  res.json({ ok: true, sentTo: row.email });
+});
+
+// The full submission history for one member (newest first) — usually just one row.
+app.get("/api/admin/requests/:id/feedback", requireAdmin, (req, res) => {
+  const rows = db
+    .prepare("SELECT * FROM beta_feedback WHERE request_id = ? ORDER BY submitted_at DESC")
+    .all(req.params.id);
+  res.json({
+    submissions: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      answers: JSON.parse(r.answers),
+      finalComment: r.final_comment,
+      submittedAt: r.submitted_at,
+    })),
+  });
 });
 
 // Remove a member. Their reviews only go with them when the admin says so;
@@ -890,6 +953,60 @@ app.delete("/api/reviews/:id", requireSession, (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- beta feedback (public, token-based — no member login required) ----------
+
+// Same 7 questions the form renders; kept here too so a submission with a stale
+// or tampered answer set still gets sane server-side bounds.
+const FEEDBACK_QUESTIONS = [
+  "Sign-up & verification",
+  "Site navigation",
+  "Glitches or bugs",
+  "Clarity of instructions",
+  "Design & layout",
+  "Content being reviewed",
+  "Value to the CRNA community",
+];
+
+app.get("/api/feedback/:token", (req, res) => {
+  const payload = verify(req.params.token);
+  if (!payload || !payload.id || payload.purpose !== "feedback") {
+    return res.status(400).json({ error: "invalid_or_expired" });
+  }
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(payload.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const last = db
+    .prepare("SELECT submitted_at FROM beta_feedback WHERE request_id = ? ORDER BY submitted_at DESC LIMIT 1")
+    .get(row.id);
+  res.json({ name: row.name, previousSubmittedAt: last ? last.submitted_at : null });
+});
+
+app.post("/api/feedback/:token", (req, res) => {
+  const payload = verify(req.params.token);
+  if (!payload || !payload.id || payload.purpose !== "feedback") {
+    return res.status(400).json({ error: "invalid_or_expired" });
+  }
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(payload.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+
+  const name = String(req.body?.name || row.name).trim().slice(0, 120);
+  const rawAnswers = Array.isArray(req.body?.answers) ? req.body.answers : [];
+  const answers = FEEDBACK_QUESTIONS.map((title, i) => {
+    const a = rawAnswers[i] || {};
+    return {
+      title,
+      answer: a.answer ? String(a.answer).slice(0, 120) : null,
+      comment: String(a.comment || "").trim().slice(0, 1000),
+    };
+  });
+  const finalComment = String(req.body?.finalComment || "").trim().slice(0, 2000);
+
+  db.prepare(
+    "INSERT INTO beta_feedback (id, request_id, name, answers, final_comment, submitted_at) VALUES (?,?,?,?,?,?)"
+  ).run(crypto.randomUUID(), row.id, name, JSON.stringify(answers), finalComment, new Date().toISOString());
+
+  res.json({ ok: true });
+});
+
 // ---------- static frontend ----------
 
 // The email logo, served from base64 in server/brand.js so the whole asset lives in
@@ -899,6 +1016,10 @@ app.get("/email-logo.png", (req, res) => {
   res.set("Content-Type", "image/png");
   res.set("Cache-Control", "public, max-age=31536000, immutable");
   res.send(EMAIL_LOGO_BYTES);
+});
+
+app.get("/feedback", (req, res) => {
+  res.sendFile(path.join(__dirname, "..", "public", "feedback.html"));
 });
 
 app.use(express.static(path.join(__dirname, "..", "public")));
