@@ -6,7 +6,7 @@ const path = require("path");
 
 const db = require("./db");
 const { sign, verify, hashPassword, verifyPassword } = require("./auth");
-const { sendEmail, escapeHtml } = require("./email");
+const { sendEmail, escapeHtml, campaignHtml, fillTokens, TOKENS } = require("./email");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -342,6 +342,298 @@ app.delete("/api/admin/requests/:id", requireAdmin, (req, res) => {
   }
   db.prepare("DELETE FROM access_requests WHERE id = ?").run(row.id);
   res.json({ ok: true, deletedReviews, name: row.name });
+});
+
+// ---------- member email: templates, campaigns, unsubscribe ----------
+//
+// Two kinds of mail leave this server and they are deliberately separate:
+//   * account mail (welcome, sign-in link, password reset) — always sent, never
+//     affected by an unsubscribe;
+//   * member mailings / campaigns — written in the admin CMS, sent to a chosen set
+//     of members, and skipped for anyone who opted out.
+
+const CAMPAIGN_DELAY_MS = Number(process.env.CAMPAIGN_DELAY_MS || 600); // Resend allows ~2/sec
+const UNSUB_SECONDS = 60 * 60 * 24 * 365 * 2;
+
+function unsubscribeUrlFor(email) {
+  return `${BASE_URL}/unsubscribe?token=${sign({ email, purpose: "unsub" }, UNSUB_SECONDS)}`;
+}
+
+function reviewCountFor(email) {
+  const row = db.prepare("SELECT COUNT(*) AS n FROM reviews WHERE reviewer_email = ?").get(email);
+  return row ? row.n : 0;
+}
+
+// --- templates (the CMS) ---
+
+app.get("/api/admin/templates", requireAdmin, (req, res) => {
+  res.json({
+    templates: db.prepare("SELECT * FROM email_templates ORDER BY category, name").all(),
+    tokens: TOKENS,
+  });
+});
+
+function templateFields(b) {
+  const name = String(b?.name || "").trim().slice(0, 120);
+  const subject = String(b?.subject || "").trim().slice(0, 300);
+  const body = String(b?.body || "").trim().slice(0, 20000);
+  const category = String(b?.category || "").trim().slice(0, 40);
+  if (!name || !subject || !body) return { error: "missing_fields" };
+  return { values: { name, subject, body, category } };
+}
+
+app.post("/api/admin/templates", requireAdmin, (req, res) => {
+  const parsed = templateFields(req.body || {});
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const { name, subject, body, category } = parsed.values;
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  db.prepare(
+    "INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
+  ).run(id, name, category, subject, body, now, now);
+  res.json({ template: db.prepare("SELECT * FROM email_templates WHERE id = ?").get(id) });
+});
+
+app.put("/api/admin/templates/:id", requireAdmin, (req, res) => {
+  const existing = db.prepare("SELECT * FROM email_templates WHERE id = ?").get(req.params.id);
+  if (!existing) return res.status(404).json({ error: "not_found" });
+  const parsed = templateFields(req.body || {});
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const { name, subject, body, category } = parsed.values;
+  db.prepare("UPDATE email_templates SET name=?, category=?, subject=?, body=?, updated_at=? WHERE id=?")
+    .run(name, category, subject, body, new Date().toISOString(), existing.id);
+  res.json({ template: db.prepare("SELECT * FROM email_templates WHERE id = ?").get(existing.id) });
+});
+
+app.delete("/api/admin/templates/:id", requireAdmin, (req, res) => {
+  const changed = db.prepare("DELETE FROM email_templates WHERE id = ?").run(req.params.id).changes;
+  if (!changed) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true });
+});
+
+// --- who can be mailed ---
+
+// Every decided member, with what the admin needs to pick from: whether they've
+// opted out of mailings, how many reviews they've posted, and when they last posted.
+app.get("/api/admin/email/recipients", requireAdmin, (req, res) => {
+  const rows = db.prepare("SELECT * FROM access_requests WHERE status = 'approved' ORDER BY name").all();
+  const recipients = rows.map((r) => {
+    const last = db
+      .prepare("SELECT date FROM reviews WHERE reviewer_email = ? ORDER BY date DESC LIMIT 1")
+      .get(r.email);
+    return {
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      employmentType: r.employment_type || "",
+      reviewCount: reviewCountFor(r.email),
+      lastReviewAt: last ? last.date : null,
+      unsubscribed: !!r.bulk_unsubscribed,
+      hasPassword: !!r.password_hash,
+    };
+  });
+  res.json({ recipients });
+});
+
+// Renders one member's copy of a draft, exactly as it will be sent.
+app.post("/api/admin/email/preview", requireAdmin, (req, res) => {
+  const subject = String(req.body?.subject || "");
+  const body = String(req.body?.body || "");
+  const row = req.body?.memberId
+    ? db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.body.memberId)
+    : db.prepare("SELECT * FROM access_requests WHERE status = 'approved' ORDER BY requested_at DESC LIMIT 1").get();
+  const ctx = row
+    ? { name: row.name, email: row.email, reviewCount: reviewCountFor(row.email), baseUrl: BASE_URL }
+    : { name: "Jane Doe, CRNA", email: "jane@example.com", reviewCount: 2, baseUrl: BASE_URL };
+  res.json({
+    to: ctx.email,
+    subject: fillTokens(subject, ctx),
+    html: campaignHtml({ body, ctx, unsubscribeUrl: `${BASE_URL}/unsubscribe?token=preview` }),
+  });
+});
+
+// --- sending ---
+
+// Sends one campaign in the background, one message at a time with a small gap so
+// Resend's rate limit is never the reason a send half-finishes. Progress lands in
+// the campaign row, which the dashboard polls.
+async function runCampaign(campaignId, subject, body) {
+  const recipients = db
+    .prepare("SELECT * FROM email_campaign_recipients WHERE campaign_id = ? AND status = 'queued'")
+    .all(campaignId);
+  const markRecipient = db.prepare("UPDATE email_campaign_recipients SET status=?, error=?, sent_at=? WHERE id=?");
+  const bump = db.prepare(`UPDATE email_campaigns SET sent=?, failed=?, skipped=?, last_error=? WHERE id=?`);
+  let sent = 0, failed = 0, skipped = 0, lastError = "";
+
+  for (const r of recipients) {
+    const member = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(r.email);
+    if (!member || member.status !== "approved") {
+      skipped += 1;
+      markRecipient.run("skipped", "no longer an approved member", new Date().toISOString(), r.id);
+    } else if (member.bulk_unsubscribed) {
+      skipped += 1;
+      markRecipient.run("skipped", "unsubscribed from mailings", new Date().toISOString(), r.id);
+    } else {
+      const ctx = { name: member.name, email: member.email, reviewCount: reviewCountFor(member.email), baseUrl: BASE_URL };
+      try {
+        await sendEmail({
+          to: member.email,
+          subject: fillTokens(subject, ctx),
+          html: campaignHtml({ body, ctx, unsubscribeUrl: unsubscribeUrlFor(member.email) }),
+        });
+        sent += 1;
+        markRecipient.run("sent", "", new Date().toISOString(), r.id);
+      } catch (e) {
+        failed += 1;
+        lastError = e.message || "send failed";
+        markRecipient.run("failed", lastError.slice(0, 300), new Date().toISOString(), r.id);
+        console.error(`Campaign ${campaignId}: failed to ${member.email}:`, lastError);
+      }
+      await new Promise((resolve) => setTimeout(resolve, CAMPAIGN_DELAY_MS));
+    }
+    bump.run(sent, failed, skipped, lastError, campaignId);
+  }
+  db.prepare("UPDATE email_campaigns SET status='done', finished_at=?, sent=?, failed=?, skipped=?, last_error=? WHERE id=?")
+    .run(new Date().toISOString(), sent, failed, skipped, lastError, campaignId);
+  console.log(`Campaign ${campaignId} finished — ${sent} sent, ${failed} failed, ${skipped} skipped.`);
+}
+
+// Start a send. Returns immediately with the campaign id; the dashboard polls it.
+app.post("/api/admin/email/send", requireAdmin, (req, res) => {
+  const subject = String(req.body?.subject || "").trim();
+  const body = String(req.body?.body || "").trim();
+  const templateName = String(req.body?.templateName || "").slice(0, 120);
+  if (!subject || !body) return res.status(400).json({ error: "missing_fields" });
+
+  const all = !!req.body?.all;
+  const ids = Array.isArray(req.body?.recipientIds) ? req.body.recipientIds.map(String) : [];
+  const approved = db.prepare("SELECT * FROM access_requests WHERE status = 'approved'").all();
+  const chosen = all ? approved : approved.filter((r) => ids.includes(r.id));
+  const mailable = chosen.filter((r) => !r.bulk_unsubscribed);
+  if (mailable.length === 0) return res.status(400).json({ error: "no_recipients" });
+
+  const campaignId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    "INSERT INTO email_campaigns (id, subject, body, template_name, status, total, created_at) VALUES (?,?,?,?, 'sending', ?, ?)"
+  ).run(campaignId, subject, body, templateName, mailable.length, now);
+  const insert = db.prepare(
+    "INSERT INTO email_campaign_recipients (id, campaign_id, email, name, status) VALUES (?,?,?,?, 'queued')"
+  );
+  db.transaction(() => {
+    mailable.forEach((r) => insert.run(crypto.randomUUID(), campaignId, r.email, r.name));
+  })();
+
+  runCampaign(campaignId, subject, body).catch((e) => {
+    console.error("Campaign crashed:", e.message);
+    db.prepare("UPDATE email_campaigns SET status='done', last_error=?, finished_at=? WHERE id=?")
+      .run(String(e.message || "crashed").slice(0, 300), new Date().toISOString(), campaignId);
+  });
+
+  res.json({ ok: true, campaignId, total: mailable.length, excluded: chosen.length - mailable.length });
+});
+
+app.get("/api/admin/campaigns", requireAdmin, (req, res) => {
+  res.json({ campaigns: db.prepare("SELECT * FROM email_campaigns ORDER BY created_at DESC LIMIT 50").all() });
+});
+
+app.get("/api/admin/campaigns/:id", requireAdmin, (req, res) => {
+  const campaign = db.prepare("SELECT * FROM email_campaigns WHERE id = ?").get(req.params.id);
+  if (!campaign) return res.status(404).json({ error: "not_found" });
+  res.json({
+    campaign,
+    recipients: db
+      .prepare("SELECT email, name, status, error, sent_at FROM email_campaign_recipients WHERE campaign_id = ? ORDER BY status, name")
+      .all(campaign.id),
+  });
+});
+
+// Admin can flip a member's mailing opt-out by hand (someone who asks by phone).
+app.post("/api/admin/requests/:id/unsubscribe", requireAdmin, (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const value = req.body?.unsubscribed ? 1 : 0;
+  db.prepare("UPDATE access_requests SET bulk_unsubscribed=?, unsubscribed_at=? WHERE id=?")
+    .run(value, value ? new Date().toISOString() : null, row.id);
+  res.json({ ok: true, unsubscribed: !!value });
+});
+
+// --- the member-facing unsubscribe page ---
+
+function unsubPage(title, body) {
+  return `
+    <html><head><meta name="viewport" content="width=device-width,initial-scale=1"/><title>CRNA Critics</title></head>
+    <body style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:60px auto;padding:0 20px;color:#14231F;text-align:center;">
+      <h2 style="color:#123C3A;">${title}</h2>
+      ${body}
+    </body></html>`;
+}
+
+app.get("/unsubscribe", (req, res) => {
+  const payload = verify(req.query.token);
+  if (!payload || payload.purpose !== "unsub" || !payload.email) {
+    return res.status(400).send(unsubPage("That link isn't valid", `<p>Ask us to take you off the list by replying to any CRNA Critics email.</p>`));
+  }
+  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(payload.email);
+  if (!row) return res.status(404).send(unsubPage("Account not found", `<p>There's no CRNA Critics account with that address.</p>`));
+  if (row.bulk_unsubscribed) {
+    return res.send(unsubPage("You're already unsubscribed", `<p>${escapeHtml(row.email)} won't get member mailings. Account email — sign-in links and password resets — still comes through.</p>`));
+  }
+  res.send(
+    unsubPage(
+      "Unsubscribe from member mailings?",
+      `<p>${escapeHtml(row.email)}</p>
+       <p style="color:#6B756F;font-size:14px;">You'll stop getting review reminders and announcements. You'll still get account email — sign-in links and password resets — and your reviews stay up.</p>
+       <form method="POST" action="/unsubscribe">
+         <input type="hidden" name="token" value="${escapeHtml(String(req.query.token))}"/>
+         <button type="submit" style="background:#8C3A32;color:#fff;border:0;padding:13px 22px;border-radius:4px;font-weight:bold;font-size:15px;cursor:pointer;">Yes, unsubscribe me</button>
+       </form>`
+    )
+  );
+});
+
+app.post("/unsubscribe", express.urlencoded({ extended: false }), (req, res) => {
+  const payload = verify(req.body?.token);
+  if (!payload || payload.purpose !== "unsub" || !payload.email) {
+    return res.status(400).send(unsubPage("That link isn't valid", `<p>Reply to any CRNA Critics email and we'll take you off by hand.</p>`));
+  }
+  db.prepare("UPDATE access_requests SET bulk_unsubscribed=1, unsubscribed_at=? WHERE email=?")
+    .run(new Date().toISOString(), payload.email);
+  res.send(
+    unsubPage(
+      "Done — you're unsubscribed",
+      `<p>${escapeHtml(payload.email)} won't get member mailings any more.</p>
+       <p style="color:#6B756F;font-size:14px;">Account email still works, so you can always sign in. Changed your mind? Ask the admin to put you back on.</p>
+       <p><a href="${BASE_URL}" style="color:#1F5C57;">Back to CRNA Critics</a></p>`
+    )
+  );
+});
+
+// ---------- admin view of reviews ----------
+
+// The admin sees who wrote what, anonymous or not — moderation needs a name to act on.
+// Members never get this route; `anonymous` is still flagged so the dashboard can show
+// how the review appears publicly.
+function adminReview(r) {
+  return {
+    ...rowToReview(r, null),
+    isMine: false,
+    anonymous: !!r.anonymous,
+    reviewer: { name: r.reviewer_name, credentials: r.reviewer_credentials },
+    reviewerEmail: r.reviewer_email,
+  };
+}
+
+app.get("/api/admin/reviews", requireAdmin, (req, res) => {
+  const rows = db.prepare("SELECT * FROM reviews ORDER BY date DESC").all();
+  res.json({ reviews: rows.map(adminReview) });
+});
+
+app.get("/api/admin/requests/:id/reviews", requireAdmin, (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const rows = db.prepare("SELECT * FROM reviews WHERE reviewer_email = ? ORDER BY date DESC").all(row.email);
+  res.json({ reviews: rows.map(adminReview) });
 });
 
 // ---------- name merges ----------
