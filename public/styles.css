@@ -323,13 +323,12 @@ a.tiny-btn { text-decoration: none; }
   .hero { padding-top: 16px !important; }
   .hero-h { font-size: 36px; }
   /* Side by side: copy on the left, the CRNA BEWARE photo on the right, both in one glance. */
-  .hero { display: grid; grid-template-columns: 1fr minmax(0, 540px) minmax(0, 400px) 1fr; column-gap: 36px; align-items: center; text-align: left; padding: 24px 40px 44px !important; }
-  .hero-copy { grid-column: 2; margin: 0; max-width: none; }
-  .hero-art { grid-column: 3; }
-  .hero-sub { margin-left: 0; }
-  .hero .cta-row { justify-content: flex-start; }
-  .hero-warning { margin-left: 0; }
-  .hero-art { margin: 0; max-width: none; }
+  .landing .hero { display: grid; grid-template-columns: 1fr minmax(0, 540px) minmax(0, 400px) 1fr; column-gap: 36px; align-items: center; text-align: left; padding: 24px 40px 44px !important; }
+  .landing .hero-copy { grid-column: 2; margin: 0; max-width: none; }
+  .landing .hero-art { grid-column: 3; margin: 0; max-width: none; }
+  .landing .hero-sub { margin-left: 0; }
+  .landing .hero .cta-row { justify-content: flex-start; }
+  .landing .hero-warning { margin-left: 0; }
   .lp-h { font-size: 24px; }
   .feature-grid { grid-template-columns: repeat(2, 1fr); }
 }
