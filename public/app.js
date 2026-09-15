@@ -50,6 +50,17 @@ const STAFF_PAY_RANGES = ["Under $200k", "$201k–249k", "$250k–299k", "$300k�
 const FAMILY_INSURANCE_RANGES = ["Under $400", "$401–450", "$451–500", "Above $500", "Not offered"];
 // Paid time off, counted in weeks per year.
 const PTO_RANGES = ["Under 5 weeks", "6 weeks", "7 weeks", "8 weeks", "9+ weeks"];
+// What the group pays for PRN / extra shifts, hourly. Informational, like the rest of this row.
+const PRN_RATES = ["Under $170", "$171–180", "$181–190", "$191–200", "$201–210", "Above $210"];
+
+// A score at or below this, on any name, gets the CRNA BEWARE stamp.
+const BEWARE_AT = 2;
+function isBeware(avg) { return avg > 0 && avg <= BEWARE_AT; }
+// The stamp itself. `size` is "lg" on a name's own page, "sm" beside a card or an
+// individual review.
+function bewareStampHtml(size) {
+  return `<span class="beware-mark beware-${size || "sm"}" role="img" aria-label="CRNA Beware — this score is ${BEWARE_AT} or lower">CRNA BEWARE</span>`;
+}
 
 // ---------- merging the same name written a dozen ways ----------
 // One company, one page. Each rule maps every spelling members actually type onto a single
@@ -167,6 +178,7 @@ function staffFactsLine(r) {
   if (r.staffPayRange) parts.push(r.staffPayRange + "/yr");
   if (r.familyInsurance) parts.push(r.familyInsurance === "Not offered" ? "family insurance not offered" : `family insurance ${r.familyInsurance}/mo`);
   if (r.ptoWeeks) parts.push(`${r.ptoWeeks} PTO`);
+  if (r.prnRate) parts.push(`PRN ${r.prnRate}/hr`);
   return parts.join(" · ");
 }
 // The location most reviewers gave for a hospital (names repeat across cities).
@@ -189,11 +201,26 @@ const SEARCH_SECTIONS = [
 
 // One place that knows, for each rateable thing, which review fields hold its data.
 const ENTITY = {
-  agency:   { label: "Agency",           field: "agencyName",   ratings: "agencyAgentRatings", comment: "agencyAgentComment", ret: "agencyAgentWouldReturn", categories: AGENCY_CATEGORIES,   hasPay: true },
-  agent:    { label: "Agent",            field: "agentName",    ratings: "agentRatings",       comment: "agentComment",       ret: "agentWouldReturn",       categories: AGENT_CATEGORIES,    hasPay: false },
-  group:    { label: "Anesthesia Group", field: "groupName",    ratings: "groupRatings",       comment: "groupComment",       ret: "groupWouldReturn",       categories: GROUP_CATEGORIES,    hasPay: false },
-  hospital: { label: "Hospital",         field: "hospitalName", ratings: "hospitalRatings",    comment: "hospitalComment",    ret: "hospitalWouldReturn",    categories: HOSPITAL_CATEGORIES, hasPay: false },
+  agency:   { label: "Agency",           field: "agencyName",   ratings: "agencyAgentRatings", comment: "agencyAgentComment", notes: "agencyAgentNotes", ret: "agencyAgentWouldReturn", categories: AGENCY_CATEGORIES,   hasPay: true },
+  agent:    { label: "Agent",            field: "agentName",    ratings: "agentRatings",       comment: "agentComment",       notes: "agentNotes",       ret: "agentWouldReturn",       categories: AGENT_CATEGORIES,    hasPay: false },
+  group:    { label: "Anesthesia Group", field: "groupName",    ratings: "groupRatings",       comment: "groupComment",       notes: "groupNotes",       ret: "groupWouldReturn",       categories: GROUP_CATEGORIES,    hasPay: false },
+  hospital: { label: "Hospital",         field: "hospitalName", ratings: "hospitalRatings",    comment: "hospitalComment",    notes: "hospitalNotes",    ret: "hospitalWouldReturn",    categories: HOSPITAL_CATEGORIES, hasPay: false },
 };
+
+// The per-category comments a member wrote, rendered as titled lines under their review —
+// each one keeps its category's title and the score it explains, e.g. "Case Mix & Acuity · 2 ★".
+function categoryNotesHtml(r, categories, notesField, ratingsField) {
+  const ratings = (r && r[ratingsField]) || {};
+  const items = categories
+    .map((c) => ({ label: c.label, score: ratings[c.key], text: String((((r && r[notesField]) || {})[c.key]) || "").trim() }))
+    .filter((n) => n.text);
+  if (items.length === 0) return "";
+  return `<div class="cat-notes">${items.map((n) => `
+    <div class="cat-note">
+      <div class="cat-note-head">${esc(n.label)}${n.score > 0 ? ` <span class="cat-note-score">${n.score} ★</span>` : ""}</div>
+      <div class="cat-note-body">${esc(n.text)}</div>
+    </div>`).join("")}</div>`;
+}
 const EMPLOYMENT = {
   locum: { label: "Locum / 1099 contractor", short: "Locum", reviews: "agencies, agents, and hospitals" },
   staff: { label: "Full-time / part-time staff", short: "Staff", reviews: "anesthesia groups and hospitals" },
@@ -281,21 +308,22 @@ const state = {
   editingId: null, // id of the member's own review being edited in the Post a review form
 };
 
-const aaForm = { agencyName: "", agentName: "", payRange: "", ratings: {}, wouldReturn: "", comment: "" };
-const agtForm = { ratings: {}, wouldReturn: "", comment: "" };
-const grpForm = { name: "", payType: "", payRange: "", familyInsurance: "", ptoWeeks: "", ratings: {}, wouldReturn: "", comment: "" };
-const hospForm = { name: "", city: "", state: "", ratings: {}, wouldReturn: "", comment: "" };
+// `notes` holds the small per-category comment boxes: { categoryKey: "what they wrote" }.
+const aaForm = { agencyName: "", agentName: "", payRange: "", ratings: {}, notes: {}, wouldReturn: "", comment: "" };
+const agtForm = { ratings: {}, notes: {}, wouldReturn: "", comment: "" };
+const grpForm = { name: "", payType: "", payRange: "", familyInsurance: "", ptoWeeks: "", prnRate: "", ratings: {}, notes: {}, wouldReturn: "", comment: "" };
+const hospForm = { name: "", city: "", state: "", ratings: {}, notes: {}, wouldReturn: "", comment: "" };
 const postOpts = { anonymous: false };
 const FORMS = { aa: { form: aaForm, categories: AGENCY_CATEGORIES }, agt: { form: agtForm, categories: AGENT_CATEGORIES }, grp: { form: grpForm, categories: GROUP_CATEGORIES }, hosp: { form: hospForm, categories: HOSPITAL_CATEGORIES } };
 function resetForms() {
-  AGENCY_CATEGORIES.forEach((c) => (aaForm.ratings[c.key] = 0));
-  AGENT_CATEGORIES.forEach((c) => (agtForm.ratings[c.key] = 0));
+  AGENCY_CATEGORIES.forEach((c) => { aaForm.ratings[c.key] = 0; aaForm.notes[c.key] = ""; });
+  AGENT_CATEGORIES.forEach((c) => { agtForm.ratings[c.key] = 0; agtForm.notes[c.key] = ""; });
   agtForm.wouldReturn = ""; agtForm.comment = "";
-  GROUP_CATEGORIES.forEach((c) => (grpForm.ratings[c.key] = 0));
-  HOSPITAL_CATEGORIES.forEach((c) => (hospForm.ratings[c.key] = 0));
+  GROUP_CATEGORIES.forEach((c) => { grpForm.ratings[c.key] = 0; grpForm.notes[c.key] = ""; });
+  HOSPITAL_CATEGORIES.forEach((c) => { hospForm.ratings[c.key] = 0; hospForm.notes[c.key] = ""; });
   aaForm.agencyName = ""; aaForm.agentName = ""; aaForm.payRange = ""; aaForm.wouldReturn = ""; aaForm.comment = "";
   grpForm.name = ""; grpForm.wouldReturn = ""; grpForm.comment = "";
-  grpForm.payType = ""; grpForm.payRange = ""; grpForm.familyInsurance = ""; grpForm.ptoWeeks = "";
+  grpForm.payType = ""; grpForm.payRange = ""; grpForm.familyInsurance = ""; grpForm.ptoWeeks = ""; grpForm.prnRate = "";
   hospForm.name = ""; hospForm.city = ""; hospForm.state = ""; hospForm.wouldReturn = ""; hospForm.comment = "";
   postOpts.anonymous = false;
 }
@@ -314,18 +342,19 @@ function loadReviewIntoForms(r) {
   resetForms();
   aaForm.agencyName = r.agencyName || ""; aaForm.agentName = r.agentName || "";
   aaForm.payRange = r.payRange || "";
-  AGENCY_CATEGORIES.forEach((c) => (aaForm.ratings[c.key] = (r.agencyAgentRatings || {})[c.key] || 0));
+  AGENCY_CATEGORIES.forEach((c) => { aaForm.ratings[c.key] = (r.agencyAgentRatings || {})[c.key] || 0; aaForm.notes[c.key] = (r.agencyAgentNotes || {})[c.key] || ""; });
   aaForm.wouldReturn = r.agencyAgentWouldReturn || ""; aaForm.comment = r.agencyAgentComment || "";
-  AGENT_CATEGORIES.forEach((c) => (agtForm.ratings[c.key] = (r.agentRatings || {})[c.key] || 0));
+  AGENT_CATEGORIES.forEach((c) => { agtForm.ratings[c.key] = (r.agentRatings || {})[c.key] || 0; agtForm.notes[c.key] = (r.agentNotes || {})[c.key] || ""; });
   agtForm.wouldReturn = r.agentWouldReturn || ""; agtForm.comment = r.agentComment || "";
   grpForm.name = r.groupName || "";
   grpForm.payType = r.staffPayType || ""; grpForm.payRange = r.staffPayRange || "";
   grpForm.familyInsurance = r.familyInsurance || ""; grpForm.ptoWeeks = r.ptoWeeks || "";
-  GROUP_CATEGORIES.forEach((c) => (grpForm.ratings[c.key] = (r.groupRatings || {})[c.key] || 0));
+  grpForm.prnRate = r.prnRate || "";
+  GROUP_CATEGORIES.forEach((c) => { grpForm.ratings[c.key] = (r.groupRatings || {})[c.key] || 0; grpForm.notes[c.key] = (r.groupNotes || {})[c.key] || ""; });
   grpForm.wouldReturn = r.groupWouldReturn || ""; grpForm.comment = r.groupComment || "";
   hospForm.name = r.hospitalName || "";
   hospForm.city = r.hospitalCity || ""; hospForm.state = r.hospitalState || "";
-  HOSPITAL_CATEGORIES.forEach((c) => (hospForm.ratings[c.key] = (r.hospitalRatings || {})[c.key] || 0));
+  HOSPITAL_CATEGORIES.forEach((c) => { hospForm.ratings[c.key] = (r.hospitalRatings || {})[c.key] || 0; hospForm.notes[c.key] = (r.hospitalNotes || {})[c.key] || ""; });
   hospForm.wouldReturn = r.hospitalWouldReturn || ""; hospForm.comment = r.hospitalComment || "";
   postOpts.anonymous = !!r.anonymous;
 }
@@ -959,11 +988,12 @@ function searchResultsHtml(results) {
   }
   const intro = `<p class="hint-text" style="margin:0 0 12px">Every review of a name is combined into one score, and different spellings of the same company are merged. Tap a name to see the cumulative score for each category, what each star means, and every individual review behind the average.</p>`;
   const cardHtml = (item) => `
-    <button class="card clickable border-${item.type}" data-open="${item.type}::${esc(item.name)}">
+    <button class="card clickable border-${item.type}${isBeware(item.avg) ? " beware-card" : ""}" data-open="${item.type}::${esc(item.name)}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
         <div>
           <div style="font-family:'Special Elite',monospace;font-size:18px">${esc(item.name)}</div>
           ${item.location ? `<div style="font-size:12px;color:#6B756F;margin-top:2px">${esc(item.location)}</div>` : ""}
+          ${isBeware(item.avg) ? bewareStampHtml("sm") : ""}
         </div>
         ${item.count > 0
           ? `<div style="text-align:right;flex-shrink:0">
@@ -1039,6 +1069,7 @@ function detailHtml() {
     ["Annual pay", mostCommon("staffPayRange")],
     ["Family insurance / mo", mostCommon("familyInsurance")],
     ["Vacation / PTO", mostCommon("ptoWeeks")],
+    ["PRN / extra shift rate", mostCommon("prnRate")],
   ].filter(([, v]) => v);
   const groupFactsHtml = groupFacts.length === 0 ? "" : `
     <div class="card" style="margin-top:0">
@@ -1061,10 +1092,11 @@ function detailHtml() {
     const roleLabel = r.employmentType && EMPLOYMENT[r.employmentType] ? EMPLOYMENT[r.employmentType].short : "";
     const isMine = !!r.isMine;
     const chips = categories.map((c) => `<span class="chip">${esc(c.label.split(" ")[0])} ${ratings[c.key] > 0 ? ratings[c.key] : "–"}</span>`).join("");
+    const rowScore = weighted(categories, ratings);
     return `
-      <div class="card">
+      <div class="card${isBeware(rowScore) ? " beware-card" : ""}">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-          <span style="font-weight:800;font-size:16px">${weighted(categories, ratings) > 0 ? `${weighted(categories, ratings).toFixed(1)} <span style="font-size:12px;font-weight:600;color:#6B756F">out of 5.0</span>` : `<span style="font-size:12px;font-weight:500;color:#6B756F">not rated on these categories (older review)</span>`}</span>
+          <span style="font-weight:800;font-size:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">${rowScore > 0 ? `<span>${rowScore.toFixed(1)} <span style="font-size:12px;font-weight:600;color:#6B756F">out of 5.0</span></span>${isBeware(rowScore) ? bewareStampHtml("sm") : ""}` : `<span style="font-size:12px;font-weight:500;color:#6B756F">not rated on these categories (older review)</span>`}</span>
           <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}${r.editedAt ? ` · <span title="Edited ${new Date(r.editedAt).toLocaleDateString()}">edited</span>` : ""}</span>
         </div>
         ${pairedLabel ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">${pairedLabel}</div>` : ""}
@@ -1073,6 +1105,7 @@ function detailHtml() {
         ${ent.hasPay && payLabel(r) ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Pay quoted: ${esc(payLabel(r))}</div>` : ""}
         <div style="margin:6px 0">${chips}</div>
         <div style="margin:4px 0">${returnBadge(wouldReturn)}</div>
+        ${categoryNotesHtml(r, categories, ent.notes, ent.ratings)}
         ${comment ? `<p style="margin:6px 0">${esc(comment)}</p>` : ""}
         <div style="display:flex;justify-content:space-between;align-items:center">
           <p style="margin:0;font-size:12px;color:#6B756F">— ${r.anonymous ? `Anonymous CRNA${isMine ? ` (you)` : ""}` : esc(r.reviewer.name || "Verified CRNA")}, ${esc(r.reviewer.credentials)}${roleLabel ? ` · ${roleLabel}` : ""}${r.anonymous ? ` · <span title="Posted anonymously by a verified CRNA">🔒 anonymous</span>` : ""}</p>
@@ -1118,13 +1151,13 @@ function detailHtml() {
 
   return `
     <button class="back-btn" id="detail-back">&larr; Back to search</button>
-    <div class="card border-${type}" style="margin-top:10px">
+    <div class="card border-${type}${isBeware(avg) ? " beware-card" : ""}" style="margin-top:10px">
       <div style="font-size:11px;letter-spacing:0.3px;color:${COLORS[type]};font-weight:700">${typeLabel(type).toUpperCase()}</div>
       <div style="font-family:'Special Elite',monospace;font-size:24px;margin:4px 0">${esc(name)}</div>
       ${locLabel ? `<div style="font-size:13px;color:#6B756F;margin-bottom:4px">${esc(locLabel)}</div>` : ""}
       ${otherSpellings.length ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Also posted as: ${esc(otherSpellings.join(" · "))}</div>` : ""}
       ${scores.length > 0
-        ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${starsHtml(Math.round(avg), 18)}<span style="font-weight:800;font-size:18px">${avg.toFixed(1)} out of 5.0</span><span style="color:#6B756F;font-size:13px">overall · averaged from ${scores.length} rated review${scores.length !== 1 ? "s" : ""}</span>${paySummary ? `<span style="color:#6B756F;font-size:13px">· ${esc(paySummary)}</span>` : ""}</div>`
+        ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${starsHtml(Math.round(avg), 18)}<span style="font-weight:800;font-size:18px">${avg.toFixed(1)} out of 5.0</span>${isBeware(avg) ? bewareStampHtml("lg") : ""}<span style="color:#6B756F;font-size:13px">overall · averaged from ${scores.length} rated review${scores.length !== 1 ? "s" : ""}</span>${paySummary ? `<span style="color:#6B756F;font-size:13px">· ${esc(paySummary)}</span>` : ""}</div>${isBeware(avg) ? `<p class="beware-note">This overall score is ${BEWARE_AT}.0 or lower. Read every review below before you sign anything.</p>` : ""}`
         : `<div style="color:#6B756F;font-size:13px">No reviews yet.</div>`}
     </div>
     ${groupFactsHtml}
@@ -1143,7 +1176,16 @@ function categoryRowHtml(cat, group) {
       <div class="category-head"><span class="label">${esc(cat.label)}</span><span class="weight">wt ${Math.round(cat.weight * 100)}%</span></div>
       <div id="stars-${group}-${cat.key}" style="margin:4px 0">${starsInteractiveHtml(val, group, cat.key)}</div>
       <ul class="anchor-list">${anchors}</ul>
+      <textarea class="cat-comment" rows="2" data-note="${group}::${cat.key}"
+        placeholder="Optional — say more about ${esc(cat.label)}">${esc(FORMS[group].form.notes[cat.key] || "")}</textarea>
     </div>`;
+}
+// The small comment box under every category writes straight into the form's notes map.
+function bindCategoryNotes() {
+  document.querySelectorAll("[data-note]").forEach((box) => {
+    const [group, key] = box.dataset.note.split("::");
+    box.oninput = () => { FORMS[group].form.notes[key] = box.value; };
+  });
 }
 function starsInteractiveHtml(value, group, key) {
   let h = "";
@@ -1290,6 +1332,7 @@ function submitHtml() {
       ${choiceRowHtml("payRange", "Annual pay range", "Optional. Shown on the group's page as what CRNAs report earning — information, not a score.", STAFF_PAY_RANGES, grpForm.payRange)}
       ${choiceRowHtml("familyInsurance", "Family health insurance — your cost per month", "Optional. What comes out of your check for family coverage.", FAMILY_INSURANCE_RANGES, grpForm.familyInsurance)}
       ${choiceRowHtml("ptoWeeks", "Vacation / PTO per year", "Optional. Total paid weeks off, including any CE time.", PTO_RANGES, grpForm.ptoWeeks)}
+      ${choiceRowHtml("prnRate", "PRN / extra shift rate ($/hr)", "Optional. What this group pays per hour for PRN or extra shifts — information, not a score.", PRN_RATES, grpForm.prnRate)}
       <div style="margin-top:14px">${GROUP_CATEGORIES.map((c) => categoryRowHtml(c, "grp")).join("")}</div>
       <div class="score-row"><span style="font-size:12px;color:#6B756F">Weighted score</span><span class="big" id="grp-score">${weighted(GROUP_CATEGORIES, grpForm.ratings).toFixed(2)}</span></div>
       <div style="margin-top:8px">
@@ -1394,6 +1437,7 @@ function attachSubmitHandlers() {
     FORMS[group].categories.forEach((c) => attachSubmitHandlers.rebindStars(group, c.key));
     rebindReturnToggle(group);
   });
+  bindCategoryNotes();
 
   document.getElementById("submit-btn").onclick = async () => {
     const errEl = document.getElementById("submit-error");
@@ -1417,22 +1461,26 @@ function attachSubmitHandlers() {
       hospitalCity: hospForm.city.trim(),
       hospitalState: hospForm.state,
       hospitalRatings: hospForm.ratings,
+      hospitalNotes: hospForm.notes,
       hospitalWouldReturn: hospForm.wouldReturn,
       hospitalComment: hospForm.comment.trim(),
     };
     if (mode === "staff") {
       Object.assign(body, {
-        groupName: grpForm.name.trim(), groupRatings: grpForm.ratings,
+        groupName: grpForm.name.trim(), groupRatings: grpForm.ratings, groupNotes: grpForm.notes,
         groupWouldReturn: grpForm.wouldReturn, groupComment: grpForm.comment.trim(),
         staffPayType: grpForm.payType, staffPayRange: grpForm.payRange,
         familyInsurance: grpForm.familyInsurance, ptoWeeks: grpForm.ptoWeeks,
+        prnRate: grpForm.prnRate,
       });
     } else {
       Object.assign(body, {
         agencyName: aaForm.agencyName.trim(), agentName: aaForm.agentName.trim(),
         payRange: aaForm.payRange, payRate: null,
-        agencyAgentRatings: aaForm.ratings, agencyAgentWouldReturn: aaForm.wouldReturn, agencyAgentComment: aaForm.comment.trim(),
-        agentRatings: hasAgent ? agtForm.ratings : {}, agentWouldReturn: hasAgent ? agtForm.wouldReturn : "", agentComment: hasAgent ? agtForm.comment.trim() : "",
+        agencyAgentRatings: aaForm.ratings, agencyAgentNotes: aaForm.notes,
+        agencyAgentWouldReturn: aaForm.wouldReturn, agencyAgentComment: aaForm.comment.trim(),
+        agentRatings: hasAgent ? agtForm.ratings : {}, agentNotes: hasAgent ? agtForm.notes : {},
+        agentWouldReturn: hasAgent ? agtForm.wouldReturn : "", agentComment: hasAgent ? agtForm.comment.trim() : "",
       });
     }
     try {
@@ -1506,9 +1554,11 @@ function mineHtml() {
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0">
           ${starsHtml(Math.round(weighted(GROUP_CATEGORIES, r.groupRatings)), 14)}
           <span style="font-size:13px;font-weight:700">${weighted(GROUP_CATEGORIES, r.groupRatings).toFixed(1)} out of 5.0</span>
+          ${isBeware(weighted(GROUP_CATEGORIES, r.groupRatings)) ? bewareStampHtml("sm") : ""}
         </div>
         ${staffFactsLine(r) ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">${esc(staffFactsLine(r))}</div>` : ""}
         ${returnBadge(r.groupWouldReturn)}
+        ${categoryNotesHtml(r, GROUP_CATEGORIES, "groupNotes", "groupRatings")}
         ${r.groupComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.groupComment)}</p>` : ""}
       </div>` : ""}
       ${r.agencyName ? `
@@ -1517,9 +1567,11 @@ function mineHtml() {
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0">
           ${starsHtml(Math.round(weighted(AGENCY_CATEGORIES, r.agencyAgentRatings)), 14)}
           <span style="font-size:13px;font-weight:700">${weighted(AGENCY_CATEGORIES, r.agencyAgentRatings).toFixed(1)} out of 5.0</span>
+          ${isBeware(weighted(AGENCY_CATEGORIES, r.agencyAgentRatings)) ? bewareStampHtml("sm") : ""}
           ${payLabel(r) ? `<span style="font-size:12px;color:#6B756F">· pay quoted ${esc(payLabel(r))}</span>` : ""}
         </div>
         ${returnBadge(r.agencyAgentWouldReturn)}
+        ${categoryNotesHtml(r, AGENCY_CATEGORIES, "agencyAgentNotes", "agencyAgentRatings")}
         ${r.agencyAgentComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.agencyAgentComment)}</p>` : ""}
       </div>` : ""}
       ${r.agentName ? `
@@ -1529,8 +1581,10 @@ function mineHtml() {
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0">
           ${starsHtml(Math.round(weighted(AGENT_CATEGORIES, r.agentRatings)), 14)}
           <span style="font-size:13px;font-weight:700">${weighted(AGENT_CATEGORIES, r.agentRatings).toFixed(1)} out of 5.0</span>
+          ${isBeware(weighted(AGENT_CATEGORIES, r.agentRatings)) ? bewareStampHtml("sm") : ""}
         </div>
         ${returnBadge(r.agentWouldReturn)}
+        ${categoryNotesHtml(r, AGENT_CATEGORIES, "agentNotes", "agentRatings")}
         ${r.agentComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.agentComment)}</p>` : ""}` : `<div class="hint-text" style="margin-top:2px">Not rated separately (posted before agent scorecards). Edit this review to add one.</div>`}
       </div>` : ""}
       <div style="padding-left:10px;border-left:3px solid ${COLORS.hospital}">
@@ -1538,8 +1592,10 @@ function mineHtml() {
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0">
           ${starsHtml(Math.round(weighted(HOSPITAL_CATEGORIES, r.hospitalRatings)), 14)}
           <span style="font-size:13px;font-weight:700">${weighted(HOSPITAL_CATEGORIES, r.hospitalRatings).toFixed(1)} out of 5.0</span>
+          ${isBeware(weighted(HOSPITAL_CATEGORIES, r.hospitalRatings)) ? bewareStampHtml("sm") : ""}
         </div>
         ${returnBadge(r.hospitalWouldReturn)}
+        ${categoryNotesHtml(r, HOSPITAL_CATEGORIES, "hospitalNotes", "hospitalRatings")}
         ${r.hospitalComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.hospitalComment)}</p>` : ""}
       </div>
     </div>`).join("");
