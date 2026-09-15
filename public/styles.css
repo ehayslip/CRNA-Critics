@@ -149,6 +149,26 @@ a.tiny-btn { text-decoration: none; }
 .stat-anchors { margin-top: 4px; padding-left: 2px; }
 .stat-anchors li { font-size: 11px; }
 
+/* name suggestions on the review form */
+.suggest-wrap { position: relative; }
+.suggest-list {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 5;
+  background: #fff; border: 1px solid #123C3A; border-top: none;
+  max-height: 232px; overflow-y: auto; box-shadow: 0 6px 14px rgba(20, 35, 31, 0.12);
+}
+.suggest-item {
+  display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+  background: none; border: none; border-bottom: 1px solid #EEF2ED; padding: 9px 11px;
+  cursor: pointer; font-family: Inter, sans-serif; color: #14231F;
+}
+.suggest-item:last-child { border-bottom: none; }
+.suggest-item:hover, .suggest-item.active { background: #FFF9EE; }
+.suggest-name { font-weight: 600; font-size: 13.5px; }
+.suggest-sub { font-size: 11.5px; color: #6B756F; }
+.suggest-n { margin-left: auto; font-size: 11px; color: #8A948E; white-space: nowrap; }
+.suggest-hint { font-size: 12px; color: #B87F1E; margin-top: 5px; }
+.suggest-hint strong { color: #14231F; }
+
 /* city + state on the hospital card */
 .loc-row { display: flex; gap: 8px; }
 .loc-row input { flex: 1 1 auto; }
