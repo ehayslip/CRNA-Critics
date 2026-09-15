@@ -2,11 +2,15 @@ const { emailHeaderHtml } = require("./brand");
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || "CRNA Critics <onboarding@resend.dev>";
+// Where replies land. Mail that people should be able to answer (campaigns, the
+// welcome email) passes replyTo: REPLY_TO; sign-in and password-reset mail
+// deliberately does not, so nobody replies to a robot with their password.
+const REPLY_TO = process.env.REPLY_TO_EMAIL || "eric@crnacritics.com";
 
-async function sendEmail({ to, subject, html }) {
+async function sendEmail({ to, subject, html, replyTo }) {
   if (!RESEND_API_KEY) {
     console.warn("RESEND_API_KEY not set — email NOT sent. Would have sent:");
-    console.warn({ to, subject });
+    console.warn({ to, subject, replyTo });
     console.warn(html);
     return { skipped: true };
   }
@@ -16,7 +20,7 @@ async function sendEmail({ to, subject, html }) {
       Authorization: `Bearer ${RESEND_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ from: FROM_EMAIL, to, subject, html }),
+    body: JSON.stringify({ from: FROM_EMAIL, to, subject, html, ...(replyTo ? { reply_to: replyTo } : {}) }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -100,4 +104,4 @@ function campaignHtml({ body, ctx, unsubscribeUrl }) {
     </div>`;
 }
 
-module.exports = { sendEmail, escapeHtml, campaignHtml, fillTokens, bodyToHtml, firstNameOf, reviewCountLabel, TOKENS };
+module.exports = { sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, bodyToHtml, firstNameOf, reviewCountLabel, TOKENS };
