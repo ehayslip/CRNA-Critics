@@ -199,6 +199,10 @@ function sendFeedbackRequestEmail(row, token) {
         <p>Tap your answers below — no typing required unless you want to add a note. Takes about 3 minutes.</p>
         <p><a href="${url}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Give feedback</a></p>
         <p style="color:#888;font-size:12px;">This link works without signing in and stays open for 60 days.</p>
+        <p style="margin-top:28px;">Thank you so much,</p>
+        <p style="margin:0;"><strong>Eric Hayslip, CRNA</strong><br/>
+          <a href="${BASE_URL}" style="color:#1F5C57;">www.crnacritics.com</a><br/>
+          <a href="mailto:eric@crnacritics.com" style="color:#1F5C57;">eric@crnacritics.com</a></p>
       </div>
     `,
   });
