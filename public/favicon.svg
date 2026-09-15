@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="CRNA Critics mark">
+  <title>CRNA Critics mark</title>
+  
+  <g transform="translate(24 14)">
+    <g>
+      <path d="M56 3 L107 20 C107 20 107 58 107 64 C107 98 84 121 56 130 C28 121 5 98 5 64 C5 58 5 20 5 20 Z" fill="#0B1526" stroke="#13A15A" stroke-width="7" stroke-linejoin="round"/>
+      <path d="M56.00 24.00 L62.23 40.42 L79.78 41.27 L66.08 52.28 L70.69 69.23 L56.00 59.60 L41.31 69.23 L45.92 52.28 L32.22 41.27 L49.77 40.42 Z" fill="#F5B301"/>
+      <path d="M27 91 C35 79 41 97 49 88 C55 81 59 94 67 86 C71 82 76 84 84 76" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+      <path d="M33 103 L79 103" fill="none" stroke="#13A15A" stroke-width="6" stroke-linecap="round"/>
+    </g></g>
+</svg>
