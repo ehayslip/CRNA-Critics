@@ -1,3 +1,5 @@
+const { emailHeaderHtml } = require("./brand");
+
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || "CRNA Critics <onboarding@resend.dev>";
 
@@ -89,9 +91,7 @@ function bodyToHtml(text, ctx) {
 function campaignHtml({ body, ctx, unsubscribeUrl }) {
   return `
     <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#14231F;">
-      <div style="border-bottom:3px solid #123C3A;padding-bottom:10px;margin-bottom:22px;">
-        <span style="font-size:18px;font-weight:bold;color:#123C3A;letter-spacing:.5px;">CRNA CRITICS</span>
-      </div>
+      ${emailHeaderHtml(ctx.baseUrl, 560)}
       ${bodyToHtml(body, ctx)}
       <div style="border-top:1px solid #DDE3E0;margin-top:30px;padding-top:12px;color:#8A948E;font-size:11px;line-height:1.5;">
         <p style="margin:0 0 6px;">You're getting this because you're a verified member of CRNA Critics.</p>
