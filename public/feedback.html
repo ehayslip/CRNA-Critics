@@ -35,6 +35,8 @@
   .fb-thanks{ text-align:center; padding:50px 20px; background:#fff; border:2px solid #13A15A; border-radius:14px; }
   .fb-thanks .big{ font-size:40px; margin-bottom:8px; }
   .fb-note{ text-align:center; font-size:12px; color:#5A6472; margin-top:20px; }
+  .fb-sig{ text-align:center; font-size:14px; color:#0B1526; margin-top:32px; line-height:1.7; }
+  .fb-sig a{ color:#13A15A; text-decoration:none; }
 </style>
 </head>
 <body>
@@ -95,6 +97,7 @@ function renderForm(info){
     <button id="fb-submit">Send my feedback</button>
     <p class="fb-err" id="fb-errMsg"></p>
     <p class="fb-note">Tapping Send saves your answers straight to Eric — nothing to copy, no email needed.</p>
+    <div class="fb-sig">Thank you so much,<br><strong>Eric Hayslip, CRNA</strong><br><a href="https://www.crnacritics.com">www.crnacritics.com</a><br><a href="mailto:eric@crnacritics.com">eric@crnacritics.com</a></div>
   `;
 
   const container = document.getElementById('fb-questions');
@@ -158,6 +161,7 @@ async function submitFeedback(){
         <h2>Thanks — got it!</h2>
         <p>Your feedback was sent straight to Eric. Appreciate you taking the time.</p>
       </div>
+      <div class="fb-sig">Thank you so much,<br><strong>Eric Hayslip, CRNA</strong><br><a href="https://www.crnacritics.com">www.crnacritics.com</a><br><a href="mailto:eric@crnacritics.com">eric@crnacritics.com</a></div>
     `;
   } catch (e) {
     btn.disabled = false;
