@@ -510,9 +510,8 @@ function toastHtml() {
 function headerHtml(compact) {
   return `
     <div class="header${compact ? " header-compact" : ""}">
-      <div class="header-tab">CASE FILE</div>
-      <h1 class="h1">CRNA Critics</h1>
-      ${compact ? "" : `<p class="tagline">Know before you sign. Rate the agency & agent, the pay, and the hospital — separately, honestly.</p>`}
+      <img class="header-logo" src="/logo.svg" alt="CRNA Critics — Know before you sign">
+      ${compact ? "" : `<p class="tagline">Rate the agency & agent, the pay, and the hospital — separately, honestly.</p>`}
     </div>`;
 }
 
