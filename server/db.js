@@ -79,4 +79,26 @@ addColumnIfMissing("reviews", "staff_pay_range", "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("reviews", "family_insurance", "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("reviews", "pto_weeks", "TEXT NOT NULL DEFAULT ''");
 
+// Admin-approved name merges. `alias_norm` is the normalized spelling a member typed;
+// `canonical` is the one name it should be filed under. Kept in the database, not in code,
+// so merging a newly-noticed duplicate never needs a deploy.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS name_aliases (
+    id TEXT PRIMARY KEY,
+    alias_norm TEXT NOT NULL UNIQUE,
+    alias_raw TEXT NOT NULL DEFAULT '',
+    canonical TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  -- Pairs the admin has explicitly said are NOT the same, so the duplicate
+  -- detector stops suggesting them. Stored with the two normalized names sorted.
+  CREATE TABLE IF NOT EXISTS name_pair_ignores (
+    pair_key TEXT PRIMARY KEY,
+    a_name TEXT NOT NULL,
+    b_name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+`);
+
 module.exports = db;
