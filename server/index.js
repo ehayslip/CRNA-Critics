@@ -1031,7 +1031,16 @@ app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`CRNA Critics running at ${BASE_URL}`);
   if (!process.env.RESEND_API_KEY) console.log("(RESEND_API_KEY not set — emails will be logged, not sent.)");
+});
+
+// Railway stops the old container with SIGTERM on every deploy. Without a handler,
+// npm reports that as a crash and Railway emails a "Deployment crashed" alert for a
+// deploy that actually succeeded. Close cleanly and exit 0 instead.
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received — shutting down cleanly");
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
 });
