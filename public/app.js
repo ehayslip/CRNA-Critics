@@ -308,6 +308,7 @@ const state = {
   adminFlagsMeta: {},        // lastScan, scanHour
   adminFlagNote: "",
   adminShowClosedFlags: false,
+  adminDeleteArmed: null,    // review id whose Delete button is waiting for its second tap
   adminNameType: "hospital", // which directory tab is open
   adminNameFilter: "",
   adminPicked: [],    // names ticked in the directory, for a multi-way merge
@@ -2463,20 +2464,21 @@ function alertsSection() {
             <blockquote class="alert-quote">${esc(x.excerpt)}</blockquote>
             <div class="alert-why"><strong>Why:</strong> ${esc(x.issue)}</div>
             <div class="alert-fix"><strong>Better:</strong> ${esc(x.suggestion)}</div>
-            <div class="alert-actions">
-              <button class="tiny-btn" data-flag-status="${x.id}::resolved">Mark fixed</button>
-              <button class="tiny-btn" data-flag-status="${x.id}::dismissed">Dismiss — it's fine</button>
-            </div>
           </div>`).join("")}
-        <div class="alert-actions" style="margin-top:10px;border-top:1px solid #EEF2ED;padding-top:10px">
+        <div class="alert-actions" style="margin-top:12px;border-top:1px solid #EEF2ED;padding-top:10px">
           <button class="tiny-btn approve" data-flag-notify="${f.id}">${f.notified_at ? "Email the CRNA again" : "Email the CRNA"}</button>
+          ${state.adminDeleteArmed === f.review_id
+            ? `<button class="tiny-btn reject" data-flag-delete="${f.review_id}::go">Yes, delete this review for good</button>
+               <button class="tiny-btn" data-flag-delete="${f.review_id}::cancel">Keep it</button>`
+            : `<button class="tiny-btn reject" data-flag-delete="${f.review_id}::arm">Delete review</button>`}
+          <button class="tiny-btn" data-flag-ignore="${f.review_id}">Ignore</button>
           <button class="tiny-btn" data-flag-member="${f.member_id || ""}">Open member</button>
         </div>
       </div>`;
   };
   return `
     <div class="section-label" style="margin:10px 0 6px">REVIEW ALERTS (${open.length} open)</div>
-    <p class="hint-text" style="margin-top:0">Every new or edited review is checked once a day (about ${meta.scanHour || 9}:00 AM Eastern) against the Online Review Instructions &amp; Guidelines. High and medium alerts email the CRNA automatically with a suggested rewrite; low ones are style only and just show here. ${meta.lastScan ? `Last scan ${adminDate(meta.lastScan)}.` : "No scan has run yet."}</p>
+    <p class="hint-text" style="margin-top:0">Every new or edited review is checked once a day (about ${meta.scanHour || 9}:00 AM Eastern) for the things that can get a CRNA in trouble — patient information, accusations of crimes or lying, threats, slurs, and private contact details. Nobody is emailed automatically: for each one you choose <strong>Email the CRNA</strong> (sends the "Review guideline notice" template from the Email tab with the flagged passage and a suggested rewrite), <strong>Delete review</strong>, or <strong>Ignore</strong>. ${meta.lastScan ? `Last scan ${adminDate(meta.lastScan)}.` : "No scan has run yet."}</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
       <button class="tiny-btn" id="scan-now">Scan new &amp; edited reviews now</button>
       <button class="tiny-btn" id="scan-all">Re-scan every review</button>
@@ -2510,6 +2512,30 @@ function attachAlertHandlers() {
       const [id, status] = btn.dataset.flagStatus.split("::");
       try { await api(`/api/admin/flags/${id}`, { method: "POST", body: { status } }); await loadAdminFlags(true); renderAdmin(); }
       catch (e) { note(`Couldn't update: ${e.message || e}`); }
+    };
+  });
+  document.querySelectorAll("[data-flag-ignore]").forEach((btn) => {
+    btn.onclick = async () => {
+      const reviewId = btn.dataset.flagIgnore;
+      const ids = (state.adminFlags || []).filter((f) => f.review_id === reviewId && f.status === "open").map((f) => f.id);
+      try { for (const id of ids) await api(`/api/admin/flags/${id}`, { method: "POST", body: { status: "dismissed" } }); await loadAdminFlags(true); renderAdmin(); }
+      catch (e) { note(`Couldn't ignore: ${e.message || e}`); }
+    };
+  });
+  document.querySelectorAll("[data-flag-delete]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [reviewId, action] = btn.dataset.flagDelete.split("::");
+      if (action === "arm") { state.adminDeleteArmed = reviewId; paintAdmin(); return; }
+      if (action === "cancel") { state.adminDeleteArmed = null; paintAdmin(); return; }
+      try {
+        await api(`/api/admin/reviews/${reviewId}`, { method: "DELETE" });
+        state.adminDeleteArmed = null;
+        state.adminReviews = null; // the Reviews tab reloads next time it's opened
+        await loadReviews().catch(() => {});
+        await loadAdminFlags(true);
+        note("Review deleted.");
+        renderAdmin();
+      } catch (e) { note(`Couldn't delete: ${e.message || e}`); }
     };
   });
   document.querySelectorAll("[data-flag-notify]").forEach((btn) => {
