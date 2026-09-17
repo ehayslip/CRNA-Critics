@@ -195,9 +195,11 @@ const COLORS = { agency: "#123C3A", agent: "#B87F1E", hospital: "#8C3A32", group
 const SEARCH_SECTIONS = [
   ["hospital", "HOSPITALS"],
   ["group", "ANESTHESIA GROUPS"],
-  ["agency", "AGENCIES"],
+  ["agency", "LOCUM AGENCIES"],
   ["agent", "AGENTS &amp; RECRUITERS"],
 ];
+// Plain-English names for the search selector and its placeholder.
+const KIND_LABELS = { hospital: "Hospitals", group: "Anesthesia Groups", agency: "Locum Agencies", agent: "Agents & Recruiters" };
 
 // One place that knows, for each rateable thing, which review fields hold its data.
 const ENTITY = {
@@ -290,6 +292,7 @@ const state = {
   reviews: [],
   tab: "search",
   query: "",
+  kind: "hospital", // which kind the search tab is showing — one at a time
   detail: null,
   toast: "",
   gateMode: "signin", // signin | request | link
@@ -449,8 +452,8 @@ async function loadReviews() {
 
 function typeLabel(t) { return ENTITY[t] ? ENTITY[t].label : t; }
 
-function searchResults() {
-  const q = state.query.trim().toLowerCase();
+function searchResults(query = state.query) {
+  const q = String(query || "").trim().toLowerCase();
   const types = Object.keys(ENTITY);
   const byType = {};
   types.forEach((t) => (byType[t] = new Map()));
@@ -1034,18 +1037,43 @@ function attachGateHandlers() {
 
 // ---------- search ----------
 
+function kindBarHtml() {
+  const all = searchResults("");
+  return SEARCH_SECTIONS.map(([type, heading]) => {
+    const n = all.filter((r) => r.type === type).length;
+    return `<button type="button" class="kind-tab${state.kind === type ? " active" : ""}" data-kind="${type}" style="--kind:${COLORS[type]}">${heading}<span class="kind-n">${n}</span></button>`;
+  }).join("");
+}
+function searchPlaceholder() {
+  return `Search ${KIND_LABELS[state.kind].toLowerCase()}…`;
+}
 function searchHtml() {
   const results = searchResults();
   return `
-    <input class="search-input" id="search-box" placeholder="Search a hospital, anesthesia group, agency, or agent…" value="${esc(state.query)}" />
+    <div class="kind-bar" id="kind-bar">${kindBarHtml()}</div>
+    <input class="search-input" id="search-box" placeholder="${searchPlaceholder()}" value="${esc(state.query)}" />
     <div id="search-results">${searchResultsHtml(results)}</div>`;
 }
 function searchResultsHtml(results) {
   if (state.reviews.length === 0) {
     return `<div class="empty-box"><p style="margin:0;font-weight:700">No cases on file yet.</p><p class="hint-text">Be the first to post a review — it'll show up here for the next CRNA weighing an offer.</p></div>`;
   }
-  if (results.length === 0) {
-    return `<div class="empty-box"><p style="margin:0">Nothing matches "${esc(state.query)}" yet. If you've worked with them, post the first review.</p></div>`;
+  const kind = state.kind;
+  const label = KIND_LABELS[kind];
+  const q = state.query.trim();
+  const mine = results.filter((r) => r.type === kind);
+  // If the search hits names of another kind, say so — one tap switches over.
+  const elsewhere = SEARCH_SECTIONS.filter(([t]) => t !== kind)
+    .map(([t]) => [t, results.filter((r) => r.type === t).length]).filter(([, n]) => n > 0);
+  const elsewhereHtml = q && elsewhere.length
+    ? `<p class="hint-text" style="margin-top:10px">Also found under ${elsewhere.map(([t, n]) =>
+        `<button type="button" class="inline-link" data-kind="${t}" style="color:${COLORS[t]}">${esc(KIND_LABELS[t])} (${n})</button>`).join(", ")}.</p>`
+    : "";
+  if (mine.length === 0) {
+    const msg = q
+      ? `No ${label.toLowerCase()} match "${esc(q)}" yet. If you've worked with them, post the first review.`
+      : `No ${label.toLowerCase()} reviewed yet. If you've worked with one, post the first review.`;
+    return `<div class="empty-box"><p style="margin:0">${msg}</p>${elsewhereHtml}</div>`;
   }
   const intro = `<p class="hint-text" style="margin:0 0 12px">Every review of a name is combined into one score, and different spellings of the same company are merged. Tap a name to see the cumulative score for each category, what each star means, and every individual review behind the average.</p>`;
   const cardHtml = (item) => `
@@ -1065,29 +1093,44 @@ function searchResultsHtml(results) {
           : `<div style="font-size:11px;color:#6B756F;flex-shrink:0">no ratings yet${item.total ? ` · ${item.total} review${item.total !== 1 ? "s" : ""} on file` : ""}</div>`}
       </div>
     </button>`;
-  // One section per kind, in a fixed order, so hospitals aren't shuffled in with recruiters.
-  const sections = SEARCH_SECTIONS.map(([type, heading]) => {
-    const group = results.filter((r) => r.type === type);
-    if (group.length === 0) return "";
-    return `
+  // Only the selected kind is shown; the bar above switches between them.
+  const heading = SEARCH_SECTIONS.find(([t]) => t === kind)[1];
+  const section = `
       <div class="result-group">
-        <div class="result-head" style="border-color:${COLORS[type]}">
-          <span style="color:${COLORS[type]}">${heading}</span>
-          <span class="result-count">${group.length}</span>
+        <div class="result-head" style="border-color:${COLORS[kind]}">
+          <span style="color:${COLORS[kind]}">${heading}</span>
+          <span class="result-count">${mine.length}${q ? ` of ${searchResults("").filter((r) => r.type === kind).length}` : ""}</span>
         </div>
-        ${group.map(cardHtml).join("")}
+        ${mine.map(cardHtml).join("")}
       </div>`;
-  }).join("");
-  return intro + sections;
+  return intro + section + elsewhereHtml;
+}
+function refreshSearchResults() {
+  document.getElementById("search-results").innerHTML = searchResultsHtml(searchResults());
+  attachResultClickHandlers();
+  attachKindHandlers();
+}
+function attachKindHandlers() {
+  document.querySelectorAll("[data-kind]").forEach((btn) => {
+    btn.onclick = () => {
+      state.kind = btn.dataset.kind;
+      document.getElementById("kind-bar").innerHTML = kindBarHtml();
+      const box = document.getElementById("search-box");
+      if (box) box.placeholder = searchPlaceholder();
+      refreshSearchResults();
+      const active = document.querySelector(".kind-tab.active");
+      if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+    };
+  });
 }
 function attachSearchHandlers() {
   const box = document.getElementById("search-box");
   box.oninput = () => {
     state.query = box.value;
-    document.getElementById("search-results").innerHTML = searchResultsHtml(searchResults());
-    attachResultClickHandlers();
+    refreshSearchResults();
   };
   attachResultClickHandlers();
+  attachKindHandlers();
 }
 function attachResultClickHandlers() {
   document.querySelectorAll("[data-open]").forEach((btn) => {
