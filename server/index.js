@@ -878,6 +878,7 @@ app.get("/api/reviews", requireSession, (req, res) => {
 // or { error } if something required is missing.
 function reviewColumns(b) {
   const employmentType = b.employmentType === "staff" ? "staff" : "locum";
+  if (!b.acceptedGuidelines) return { error: "guidelines_not_acknowledged" };
   if (!b.hospitalName || !b.hospitalRatings) return { error: "missing_fields" };
   if (employmentType === "staff" && (!b.groupName || !b.groupRatings)) return { error: "missing_fields" };
   if (employmentType === "locum" && (!b.agencyName || !b.agencyAgentRatings)) return { error: "missing_fields" };
@@ -915,6 +916,8 @@ function reviewColumns(b) {
       group_comment: isStaff ? (b.groupComment || "") : "",
       group_notes: JSON.stringify(isStaff ? cleanNotes(b.groupNotes) : {}),
       anonymous: b.anonymous ? 1 : 0,
+      guidelines_version: String(b.guidelinesVersion || "").slice(0, 20),
+      guidelines_accepted_at: new Date().toISOString(),
     },
   };
 }
