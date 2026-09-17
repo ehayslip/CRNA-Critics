@@ -1831,6 +1831,7 @@ function memberCardHtml(r) {
           <tr><td class="stats-label">Feedback form</td><td>${feedbackStatusLabel(r)}</td></tr>
           <tr><td class="stats-label">Mailings</td><td>${r.bulk_unsubscribed ? "<strong>opted out</strong> (account email still sends)" : "subscribed"}</td></tr>
           <tr><td class="stats-label">Review nudges</td><td>${r.nudge_count ? `${r.nudge_count} sent, last ${adminDate(r.last_nudged_at)}` : (r.reviewCount ? "not needed" : "none yet")}${r.reviewCount && r.nudge_count ? " — stopped, they posted" : ""}</td></tr>
+          <tr><td class="stats-label">Feedback nudges</td><td>${r.feedback_nudge_count ? `${r.feedback_nudge_count} sent, last ${adminDate(r.last_feedback_nudged_at)}` : (r.reviewCount ? "none yet" : "starts after their first review")}${r.feedbackSubmittedAt && r.feedback_nudge_count ? " — stopped, form submitted" : ""}</td></tr>
           <tr><td class="stats-label">Requested</td><td>${adminDate(r.requested_at)}</td></tr>
           <tr><td class="stats-label">Decided</td><td>${adminDate(r.decided_at)}</td></tr>
         </table>
