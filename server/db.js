@@ -94,6 +94,9 @@ addColumnIfMissing("access_requests", "bulk_unsubscribed", "INTEGER NOT NULL DEF
 // Automatic "Ask for a review" nudges to approved members who haven't posted yet.
 addColumnIfMissing("access_requests", "nudge_count", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("access_requests", "last_nudged_at", "TEXT");
+// Automatic site-feedback nudges after a member's first review, until they submit the form.
+addColumnIfMissing("access_requests", "feedback_nudge_count", "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("access_requests", "last_feedback_nudged_at", "TEXT");
 addColumnIfMissing("access_requests", "unsubscribed_at", "TEXT");
 // Beta feedback form: when the admin last sent a member the link (resend overwrites this).
 addColumnIfMissing("access_requests", "feedback_sent_at", "TEXT");
