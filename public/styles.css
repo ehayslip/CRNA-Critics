@@ -255,6 +255,23 @@ a.tiny-btn { text-decoration: none; }
 @media (min-width: 760px) { .hero-warning { font-size: 17px; } }
 
 /* search results, grouped by what's being rated */
+/* ---------- search: one kind at a time ---------- */
+.kind-bar {
+  display: flex; border-bottom: 2px solid #C9D2C6; margin-bottom: 14px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.kind-bar::-webkit-scrollbar { display: none; }
+.kind-tab {
+  flex: 1 0 auto; background: none; border: none; border-bottom: 4px solid transparent; margin-bottom: -2px;
+  padding: 10px 12px 8px; font-family: 'Special Elite', monospace; font-size: 12px; letter-spacing: 1px;
+  color: #8A948E; cursor: pointer; white-space: nowrap; opacity: 0.75;
+}
+.kind-tab:hover { color: var(--kind); opacity: 1; }
+.kind-tab.active { color: var(--kind); border-bottom-color: var(--kind); font-weight: 700; opacity: 1; }
+.kind-tab .kind-n { font-family: Inter, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0; margin-left: 5px; color: #8A948E; }
+.kind-tab.active .kind-n { color: var(--kind); }
+@media (max-width: 519px) { .kind-tab { font-size: 11px; padding: 9px 9px 7px; letter-spacing: 0.6px; } }
+
 .result-group { margin-bottom: 20px; }
 .result-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
