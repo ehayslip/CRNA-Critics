@@ -128,6 +128,24 @@ textarea { resize: vertical; }
 .member-posts { background: #EEF2ED; color: #6B756F; border: 1px solid #C9D2C6; }
 .member-posts.has-posts { background: #0B1526; color: #F5B301; border-color: #0B1526; }
 .member-fb { background: #E3F3EA; color: #1F5C57; border: 1px solid #1F5C57; }
+.member-alert { background: #8C3A32; color: #fff; }
+.tab-badge.alert-badge { background: #8C3A32; color: #fff; }
+
+/* ---------- Alerts tab ---------- */
+.alert-card { border-left-width: 5px; }
+.sev-border-high { border-left-color: #8C3A32; background: #FFF6F5; }
+.sev-border-medium { border-left-color: #B87F1E; background: #FFFBF2; }
+.sev-border-low { border-left-color: #8A948E; }
+.alert-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.alert-who { font-family: 'Special Elite', monospace; font-size: 19px; background: #F5B301; display: inline-block; padding: 1px 8px; }
+.sev-pill { display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; padding: 2px 7px; border-radius: 3px; color: #fff; }
+.sev-high { background: #8C3A32; } .sev-medium { background: #B87F1E; } .sev-low { background: #8A948E; }
+.alert-item { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #C9D2C6; }
+.alert-label { font-weight: 700; font-size: 13.5px; }
+.alert-quote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid #C9D2C6; background: #fff; font-style: italic; color: #3C4A45; font-size: 13.5px; }
+.alert-why, .alert-fix { font-size: 13px; line-height: 1.5; margin-top: 4px; }
+.alert-fix { color: #1F5C57; }
+.alert-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .member-body { padding: 0 13px 13px; border-top: 1px solid #EEF2ED; }
 .member-body .stats-table td:first-child { width: 120px; }
 .member-body a { color: #0B1526; }
