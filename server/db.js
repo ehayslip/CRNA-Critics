@@ -265,6 +265,33 @@ db.exec(`
     submitted_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_beta_feedback_request ON beta_feedback (request_id);
+
+  -- Review guard: one row per (review, rule) the daily scan flagged.
+  CREATE TABLE IF NOT EXISTS review_flags (
+    id TEXT PRIMARY KEY,
+    review_id TEXT NOT NULL,
+    reviewer_email TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    severity TEXT NOT NULL,            -- high | medium | low
+    label TEXT NOT NULL,
+    where_found TEXT NOT NULL DEFAULT '',
+    excerpt TEXT NOT NULL DEFAULT '',
+    issue TEXT NOT NULL DEFAULT '',
+    suggestion TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open', -- open | resolved | dismissed
+    created_at TEXT NOT NULL,
+    notified_at TEXT,
+    resolved_at TEXT,
+    resolved_by TEXT NOT NULL DEFAULT '' -- admin | edit | delete
+  );
+  CREATE INDEX IF NOT EXISTS idx_review_flags_review ON review_flags (review_id);
+  CREATE INDEX IF NOT EXISTS idx_review_flags_status ON review_flags (status);
+
+  -- Small key/value store for job bookkeeping (last scan time, etc).
+  CREATE TABLE IF NOT EXISTS kv (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `);
 
 module.exports = db;
