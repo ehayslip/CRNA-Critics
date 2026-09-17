@@ -622,6 +622,78 @@ app.post("/api/admin/email/send", requireAdmin, (req, res) => {
   res.json({ ok: true, campaignId, total: mailable.length, excluded: chosen.length - mailable.length });
 });
 
+// ---------- automatic "Ask for a review" nudges ----------
+// Every hour (during daytime, Eastern) look for approved members who still have no
+// review and are due a nudge: first one 2 days after approval, then one a week, at
+// most NUDGE_MAX in total, stopping the moment they post a review or opt out of
+// mailings. The email is the CMS template named NUDGE_TEMPLATE_NAME, so Eric can
+// edit the wording in the Email tab; each batch is a normal campaign in the Sent pane.
+const NUDGE_TEMPLATE_NAME = process.env.NUDGE_TEMPLATE_NAME || "Ask for a review";
+const NUDGE_FIRST_AFTER_DAYS = Number(process.env.NUDGE_FIRST_AFTER_DAYS || 2);
+const NUDGE_EVERY_DAYS = Number(process.env.NUDGE_EVERY_DAYS || 7);
+const NUDGE_MAX = Number(process.env.NUDGE_MAX || 4);
+const NUDGE_HOURS = String(process.env.NUDGE_HOURS || "9-18"); // Eastern; "0-24" sends any time
+const NUDGE_CHECK_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function easternHour(date = new Date()) {
+  return Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "America/New_York" }).format(date));
+}
+
+function nudgeDue(row, nowMs) {
+  if (row.status !== "approved" || row.bulk_unsubscribed) return false;
+  if ((row.nudge_count || 0) >= NUDGE_MAX) return false;
+  if (reviewCountFor(row.email) > 0) return false;
+  const approvedAt = Date.parse(row.decided_at || row.requested_at || "");
+  if (!approvedAt || nowMs - approvedAt < NUDGE_FIRST_AFTER_DAYS * DAY_MS) return false;
+  if (row.last_nudged_at && nowMs - Date.parse(row.last_nudged_at) < NUDGE_EVERY_DAYS * DAY_MS) return false;
+  return true;
+}
+
+function runReviewNudges() {
+  if (NUDGE_MAX <= 0) return;
+  const [from, to] = NUDGE_HOURS.split("-").map(Number);
+  const hour = easternHour();
+  if (hour < from || hour >= to) return; // only send during the day, Eastern
+  const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(NUDGE_TEMPLATE_NAME);
+  if (!tpl) { console.log(`Nudges: no email template named "${NUDGE_TEMPLATE_NAME}" — nothing sent.`); return; }
+  const nowMs = Date.now();
+  const due = db.prepare("SELECT * FROM access_requests WHERE status = 'approved'").all().filter((r) => nudgeDue(r, nowMs));
+  if (due.length === 0) return;
+
+  const campaignId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(
+    "INSERT INTO email_campaigns (id, subject, body, template_name, status, total, created_at) VALUES (?,?,?,?, 'sending', ?, ?)"
+  ).run(campaignId, tpl.subject, tpl.body, `Auto — ${tpl.name}`, due.length, now);
+  const insert = db.prepare("INSERT INTO email_campaign_recipients (id, campaign_id, email, name, status) VALUES (?,?,?,?, 'queued')");
+  const stamp = db.prepare("UPDATE access_requests SET nudge_count = COALESCE(nudge_count, 0) + 1, last_nudged_at = ? WHERE id = ?");
+  db.transaction(() => {
+    due.forEach((r) => { insert.run(crypto.randomUUID(), campaignId, r.email, r.name); stamp.run(now, r.id); });
+  })();
+  console.log(`Nudges: sending "${tpl.name}" to ${due.length} member(s) with no review yet.`);
+  runCampaign(campaignId, tpl.subject, tpl.body).catch((e) => {
+    console.error("Nudge campaign crashed:", e.message);
+    db.prepare("UPDATE email_campaigns SET status='done', last_error=?, finished_at=? WHERE id=?")
+      .run(String(e.message || "crashed").slice(0, 300), new Date().toISOString(), campaignId);
+  });
+}
+
+// Admin can see who is due and force a check.
+app.get("/api/admin/nudges", requireAdmin, (req, res) => {
+  const nowMs = Date.now();
+  const rows = db.prepare("SELECT * FROM access_requests WHERE status = 'approved'").all();
+  res.json({
+    template: NUDGE_TEMPLATE_NAME,
+    firstAfterDays: NUDGE_FIRST_AFTER_DAYS, everyDays: NUDGE_EVERY_DAYS, max: NUDGE_MAX,
+    dueNow: rows.filter((r) => nudgeDue(r, nowMs)).map((r) => ({ id: r.id, name: r.name, email: r.email, nudgeCount: r.nudge_count || 0 })),
+  });
+});
+app.post("/api/admin/nudges/run", requireAdmin, (req, res) => {
+  runReviewNudges();
+  res.json({ ok: true });
+});
+
 app.get("/api/admin/campaigns", requireAdmin, (req, res) => {
   res.json({ campaigns: db.prepare("SELECT * FROM email_campaigns ORDER BY created_at DESC LIMIT 50").all() });
 });
@@ -1051,6 +1123,13 @@ const server = app.listen(PORT, () => {
   console.log(`CRNA Critics running at ${BASE_URL}`);
   if (!process.env.RESEND_API_KEY) console.log("(RESEND_API_KEY not set — emails will be logged, not sent.)");
 });
+
+// Review nudges: first check a minute after boot, then hourly. unref() so a pending
+// timer never keeps a stopping container alive.
+if (process.env.NODE_ENV !== "test") {
+  setTimeout(() => { try { runReviewNudges(); } catch (e) { console.error("Nudge check failed:", e.message); } }, 60 * 1000).unref();
+  setInterval(() => { try { runReviewNudges(); } catch (e) { console.error("Nudge check failed:", e.message); } }, NUDGE_CHECK_MS).unref();
+}
 
 // Railway stops the old container with SIGTERM on every deploy. Without a handler,
 // npm reports that as a crash and Railway emails a "Deployment crashed" alert for a
