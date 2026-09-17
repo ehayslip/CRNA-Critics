@@ -196,10 +196,10 @@ const SEARCH_SECTIONS = [
   ["hospital", "HOSPITALS"],
   ["group", "ANESTHESIA GROUPS"],
   ["agency", "LOCUM AGENCIES"],
-  ["agent", "AGENTS &amp; RECRUITERS"],
+  ["agent", "RECRUITERS"],
 ];
 // Plain-English names for the search selector and its placeholder.
-const KIND_LABELS = { hospital: "Hospitals", group: "Anesthesia Groups", agency: "Locum Agencies", agent: "Agents & Recruiters" };
+const KIND_LABELS = { hospital: "Hospitals", group: "Anesthesia Groups", agency: "Locum Agencies", agent: "Recruiters" };
 
 // One place that knows, for each rateable thing, which review fields hold its data.
 const ENTITY = {
