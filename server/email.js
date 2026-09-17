@@ -47,6 +47,8 @@ const TOKENS = [
   { token: "{{review_count}}", what: "\"3 reviews\" / \"no reviews yet\"" },
   { token: "{{site_url}}", what: "The site address, as a link" },
   { token: "{{feedback_link}}", what: "This member's personal link to the site's feedback form (no login needed). On its own line it becomes a \"Give feedback\" button." },
+  { token: "{{review_subject}}", what: "Review-notice emails only: what the review was about, e.g. \"Mercy General / Envision\"" },
+  { token: "{{flags}}", what: "Review-notice emails only: the flagged passage(s) with why it matters and a better way to say it" },
   { token: "{{cta}}", what: "A big green \"Open CRNA Critics\" button" },
 ];
 
@@ -69,7 +71,8 @@ function fillTokens(text, ctx) {
     .replace(/\{\{\s*email\s*\}\}/gi, ctx.email || "")
     .replace(/\{\{\s*review_count\s*\}\}/gi, reviewCountLabel(ctx.reviewCount || 0))
     .replace(/\{\{\s*site_url\s*\}\}/gi, ctx.baseUrl || "")
-    .replace(/\{\{\s*feedback_link\s*\}\}/gi, ctx.feedbackUrl || `${ctx.baseUrl || ""}/feedback`);
+    .replace(/\{\{\s*feedback_link\s*\}\}/gi, ctx.feedbackUrl || `${ctx.baseUrl || ""}/feedback`)
+    .replace(/\{\{\s*review_subject\s*\}\}/gi, ctx.reviewSubject || "your review");
 }
 
 // Plain text -> HTML paragraphs. {{cta}} on its own becomes the button. Everything
@@ -91,6 +94,7 @@ function bodyToHtml(text, ctx) {
       if (!trimmed) return "";
       if (/^\{\{\s*cta\s*\}\}$/i.test(trimmed)) return ctaHtml;
       if (/^\{\{\s*feedback_button\s*\}\}$/i.test(trimmed)) return feedbackHtml;
+      if (/^\{\{\s*flags\s*\}\}$/i.test(trimmed)) return ctx.flagsHtml || "";
       const html = escapeHtml(trimmed)
         .replace(/\{\{\s*cta\s*\}\}/gi, "")
         // Trailing sentence punctuation stays outside the link.
