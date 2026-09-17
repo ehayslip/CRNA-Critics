@@ -493,6 +493,7 @@ function render() {
   if (state.view === "employment") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${employmentHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachEmploymentHandlers(); return; }
   if (state.view === "admin") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body" id="admin-root"></div>` + footerHtml(); attachFooterHandlers(); renderAdmin(); return; }
   if (state.view === "terms") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${termsPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachTermsPageHandlers(); return; }
+  if (state.view === "guidelines") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${guidelinesPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachGuidelinesPageHandlers(); return; }
   root.innerHTML = headerHtml() + toastHtml() + navHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
   attachFooterHandlers();
   attachNavHandlers();
@@ -519,7 +520,11 @@ function footerHtml() {
   return `
     <div class="footer">
       <div>Built by CRNAs, for CRNAs. No hospital, agency, or agent can pay to remove a review.</div>
-      <button type="button" class="inline-link" id="terms-link-btn" style="margin-top:8px">Terms of Use &amp; Member Agreement</button>
+      <div class="footer-links">
+        <button type="button" class="inline-link" id="terms-link-btn">Terms of Use &amp; Member Agreement</button>
+        <span class="footer-sep">&middot;</span>
+        <button type="button" class="inline-link" id="guidelines-link-btn">Review Guidelines</button>
+      </div>
       <button type="button" class="admin-link" id="admin-link-btn">Site admin</button>
     </div>`;
 }
@@ -530,6 +535,8 @@ function attachFooterHandlers() {
   };
   const termsBtn = document.getElementById("terms-link-btn");
   if (termsBtn) termsBtn.onclick = () => { openTerms(); };
+  const guideBtn = document.getElementById("guidelines-link-btn");
+  if (guideBtn) guideBtn.onclick = () => { openGuidelines(); };
 }
 
 // ---------- terms ----------
@@ -540,7 +547,7 @@ function termsDocHtml() {
   return t.html;
 }
 function openTerms() {
-  if (state.view !== "terms") state.returnView = state.view;
+  if (state.view !== "terms" && state.view !== "guidelines") state.returnView = state.view;
   state.view = "terms";
   render();
   window.scrollTo(0, 0);
@@ -557,6 +564,35 @@ function termsPageHtml() {
 function attachTermsPageHandlers() {
   document.getElementById("terms-back-btn").onclick = () => {
     state.view = state.returnView === "terms" ? "home" : state.returnView || "home";
+    render();
+  };
+}
+
+// ---------- review guidelines ----------
+
+function guidelinesDocHtml() {
+  const g = window.CRNA_GUIDELINES;
+  if (!g) return `<p class="hint-text">The Review Guidelines could not be loaded. Refresh the page before continuing.</p>`;
+  return g.html;
+}
+function openGuidelines() {
+  if (state.view !== "terms" && state.view !== "guidelines") state.returnView = state.view;
+  state.view = "guidelines";
+  render();
+  window.scrollTo(0, 0);
+}
+function guidelinesPageHtml() {
+  const g = window.CRNA_GUIDELINES || {};
+  return `
+    <button class="back-btn" id="guidelines-back-btn" style="margin-bottom:10px">&larr; Back</button>
+    <div class="card">
+      <div class="section-label">${esc((g.title || "ONLINE REVIEW INSTRUCTIONS & GUIDELINES").toUpperCase())}</div>
+      <div class="terms-doc">${guidelinesDocHtml()}</div>
+    </div>`;
+}
+function attachGuidelinesPageHandlers() {
+  document.getElementById("guidelines-back-btn").onclick = () => {
+    state.view = state.returnView === "guidelines" ? "home" : state.returnView || "home";
     render();
   };
 }
@@ -1417,6 +1453,12 @@ function submitHtml() {
       <textarea id="hosp-comment" style="margin-top:10px" rows="3" placeholder="Anything else another CRNA should know about this hospital?">${esc(hospForm.comment)}</textarea>
     </div>`;
   return header + (mode === "staff" ? groupCard : agencyCard) + hospitalCard + `
+    <div class="card ack-card">
+      <div class="section-label">BEFORE YOU ${editing ? "SAVE" : "POST"}</div>
+      <label class="checkbox-row ack-row"><input type="checkbox" id="ack-guidelines" />
+        <span><strong>I have read and understand the <button type="button" class="inline-link" id="ack-guidelines-link">Online Review Instructions &amp; Guidelines</button></strong> and the Terms of Use &amp; Member Agreement. This review is first-hand and truthful, contains no patient information, accuses no one of a crime, copies nothing from a confidential document, and names no one except the agency, agent, group, or hospital I am rating. I alone am responsible for what I post.</span>
+      </label>
+    </div>
     <div id="submit-error" class="error-text"></div>
     <button class="primary-btn" id="submit-btn">${editing ? "Save changes" : "Post review"}</button>
     ${editing ? `<button type="button" class="link-btn" id="cancel-edit-bottom">Cancel — keep the original</button>` : ""}`;
@@ -1464,8 +1506,16 @@ function attachSubmitHandlers() {
   });
   bindCategoryNotes();
 
+  const ackLink = document.getElementById("ack-guidelines-link");
+  if (ackLink) ackLink.onclick = (e) => { e.preventDefault(); openGuidelines(); };
   document.getElementById("submit-btn").onclick = async () => {
     const errEl = document.getElementById("submit-error");
+    const ackEl = document.getElementById("ack-guidelines");
+    if (!ackEl || !ackEl.checked) {
+      errEl.textContent = "Check the box to confirm you have read and understand the Review Guidelines before you " + (editingId ? "save." : "post.");
+      if (ackEl) ackEl.closest(".ack-card").scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     const firstName = mode === "staff" ? grpForm.name : aaForm.agencyName;
     if (!firstName.trim() || !hospForm.name.trim()) {
       errEl.textContent = mode === "staff" ? "An anesthesia group name and a hospital name are required." : "An agency name and a hospital name are required.";
@@ -1482,6 +1532,8 @@ function attachSubmitHandlers() {
     const body = {
       employmentType: mode,
       anonymous: postOpts.anonymous,
+      acceptedGuidelines: true,
+      guidelinesVersion: (window.CRNA_GUIDELINES && window.CRNA_GUIDELINES.version) || "",
       hospitalName: hospForm.name.trim(),
       hospitalCity: hospForm.city.trim(),
       hospitalState: hospForm.state,
