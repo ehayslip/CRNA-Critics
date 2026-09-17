@@ -46,6 +46,7 @@ const TOKENS = [
   { token: "{{email}}", what: "Their email address" },
   { token: "{{review_count}}", what: "\"3 reviews\" / \"no reviews yet\"" },
   { token: "{{site_url}}", what: "The site address, as a link" },
+  { token: "{{feedback_link}}", what: "This member's personal link to the site's feedback form (no login needed). On its own line it becomes a \"Give feedback\" button." },
   { token: "{{cta}}", what: "A big green \"Open CRNA Critics\" button" },
 ];
 
@@ -67,19 +68,29 @@ function fillTokens(text, ctx) {
     .replace(/\{\{\s*name\s*\}\}/gi, ctx.name || "")
     .replace(/\{\{\s*email\s*\}\}/gi, ctx.email || "")
     .replace(/\{\{\s*review_count\s*\}\}/gi, reviewCountLabel(ctx.reviewCount || 0))
-    .replace(/\{\{\s*site_url\s*\}\}/gi, ctx.baseUrl || "");
+    .replace(/\{\{\s*site_url\s*\}\}/gi, ctx.baseUrl || "")
+    .replace(/\{\{\s*feedback_link\s*\}\}/gi, ctx.feedbackUrl || `${ctx.baseUrl || ""}/feedback`);
 }
 
 // Plain text -> HTML paragraphs. {{cta}} on its own becomes the button. Everything
 // else is escaped; bare URLs become links.
 function bodyToHtml(text, ctx) {
   const ctaHtml = `<p style="margin:22px 0;"><a href="${ctx.baseUrl}" style="background:#0B1526;color:#fff;padding:13px 22px;text-decoration:none;border-radius:4px;font-weight:bold;display:inline-block;">Open CRNA Critics</a></p>`;
-  return fillTokens(text, ctx)
+  const feedbackUrl = ctx.feedbackUrl || `${ctx.baseUrl}/feedback`;
+  const feedbackHtml = `<p style="margin:22px 0;"><a href="${feedbackUrl}" style="background:#13A15A;color:#fff;padding:13px 22px;text-decoration:none;border-radius:4px;font-weight:bold;display:inline-block;">Give feedback</a></p>`;
+  // The button is handled above; a {{feedback_link}} inside a sentence is filled in as a URL
+  // by fillTokens and linkified below like any other address.
+  // A {{feedback_link}} that is a paragraph of its own is marked before the tokens are
+  // filled, so it can become the button instead of a bare URL.
+  const marked = String(text == null ? "" : text)
+    .replace(/(^|\n{2,})[ \t]*\{\{\s*feedback_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{feedback_button}}");
+  return fillTokens(marked, ctx)
     .split(/\n{2,}/)
     .map((block) => {
       const trimmed = block.trim();
       if (!trimmed) return "";
       if (/^\{\{\s*cta\s*\}\}$/i.test(trimmed)) return ctaHtml;
+      if (/^\{\{\s*feedback_button\s*\}\}$/i.test(trimmed)) return feedbackHtml;
       const html = escapeHtml(trimmed)
         .replace(/\{\{\s*cta\s*\}\}/gi, "")
         // Trailing sentence punctuation stays outside the link.
