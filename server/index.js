@@ -622,13 +622,16 @@ app.post("/api/admin/email/send", requireAdmin, (req, res) => {
   res.json({ ok: true, campaignId, total: mailable.length, excluded: chosen.length - mailable.length });
 });
 
-// ---------- automatic "Ask for a review" nudges ----------
-// Every hour (during daytime, Eastern) look for approved members who still have no
-// review and are due a nudge: first one 2 days after approval, then one a week, at
-// most NUDGE_MAX in total, stopping the moment they post a review or opt out of
-// mailings. The email is the CMS template named NUDGE_TEMPLATE_NAME, so Eric can
-// edit the wording in the Email tab; each batch is a normal campaign in the Sent pane.
-const NUDGE_TEMPLATE_NAME = process.env.NUDGE_TEMPLATE_NAME || "Ask for a review";
+// ---------- automatic nudges (built into the site, no admin login needed) ----------
+// Two programs, both checked hourly during the day (Eastern) and both sent as ordinary
+// campaigns through runCampaign(), so they show in the Sent pane and honour unsubscribe:
+//   review   — approved members with NO review yet get the "Ask for a review" template
+//              (first one NUDGE_FIRST_AFTER_DAYS after approval, then weekly, max NUDGE_MAX;
+//              stops the moment they post).
+//   feedback — members who HAVE posted but have not filled in the site feedback form get
+//              the feedback template (first one NUDGE_FIRST_AFTER_DAYS after their first
+//              review, then weekly, max NUDGE_MAX; stops the moment they submit the form).
+// Eric edits the wording of either template in the Email tab.
 const NUDGE_FIRST_AFTER_DAYS = Number(process.env.NUDGE_FIRST_AFTER_DAYS || 2);
 const NUDGE_EVERY_DAYS = Number(process.env.NUDGE_EVERY_DAYS || 7);
 const NUDGE_MAX = Number(process.env.NUDGE_MAX || 4);
@@ -636,29 +639,61 @@ const NUDGE_HOURS = String(process.env.NUDGE_HOURS || "9-18"); // Eastern; "0-24
 const NUDGE_CHECK_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+function firstReviewAt(email) {
+  const row = db.prepare("SELECT MIN(date) AS d FROM reviews WHERE reviewer_email = ?").get(email);
+  return row && row.d ? row.d : null;
+}
+function feedbackSubmittedFor(id) {
+  return !!db.prepare("SELECT 1 FROM beta_feedback WHERE request_id = ? LIMIT 1").get(id);
+}
+function latest(...isoDates) {
+  const ms = isoDates.filter(Boolean).map((d) => Date.parse(d)).filter((n) => !Number.isNaN(n));
+  return ms.length ? Math.max(...ms) : 0;
+}
+
+const NUDGE_PROGRAMS = {
+  review: {
+    label: "Ask for a review",
+    templateName: process.env.NUDGE_TEMPLATE_NAME || "Ask for a review",
+    countCol: "nudge_count",
+    lastCol: "last_nudged_at",
+    // Eligible: approved, no review yet. Anchor = when they were approved.
+    anchor: (r) => (reviewCountFor(r.email) > 0 ? null : (r.decided_at || r.requested_at)),
+    lastSent: (r) => r.last_nudged_at,
+  },
+  feedback: {
+    label: "Site feedback",
+    templateName: process.env.NUDGE_FEEDBACK_TEMPLATE_NAME || "CRNACritics.com Review",
+    countCol: "feedback_nudge_count",
+    lastCol: "last_feedback_nudged_at",
+    // Eligible: has posted, hasn't submitted the feedback form. Anchor = first review.
+    anchor: (r) => (feedbackSubmittedFor(r.id) ? null : firstReviewAt(r.email)),
+    // A form Eric sent by hand counts as a nudge for spacing purposes.
+    lastSent: (r) => { const t = latest(r.last_feedback_nudged_at, r.feedback_sent_at); return t ? new Date(t).toISOString() : null; },
+  },
+};
+
 function easternHour(date = new Date()) {
   return Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "America/New_York" }).format(date));
 }
 
-function nudgeDue(row, nowMs) {
+function nudgeDue(program, row, nowMs) {
   if (row.status !== "approved" || row.bulk_unsubscribed) return false;
-  if ((row.nudge_count || 0) >= NUDGE_MAX) return false;
-  if (reviewCountFor(row.email) > 0) return false;
-  const approvedAt = Date.parse(row.decided_at || row.requested_at || "");
-  if (!approvedAt || nowMs - approvedAt < NUDGE_FIRST_AFTER_DAYS * DAY_MS) return false;
-  if (row.last_nudged_at && nowMs - Date.parse(row.last_nudged_at) < NUDGE_EVERY_DAYS * DAY_MS) return false;
+  if ((row[program.countCol] || 0) >= NUDGE_MAX) return false;
+  const anchor = program.anchor(row);
+  const anchorMs = anchor ? Date.parse(anchor) : NaN;
+  if (!anchorMs || Number.isNaN(anchorMs) || nowMs - anchorMs < NUDGE_FIRST_AFTER_DAYS * DAY_MS) return false;
+  const last = program.lastSent(row);
+  if (last && nowMs - Date.parse(last) < NUDGE_EVERY_DAYS * DAY_MS) return false;
   return true;
 }
 
-function runReviewNudges() {
-  if (NUDGE_MAX <= 0) return;
-  const [from, to] = NUDGE_HOURS.split("-").map(Number);
-  const hour = easternHour();
-  if (hour < from || hour >= to) return; // only send during the day, Eastern
-  const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(NUDGE_TEMPLATE_NAME);
-  if (!tpl) { console.log(`Nudges: no email template named "${NUDGE_TEMPLATE_NAME}" — nothing sent.`); return; }
+function runNudgeProgram(key) {
+  const program = NUDGE_PROGRAMS[key];
+  const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(program.templateName);
+  if (!tpl) { console.log(`Nudges (${key}): no email template named "${program.templateName}" — nothing sent.`); return; }
   const nowMs = Date.now();
-  const due = db.prepare("SELECT * FROM access_requests WHERE status = 'approved'").all().filter((r) => nudgeDue(r, nowMs));
+  const due = db.prepare("SELECT * FROM access_requests WHERE status = 'approved'").all().filter((r) => nudgeDue(program, r, nowMs));
   if (due.length === 0) return;
 
   const campaignId = crypto.randomUUID();
@@ -667,27 +702,40 @@ function runReviewNudges() {
     "INSERT INTO email_campaigns (id, subject, body, template_name, status, total, created_at) VALUES (?,?,?,?, 'sending', ?, ?)"
   ).run(campaignId, tpl.subject, tpl.body, `Auto — ${tpl.name}`, due.length, now);
   const insert = db.prepare("INSERT INTO email_campaign_recipients (id, campaign_id, email, name, status) VALUES (?,?,?,?, 'queued')");
-  const stamp = db.prepare("UPDATE access_requests SET nudge_count = COALESCE(nudge_count, 0) + 1, last_nudged_at = ? WHERE id = ?");
+  const stamp = db.prepare(`UPDATE access_requests SET ${program.countCol} = COALESCE(${program.countCol}, 0) + 1, ${program.lastCol} = ? WHERE id = ?`);
   db.transaction(() => {
     due.forEach((r) => { insert.run(crypto.randomUUID(), campaignId, r.email, r.name); stamp.run(now, r.id); });
   })();
-  console.log(`Nudges: sending "${tpl.name}" to ${due.length} member(s) with no review yet.`);
+  console.log(`Nudges (${key}): sending "${tpl.name}" to ${due.length} member(s).`);
   runCampaign(campaignId, tpl.subject, tpl.body).catch((e) => {
-    console.error("Nudge campaign crashed:", e.message);
+    console.error(`Nudge campaign (${key}) crashed:`, e.message);
     db.prepare("UPDATE email_campaigns SET status='done', last_error=?, finished_at=? WHERE id=?")
       .run(String(e.message || "crashed").slice(0, 300), new Date().toISOString(), campaignId);
   });
 }
 
-// Admin can see who is due and force a check.
+function runReviewNudges() {
+  if (NUDGE_MAX <= 0) return;
+  const [from, to] = NUDGE_HOURS.split("-").map(Number);
+  const hour = easternHour();
+  if (hour < from || hour >= to) return; // only send during the day, Eastern
+  Object.keys(NUDGE_PROGRAMS).forEach((key) => {
+    try { runNudgeProgram(key); } catch (e) { console.error(`Nudge program ${key} failed:`, e.message); }
+  });
+}
+
+// Admin can see who is due for each program and force a check.
 app.get("/api/admin/nudges", requireAdmin, (req, res) => {
   const nowMs = Date.now();
   const rows = db.prepare("SELECT * FROM access_requests WHERE status = 'approved'").all();
-  res.json({
-    template: NUDGE_TEMPLATE_NAME,
-    firstAfterDays: NUDGE_FIRST_AFTER_DAYS, everyDays: NUDGE_EVERY_DAYS, max: NUDGE_MAX,
-    dueNow: rows.filter((r) => nudgeDue(r, nowMs)).map((r) => ({ id: r.id, name: r.name, email: r.email, nudgeCount: r.nudge_count || 0 })),
+  const programs = {};
+  Object.entries(NUDGE_PROGRAMS).forEach(([key, p]) => {
+    programs[key] = {
+      template: p.templateName,
+      dueNow: rows.filter((r) => nudgeDue(p, r, nowMs)).map((r) => ({ id: r.id, name: r.name, email: r.email, sent: r[p.countCol] || 0 })),
+    };
   });
+  res.json({ firstAfterDays: NUDGE_FIRST_AFTER_DAYS, everyDays: NUDGE_EVERY_DAYS, max: NUDGE_MAX, hours: NUDGE_HOURS, programs });
 });
 app.post("/api/admin/nudges/run", requireAdmin, (req, res) => {
   runReviewNudges();
