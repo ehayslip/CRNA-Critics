@@ -3,16 +3,17 @@
 // the site) in trouble. Rule-based, so it runs with no outside service. Each flag
 // carries a plain-English issue and a suggested rewrite direction.
 //
-// Severity: high = likely legal/HIPAA exposure, email the member right away;
-// medium = worth a second look, email the member; low = style only, alert Eric only.
+// Deliberately narrow: only defamation, harassment, HIPAA and privacy — the things that
+// can actually get a CRNA in trouble. Style (caps, profanity) is not flagged.
+// Nothing here emails a member on its own; Eric decides from the Alerts tab.
 
 const RULES = [
   {
     key: "patient_info",
     severity: "high",
-    label: "Possible patient information",
-    // Patient details: age/sex/diagnosis/outcome wording near "patient"/"case".
-    test: (t) => /\b(patient|pt\.?|case)\b[^.]{0,80}\b(\d{1,3}\s*(year|yr|y\/?o)|male|female|yo\b|died|death|coded|arrest|complication|MRN|diagnos|aspirat|malignant hyperthermia|intubat)/i.test(t)
+    label: "Possible patient information (HIPAA)",
+    // A specific patient or case: age + sex, outcome, diagnosis, record numbers, dates of service.
+    test: (t) => /\b(patient|pt\.?|case)\b[^.]{0,80}\b(\d{1,3}\s*(year|yr|y\/?o)|died|death|coded|arrest(ed)?|MRN|diagnos\w*|malignant hyperthermia)/i.test(t)
       || /\b(\d{1,3})[- ](year|yr)[- ]old\b/i.test(t)
       || /\bMRN\b|\bmedical record\b|\bdate of service\b/i.test(t),
     issue: "This reads like it describes a specific patient or case (age, sex, outcome, or clinical detail). Anything that could identify a patient is a HIPAA problem and is the one absolute rule on the site.",
@@ -21,79 +22,48 @@ const RULES = [
   {
     key: "crime_accusation",
     severity: "high",
-    label: "Accusation of a crime or fraud",
-    test: (t) => /\b(fraud(ulent)?|stole|stealing|theft|thief|thieves|embezzl\w*|illegal(ly)?|criminal|crooks?|felony|kickback|bribe|launder\w*|drug diversion|diverting|impaired at work|showed up drunk|drunk at work|assault(ed)?|sexually harass\w*)\b/i.test(t),
+    label: "Accusation of a crime or fraud (defamation risk)",
+    test: (t) => /\b(fraud(ulent)?|stole|stealing|theft|thief|thieves|embezzl\w*|illegal(ly)?|criminal|crooks?|felony|kickbacks?|bribe[sd]?|launder\w*|drug diversion|diverting (drugs|narcotics)|impaired at work|showed up drunk|drunk at work|assault(ed)?|sexually harass\w*|molest\w*)\b/i.test(t),
     issue: "Accusing a company or a person of a crime (fraud, theft, illegal billing, diversion, assault) is a statement of fact you would have to prove. It is the most common basis for a defamation demand letter.",
     suggestion: "Describe what actually happened and let readers draw the conclusion: \"The invoice showed hours I did not work and it took three emails to get it corrected\" says more than \"they commit fraud\" and is defensible.",
   },
   {
     key: "liar",
-    severity: "medium",
-    label: "\"Lied\" stated as fact",
-    test: (t) => /\b(lied|liar|lying|lies|dishonest|deceit\w*|deceptive|scam(mer|my)?|con artist|misrepresented)\b/i.test(t),
+    severity: "high",
+    label: "\"Lied\" or \"scam\" stated as fact (defamation risk)",
+    test: (t) => /\b(lied|liar|lying|scam(mer|my|s)?|con artist|swindl\w*)\b/i.test(t)
+      || /\b(is|are|was|were)\s+(a\s+)?(dishonest|deceitful|deceptive)\b/i.test(t),
     issue: "\"Lied\" or \"scam\" is an accusation of fact about someone's intent. If it can't be proven, it can be treated as defamation even when the frustration is justified.",
     suggestion: "State the two things that didn't match: \"I was told $X on the phone; the contract said $Y\" or \"I was promised no call; the schedule had call.\" That is what you can prove, and it is more useful to the next CRNA.",
   },
   {
-    key: "named_individual",
-    severity: "medium",
-    label: "Names an individual who isn't being rated",
-    test: (t) => /\b(Dr\.?|Doctor|Nurse|CRNA|surgeon)\s+[A-Z][a-z]+(\s+[A-Z][a-z]+)?\b/.test(t) || /\bchief\s+(is|was)\s+[A-Z][a-z]+\b/.test(t),
-    issue: "The guidelines ask members to rate only the hospital, group, agency, or recruiter — not to name surgeons, chiefs, co-workers, or other CRNAs.",
-    suggestion: "Refer to the role instead of the person: \"one of the surgeons,\" \"the chief,\" \"the scheduler.\" The point lands without putting a private individual's name on a public page.",
+    key: "threat_harassment",
+    severity: "high",
+    label: "Threat or harassment",
+    test: (t) => /\b(i('ll| will) (make sure|see to it) (you|she|he|they) never work|ruin (him|her|them|you)|destroy (him|her|them|you)|(you|he|she|they) (will|'ll) (pay|regret)|watch your back|i know where (you|he|she) live|going to (hurt|kill)|deserve[sd]? to (die|be hurt))\b/i.test(t),
+    issue: "This reads as a threat or an attempt to intimidate. Threats and harassment are outside the Terms and can carry legal consequences of their own, separate from anything defamatory.",
+    suggestion: "Keep the review to what happened and how it affected your assignment. If you feel someone needs to be reported, do that through the proper channel, not in a review.",
   },
   {
-    key: "personal_attack",
-    severity: "medium",
-    label: "Personal attack or slur",
-    test: (t) => /\b(idiot|moron|stupid|incompetent|worthless|ugly|fat|lazy|bitch|asshole|bastard|jerk|clown|psycho|crazy|retard\w*|racist|sexist|old hag|dumb)\b/i.test(t),
-    issue: "Personal insults about someone's character, looks, or ability aren't protected as opinion in the way a description of conduct is, and they get reviews discounted by readers.",
-    suggestion: "Swap the label for the behavior: instead of \"incompetent,\" say \"took four days to answer a credentialing question\" or \"sent the wrong contract twice.\"",
+    key: "slur_or_discrimination",
+    severity: "high",
+    label: "Slur or discriminatory remark",
+    // Slurs and traits used as the criticism. Everyday phrases ("drove me crazy") and
+    // positive mentions ("they accommodate pregnant CRNAs") are not flagged.
+    test: (t) => /\b(retard\w*|tranny|fag\w*|wetback|towelhead|chink|spic|kike|n[i1]gg\w*)\b/i.test(t)
+      || /\b(too old|too young|past (his|her) prime|because (he|she)('s| is| was) (a |an )?(woman|man|female|male|black|white|asian|hispanic|indian|foreign\w*|muslim|christian|jewish|gay|old|young))\b/i.test(t)
+      || /\b(thick|heavy|terrible|bad)\s+accent\b/i.test(t)
+      || /\b(he|she|they)\s+(is|was|are|were)\s+(probably\s+|clearly\s+|obviously\s+)?(mentally (ill|unstable)|bipolar|an? alcoholic|an? addict|on drugs|senile)\b/i.test(t),
+    issue: "A slur, or criticism based on someone's age, sex, race, religion, accent, or health, can be read as discriminatory harassment and is outside the Terms.",
+    suggestion: "Keep it to professional conduct — communication, honesty, follow-through — and leave personal characteristics out.",
   },
   {
     key: "private_details",
     severity: "medium",
-    label: "Phone number, email, or address",
+    label: "Phone number, email, or home address",
     test: (t) => /\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b/.test(t) || /[\w.+-]+@[\w-]+\.[\w.]+/.test(t) || /\b\d{2,5}\s+[A-Z][a-z]+\s+(St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Blvd|Lane|Ln|Ct|Court)\b/.test(t),
     issue: "A phone number, email address, or street address in a review can be someone's private contact information, which the guidelines ask members to leave out.",
     suggestion: "Remove the contact details. If the point is that they were hard to reach, say that: \"calls went to voicemail for a week.\"",
-  },
-  {
-    key: "protected_traits",
-    severity: "medium",
-    label: "Comment on age, sex, race, religion, or health",
-    test: (t) => /\b(too old|too young|because (he|she)('s| is| was) (a )?(woman|man|black|white|asian|hispanic|indian|foreign|muslim|christian|jewish|gay)|accent|pregnant|disabled|mental(ly)? (ill|unstable)|bipolar|alcoholic|addict)\b/i.test(t),
-    issue: "Comments about someone's age, sex, race, religion, accent, or health fall under the \"no attacks on private individuals\" rule and can be read as discriminatory.",
-    suggestion: "Keep it to professional conduct — communication, honesty, follow-through — and leave personal characteristics out.",
-  },
-  {
-    key: "financial_guess",
-    severity: "low",
-    label: "Guess about a company's finances or legality",
-    test: (t) => /\b(going under|going bankrupt|bankrupt|can'?t make payroll|about to fold|insolvent|breaking the law|violat\w+ (labor|federal|state) law|illegal(ly)? billing)\b/i.test(t),
-    issue: "Guessing at a company's finances or legality (\"going under,\" \"violating labor law\") states something as fact that the member usually can't know.",
-    suggestion: "Report the experience only: \"my last two checks were late\" or \"pay arrived 30+ days after the invoice.\"",
-  },
-  {
-    key: "all_caps",
-    severity: "low",
-    label: "Mostly ALL CAPS",
-    test: (t) => {
-      const letters = t.replace(/[^A-Za-z]/g, "");
-      if (letters.length < 40) return false;
-      const upper = letters.replace(/[^A-Z]/g, "").length;
-      return upper / letters.length > 0.6;
-    },
-    issue: "The guidelines note that ALL CAPS and \"worst ever\" language gets a review discounted by readers and read as malice by lawyers.",
-    suggestion: "Normal sentence case, same facts. It reads as more credible and carries more weight with the next CRNA.",
-  },
-  {
-    key: "profanity",
-    severity: "low",
-    label: "Profanity",
-    test: (t) => /\b(fuck\w*|shit\w*|damn|hell of|bullshit|crap|pissed)\b/i.test(t),
-    issue: "Profanity is called out in the guidelines as something that gets a review discounted.",
-    suggestion: "Same point, cleaner words — the frustration comes through fine without them.",
   },
 ];
 
