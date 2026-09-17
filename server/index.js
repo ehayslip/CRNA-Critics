@@ -718,11 +718,10 @@ function runNudgeProgram(key) {
 }
 
 // ---------- review guard: daily scan against the Review Guidelines ----------
-// Once a day (the first hourly tick at or after SCAN_HOUR Eastern) every review that
+// Once a day (inside the morning window starting SCAN_HOUR Eastern) every review that
 // is new or was edited since the last scan is checked by server/guard.js. Each hit
-// becomes an open row in review_flags (the Alerts tab), the member gets one
-// courteous email per review listing what was flagged and a better way to say it
-// (medium/high only — low is style and only Eric sees it), and Eric gets a summary.
+// becomes an open row in review_flags (the Alerts tab) and Eric gets a summary email.
+// Members are NEVER emailed automatically; Eric chooses per flag: email / delete / ignore.
 const SCAN_HOUR = Number(process.env.SCAN_HOUR || 9);
 const SCAN_ENABLED = process.env.REVIEW_SCAN !== "off";
 
@@ -749,7 +748,38 @@ function flagCardHtml(f) {
     </div>`;
 }
 
+const NOTICE_TEMPLATE_NAME = "Review guideline notice";
+function ensureNoticeTemplate() {
+  if (db.prepare("SELECT 1 FROM email_templates WHERE name = ?").get(NOTICE_TEMPLATE_NAME)) return;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)").run(
+    crypto.randomUUID(), NOTICE_TEMPLATE_NAME, "Alerts",
+    "A quick look at your CRNA Critics review of {{review_subject}}",
+    `Hi {{first_name}},
+
+Thank you for posting a review — it's exactly what makes the site useful. I read every review that goes up, and I wanted to flag something in your review of {{review_subject}} that could be worth a second look under the Online Review Instructions & Guidelines. This is about protecting you: the person who writes a review is the one who answers for it, and a small wording change makes a review both safer and more useful to the next CRNA.
+
+{{flags}}
+
+You can edit the review any time under My reviews on the site — the score and everything else stays. If you think the wording is fine as it is, just reply and tell me.
+
+{{cta}}
+
+— Eric, CRNA Critics`,
+    now, now);
+}
+ensureNoticeTemplate();
+
 function sendGuidelineNoticeEmail(member, row, flags) {
+  const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(NOTICE_TEMPLATE_NAME);
+  if (tpl) {
+    const ctx = {
+      name: member.name, email: member.email, reviewCount: reviewCountFor(member.email), baseUrl: BASE_URL,
+      feedbackUrl: feedbackUrlFor(member), reviewSubject: reviewSubjectLine(row),
+      flagsHtml: flags.map(flagCardHtml).join(""),
+    };
+    return sendEmail({ to: member.email, replyTo: REPLY_TO, subject: fillTokens(tpl.subject, ctx), html: campaignHtml({ body: tpl.body, ctx, unsubscribeUrl: unsubscribeUrlFor(member.email) }) });
+  }
   const subject = `A quick look at your CRNA Critics review of ${reviewSubjectLine(row)}`;
   return sendEmail({
     to: member.email,
@@ -774,11 +804,11 @@ function sendAdminScanSummary(newFlags) {
   newFlags.forEach((f) => { (byReviewer[f.reviewer_name || f.reviewer_email] = byReviewer[f.reviewer_name || f.reviewer_email] || []).push(f); });
   const html = Object.entries(byReviewer).map(([who, fs]) => `
     <h3 style="margin:16px 0 4px;color:#8C3A32;">${escapeHtml(who)} <span style="font-weight:normal;color:#6B756F;font-size:13px;">— ${escapeHtml(fs[0].subject)}</span></h3>
-    ${fs.map((f) => `<p style="margin:4px 0;"><strong>${escapeHtml(f.severity.toUpperCase())}</strong> · ${escapeHtml(f.label)} — <em>"${escapeHtml(f.excerpt)}"</em>${f.emailed ? " · member emailed" : " · not emailed (style only)"}</p>`).join("")}`).join("");
+    ${fs.map((f) => `<p style="margin:4px 0;"><strong>${escapeHtml(f.severity.toUpperCase())}</strong> · ${escapeHtml(f.label)} — <em>"${escapeHtml(f.excerpt)}"</em></p>`).join("")}`).join("");
   return sendEmail({
     to: process.env.ADMIN_EMAIL,
     subject: `CRNA Critics — ${newFlags.length} review alert${newFlags.length === 1 ? "" : "s"} to look at`,
-    html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;font-size:14px;line-height:1.5;">${emailHeaderHtml(BASE_URL, 560)}<p>The daily review scan flagged the following. Open <strong>Site admin → Alerts</strong> to see each one with the member highlighted, resolve or dismiss it, or re-send the notice.</p>${html}</div>`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;font-size:14px;line-height:1.5;">${emailHeaderHtml(BASE_URL, 560)}<p>The daily review scan flagged the following. Nobody has been emailed. Open <strong>Site admin → Alerts</strong> to read each one and choose: email the CRNA, delete the review, or ignore.</p>${html}</div>`,
   }).catch((e) => console.error("Admin scan summary failed:", e.message));
 }
 
@@ -808,23 +838,7 @@ async function runReviewScan({ all = false, notify = true } = {}) {
     }
   }
 
-  // One email per review for medium/high flags.
-  if (notify) {
-    const byReview = {};
-    newFlags.filter((f) => SEVERITY_RANK[f.severity] >= 2).forEach((f) => { (byReview[f.review.id] = byReview[f.review.id] || []).push(f); });
-    for (const [reviewId, fs] of Object.entries(byReview)) {
-      const member = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(fs[0].reviewer_email);
-      if (!member || member.status !== "approved") continue;
-      try {
-        await sendGuidelineNoticeEmail(member, fs[0].review, fs);
-        const t = new Date().toISOString();
-        fs.forEach((f) => { f.emailed = true; db.prepare("UPDATE review_flags SET notified_at = ? WHERE id = ?").run(t, f.id); });
-      } catch (e) {
-        console.error(`Guideline notice to ${fs[0].reviewer_email} failed:`, e.message);
-      }
-    }
-  }
-
+  // Members are never emailed automatically — Eric decides from the Alerts tab.
   kvSet("review_scan_last", startedAt);
   console.log(`Review scan: ${rows.length} review(s) checked, ${newFlags.length} new flag(s).`);
   if (notify) await sendAdminScanSummary(newFlags);
@@ -835,7 +849,8 @@ function maybeRunDailyScan() {
   if (!SCAN_ENABLED) return;
   const hour = easternHour();
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date()); // YYYY-MM-DD
-  if (hour < SCAN_HOUR || kvGet("review_scan_day") === today) return;
+  // Only inside a three-hour morning window, so a deploy at night never fires it.
+  if (hour < SCAN_HOUR || hour >= SCAN_HOUR + 3 || kvGet("review_scan_day") === today) return;
   kvSet("review_scan_day", today);
   runReviewScan().catch((e) => console.error("Review scan failed:", e.message));
 }
@@ -909,6 +924,14 @@ app.post("/api/admin/flags/:id/notify", requireAdmin, async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: "send_failed", detail: e.message });
   }
+});
+// Admin removes a review outright (Terms §6). Its open flags close as "delete".
+app.delete("/api/admin/reviews/:id", requireAdmin, (req, res) => {
+  const row = db.prepare("SELECT * FROM reviews WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  db.prepare("DELETE FROM reviews WHERE id = ?").run(row.id);
+  db.prepare("UPDATE review_flags SET status='resolved', resolved_at=?, resolved_by='delete' WHERE review_id = ? AND status = 'open'").run(new Date().toISOString(), row.id);
+  res.json({ ok: true });
 });
 app.post("/api/admin/scan/run", requireAdmin, async (req, res) => {
   try {
