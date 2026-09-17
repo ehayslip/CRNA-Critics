@@ -430,6 +430,15 @@ app.delete("/api/admin/requests/:id", requireAdmin, (req, res) => {
 const CAMPAIGN_DELAY_MS = Number(process.env.CAMPAIGN_DELAY_MS || 600); // Resend allows ~2/sec
 const UNSUB_SECONDS = 60 * 60 * 24 * 365 * 2;
 
+// A member's personal link to the beta feedback form — the same link the per-member
+// "Send feedback form" button emails, so answers land under their row in the admin.
+function feedbackUrlFor(row) {
+  return `${BASE_URL}/feedback?token=${sign({ id: row.id, purpose: "feedback" }, FEEDBACK_LINK_SECONDS)}`;
+}
+function usesFeedbackLink(text) {
+  return /\{\{\s*feedback_link\s*\}\}/i.test(String(text || ""));
+}
+
 function unsubscribeUrlFor(email) {
   return `${BASE_URL}/unsubscribe?token=${sign({ email, purpose: "unsub" }, UNSUB_SECONDS)}`;
 }
@@ -518,8 +527,8 @@ app.post("/api/admin/email/preview", requireAdmin, (req, res) => {
     ? db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.body.memberId)
     : db.prepare("SELECT * FROM access_requests WHERE status = 'approved' ORDER BY requested_at DESC LIMIT 1").get();
   const ctx = row
-    ? { name: row.name, email: row.email, reviewCount: reviewCountFor(row.email), baseUrl: BASE_URL }
-    : { name: "Jane Doe, CRNA", email: "jane@example.com", reviewCount: 2, baseUrl: BASE_URL };
+    ? { name: row.name, email: row.email, reviewCount: reviewCountFor(row.email), baseUrl: BASE_URL, feedbackUrl: feedbackUrlFor(row) }
+    : { name: "Jane Doe, CRNA", email: "jane@example.com", reviewCount: 2, baseUrl: BASE_URL, feedbackUrl: `${BASE_URL}/feedback` };
   res.json({
     to: ctx.email,
     subject: fillTokens(subject, ctx),
@@ -549,7 +558,7 @@ async function runCampaign(campaignId, subject, body) {
       skipped += 1;
       markRecipient.run("skipped", "unsubscribed from mailings", new Date().toISOString(), r.id);
     } else {
-      const ctx = { name: member.name, email: member.email, reviewCount: reviewCountFor(member.email), baseUrl: BASE_URL };
+      const ctx = { name: member.name, email: member.email, reviewCount: reviewCountFor(member.email), baseUrl: BASE_URL, feedbackUrl: feedbackUrlFor(member) };
       try {
         await sendEmail({
           to: member.email,
@@ -558,6 +567,10 @@ async function runCampaign(campaignId, subject, body) {
           replyTo: REPLY_TO,
         });
         sent += 1;
+        // A campaign that carried their feedback link counts as "feedback form sent" on their member row.
+        if (usesFeedbackLink(body)) {
+          db.prepare("UPDATE access_requests SET feedback_sent_at = ? WHERE id = ?").run(new Date().toISOString(), member.id);
+        }
         markRecipient.run("sent", "", new Date().toISOString(), r.id);
       } catch (e) {
         failed += 1;
