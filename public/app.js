@@ -1050,6 +1050,7 @@ function searchPlaceholder() {
 function searchHtml() {
   const results = searchResults();
   return `
+    <p class="kind-hint">Tap a category to see every name reviewed under it, or search by name.</p>
     <div class="kind-bar" id="kind-bar">${kindBarHtml()}</div>
     <input class="search-input" id="search-box" placeholder="${searchPlaceholder()}" value="${esc(state.query)}" />
     <div id="search-results">${searchResultsHtml(results)}</div>`;
