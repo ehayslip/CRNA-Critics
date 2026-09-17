@@ -303,7 +303,11 @@ const state = {
   adminAliases: [],   // rows from name_aliases, for the "merged names" list
   adminIgnores: [],   // pairs the admin marked as not the same
   adminMergeNote: "",
-  adminTab: "members",       // members | names
+  adminTab: "members",       // members | reviews | email | names | alerts
+  adminFlags: null,          // review-guard flags, loaded when the admin opens
+  adminFlagsMeta: {},        // lastScan, scanHour
+  adminFlagNote: "",
+  adminShowClosedFlags: false,
   adminNameType: "hospital", // which directory tab is open
   adminNameFilter: "",
   adminPicked: [],    // names ticked in the directory, for a multi-way merge
@@ -1817,7 +1821,8 @@ function memberCardHtml(r) {
   const badges = r.status !== "approved" ? "" : `
     ${isNewMember(r) ? `<span class="member-badge member-new" title="Approved in the last ${NEW_MEMBER_DAYS} days">★ NEW</span>` : ""}
     <span class="member-badge member-posts${n ? " has-posts" : ""}" title="Reviews posted">${n} post${n === 1 ? "" : "s"}</span>
-    ${r.feedbackSubmittedAt ? `<span class="member-badge member-fb" title="Reviewed the site (feedback form submitted ${adminDate(r.feedbackSubmittedAt)})">✓ site feedback</span>` : ""}`;
+    ${r.feedbackSubmittedAt ? `<span class="member-badge member-fb" title="Reviewed the site (feedback form submitted ${adminDate(r.feedbackSubmittedAt)})">✓ site feedback</span>` : ""}
+    ${r.openFlags ? `<span class="member-badge member-alert" title="Open review alerts — see the Alerts tab">⚠ ${r.openFlags} alert${r.openFlags === 1 ? "" : "s"}</span>` : ""}`;
   return `
     <div class="card member-card${open ? " open" : ""}">
       <button type="button" class="member-head" data-member="${r.id}">
@@ -2165,6 +2170,19 @@ async function renderAdmin() {
   state.adminRequests = data.requests;
   paintAdmin();
   loadAdminNames(); // second pass — the member list shouldn't wait on the name scan
+  loadAdminFlags(); // so the Alerts badge is right from the start
+}
+
+async function loadAdminFlags(force) {
+  if (state.adminFlags && !force) return;
+  try {
+    const data = await api("/api/admin/flags");
+    state.adminFlags = data.flags;
+    state.adminFlagsMeta = { lastScan: data.lastScan, scanHour: data.scanHour };
+  } catch {
+    state.adminFlags = [];
+  }
+  paintAdmin();
 }
 
 // Draws the dashboard from what's already in state — no fetch — so filtering and
@@ -2179,7 +2197,8 @@ function paintAdmin() {
     .filter((r) => !q || `${r.name} ${r.email} ${r.phone || ""} ${r.nbcrna_number || ""}`.toLowerCase().includes(q))
     .sort(byLastName);
 
-  const tab = ["members", "reviews", "email", "names"].includes(state.adminTab) ? state.adminTab : "members";
+  const tab = ["members", "reviews", "email", "names", "alerts"].includes(state.adminTab) ? state.adminTab : "members";
+  const openFlags = (state.adminFlags || []).filter((f) => f.status === "open").length;
   const dupeCount = state.adminNames ? duplicateCandidates().length : 0;
   const membersSection = `
     <div class="section-label" style="margin:10px 0">PENDING VERIFICATION (${pending.length})</div>
@@ -2216,8 +2235,9 @@ function paintAdmin() {
       <button class="nav-btn${tab === "reviews" ? " active" : ""}" data-admin-tab="reviews">Reviews${state.adminReviews ? ` <span class="tab-badge">${state.adminReviews.length}</span>` : ""}</button>
       <button class="nav-btn${tab === "email" ? " active" : ""}" data-admin-tab="email">Email</button>
       <button class="nav-btn${tab === "names" ? " active" : ""}" data-admin-tab="names">Names${dupeCount ? ` <span class="tab-badge">${dupeCount}</span>` : ""}</button>
+      <button class="nav-btn${tab === "alerts" ? " active" : ""}" data-admin-tab="alerts">Alerts${openFlags ? ` <span class="tab-badge alert-badge">${openFlags}</span>` : ""}</button>
     </div>
-    ${tab === "members" ? membersSection : tab === "reviews" ? adminReviewsSection() : tab === "email" ? emailSection() : namesSection}`;
+    ${tab === "members" ? membersSection : tab === "reviews" ? adminReviewsSection() : tab === "email" ? emailSection() : tab === "alerts" ? alertsSection() : namesSection}`;
 
   document.querySelectorAll("[data-admin-tab]").forEach((btn) => {
     btn.onclick = () => {
@@ -2227,6 +2247,7 @@ function paintAdmin() {
       // Each tab loads its own data the first time it's opened.
       if (state.adminTab === "reviews") loadAdminReviews();
       if (state.adminTab === "email") loadEmailData();
+      if (state.adminTab === "alerts") loadAdminFlags();
     };
   });
 
@@ -2234,6 +2255,7 @@ function paintAdmin() {
   document.getElementById("admin-refresh").onclick = () => {
     if (state.adminTab === "reviews") loadAdminReviews(true);
     if (state.adminTab === "email") loadEmailData(true);
+    if (state.adminTab === "alerts") loadAdminFlags(true);
     renderAdmin();
   };
   attachDuplicateHandlers();
@@ -2260,6 +2282,7 @@ function paintAdmin() {
   attachMemberHandlers();
   attachAdminReviewHandlers();
   attachEmailHandlers();
+  attachAlertHandlers();
 }
 
 
@@ -2404,6 +2427,107 @@ function adminReviewCardHtml(r) {
       </div>
       ${reviewBodyHtml(r)}
     </div>`;
+}
+
+// ---------- Alerts tab: review-guard flags ----------
+function flagSubject(f) {
+  return [f.hospital_name, f.group_name, f.agency_name, f.agent_name].filter(Boolean).map(esc).join(" / ") || "(review deleted)";
+}
+function alertsSection() {
+  if (state.adminFlags === null) return `<p class="hint-text">Checking the reviews…</p>`;
+  const open = state.adminFlags.filter((f) => f.status === "open");
+  const closed = state.adminFlags.filter((f) => f.status !== "open");
+  const meta = state.adminFlagsMeta || {};
+  // Group open flags by review so one CRNA / one review is one highlighted card.
+  const byReview = new Map();
+  open.forEach((f) => { if (!byReview.has(f.review_id)) byReview.set(f.review_id, []); byReview.get(f.review_id).push(f); });
+  const sevPill = (s) => `<span class="sev-pill sev-${s}">${s.toUpperCase()}</span>`;
+  const card = (fs) => {
+    const f = fs[0];
+    const worst = fs.some((x) => x.severity === "high") ? "high" : fs.some((x) => x.severity === "medium") ? "medium" : "low";
+    return `
+      <div class="card alert-card sev-border-${worst}">
+        <div class="alert-head">
+          <div>
+            <div class="alert-who">${esc(f.member_name || f.reviewer_name || f.reviewer_email)}</div>
+            <div class="hint-text" style="margin:2px 0 0">${esc(f.reviewer_email)} · reviewed <strong>${flagSubject(f)}</strong> · ${adminDate(f.edited_at || f.review_date)}${f.anonymous ? " · posted anonymously" : ""}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            ${sevPill(worst)}
+            <div class="hint-text" style="margin-top:4px">${f.notified_at ? `CRNA emailed ${adminDate(f.notified_at)}` : "CRNA not emailed"}</div>
+          </div>
+        </div>
+        ${fs.map((x) => `
+          <div class="alert-item">
+            <div class="alert-label">${sevPill(x.severity)} ${esc(x.label)} <span class="hint-text" style="display:inline">— in the ${esc(x.where_found)}</span></div>
+            <blockquote class="alert-quote">${esc(x.excerpt)}</blockquote>
+            <div class="alert-why"><strong>Why:</strong> ${esc(x.issue)}</div>
+            <div class="alert-fix"><strong>Better:</strong> ${esc(x.suggestion)}</div>
+            <div class="alert-actions">
+              <button class="tiny-btn" data-flag-status="${x.id}::resolved">Mark fixed</button>
+              <button class="tiny-btn" data-flag-status="${x.id}::dismissed">Dismiss — it's fine</button>
+            </div>
+          </div>`).join("")}
+        <div class="alert-actions" style="margin-top:10px;border-top:1px solid #EEF2ED;padding-top:10px">
+          <button class="tiny-btn approve" data-flag-notify="${f.id}">${f.notified_at ? "Email the CRNA again" : "Email the CRNA"}</button>
+          <button class="tiny-btn" data-flag-member="${f.member_id || ""}">Open member</button>
+        </div>
+      </div>`;
+  };
+  return `
+    <div class="section-label" style="margin:10px 0 6px">REVIEW ALERTS (${open.length} open)</div>
+    <p class="hint-text" style="margin-top:0">Every new or edited review is checked once a day (about ${meta.scanHour || 9}:00 AM Eastern) against the Online Review Instructions &amp; Guidelines. High and medium alerts email the CRNA automatically with a suggested rewrite; low ones are style only and just show here. ${meta.lastScan ? `Last scan ${adminDate(meta.lastScan)}.` : "No scan has run yet."}</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="tiny-btn" id="scan-now">Scan new &amp; edited reviews now</button>
+      <button class="tiny-btn" id="scan-all">Re-scan every review</button>
+      <button class="tiny-btn" id="toggle-closed-flags">${state.adminShowClosedFlags ? "Hide" : "Show"} resolved (${closed.length})</button>
+    </div>
+    ${state.adminFlagNote ? `<p class="hint-text" style="color:#1F5C57;font-weight:700">${esc(state.adminFlagNote)}</p>` : ""}
+    ${open.length === 0 ? `<div class="empty-box"><p style="margin:0;font-weight:700">Nothing flagged.</p><p class="hint-text">Every review on file passes the guidelines check.</p></div>` : ""}
+    ${[...byReview.values()].map(card).join("")}
+    ${state.adminShowClosedFlags ? closed.map((x) => `
+      <div class="card" style="opacity:.7">
+        <div style="font-size:13px"><strong>${esc(x.member_name || x.reviewer_name || x.reviewer_email)}</strong> · ${flagSubject(x)} · ${esc(x.label)}
+          <span class="hint-text" style="display:inline">— ${x.status}${x.resolved_by === "edit" ? " (fixed by their edit)" : x.resolved_by === "delete" ? " (review deleted)" : ""} ${adminDate(x.resolved_at)}</span></div>
+        <div class="alert-actions"><button class="tiny-btn" data-flag-status="${x.id}::open">Reopen</button></div>
+      </div>`).join("") : ""}`;
+}
+function attachAlertHandlers() {
+  const note = (t) => { state.adminFlagNote = t; paintAdmin(); };
+  const scan = async (all) => {
+    note(all ? "Re-scanning every review…" : "Scanning new and edited reviews…");
+    try {
+      const out = await api("/api/admin/scan/run", { method: "POST", body: { all } });
+      await loadAdminFlags(true);
+      note(`Checked ${out.checked} review${out.checked === 1 ? "" : "s"} — ${out.newFlags} new alert${out.newFlags === 1 ? "" : "s"}.`);
+    } catch (e) { note(`Scan failed: ${e.message || e}`); }
+  };
+  const a = document.getElementById("scan-now"); if (a) a.onclick = () => scan(false);
+  const b = document.getElementById("scan-all"); if (b) b.onclick = () => scan(true);
+  const t = document.getElementById("toggle-closed-flags"); if (t) t.onclick = () => { state.adminShowClosedFlags = !state.adminShowClosedFlags; paintAdmin(); };
+  document.querySelectorAll("[data-flag-status]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [id, status] = btn.dataset.flagStatus.split("::");
+      try { await api(`/api/admin/flags/${id}`, { method: "POST", body: { status } }); await loadAdminFlags(true); renderAdmin(); }
+      catch (e) { note(`Couldn't update: ${e.message || e}`); }
+    };
+  });
+  document.querySelectorAll("[data-flag-notify]").forEach((btn) => {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try { const out = await api(`/api/admin/flags/${btn.dataset.flagNotify}/notify`, { method: "POST" }); await loadAdminFlags(true); note(`Notice sent to ${out.sentTo}.`); }
+      catch (e) { note(`Email failed: ${e.message || e}`); }
+    };
+  });
+  document.querySelectorAll("[data-flag-member]").forEach((btn) => {
+    btn.onclick = () => {
+      if (!btn.dataset.flagMember) return;
+      state.adminTab = "members"; state.adminOpenId = btn.dataset.flagMember; state.adminFilter = "";
+      paintAdmin();
+      const el = document.querySelector(`[data-member="${btn.dataset.flagMember}"]`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+  });
 }
 
 function adminReviewsSection() {
