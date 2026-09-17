@@ -6,8 +6,9 @@ const path = require("path");
 
 const db = require("./db");
 const { sign, verify, hashPassword, verifyPassword } = require("./auth");
-const { sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, TOKENS } = require("./email");
+const { sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, firstNameOf, TOKENS } = require("./email");
 const { EMAIL_LOGO_PNG_BASE64, emailHeaderHtml } = require("./brand");
+const { scanReview, SEVERITY_RANK } = require("./guard");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -331,11 +332,13 @@ function adminRow(r) {
   const fb = db
     .prepare("SELECT submitted_at FROM beta_feedback WHERE request_id = ? ORDER BY submitted_at DESC LIMIT 1")
     .get(r.id);
+  const flags = db.prepare("SELECT COUNT(*) AS n FROM review_flags WHERE reviewer_email = ? AND status = 'open'").get(r.email);
   return {
     ...rest,
     hasPassword: !!password_hash,
     reviewCount: counted ? counted.n : 0,
     feedbackSubmittedAt: fb ? fb.submitted_at : null,
+    openFlags: flags ? flags.n : 0,
   };
 }
 
@@ -714,7 +717,131 @@ function runNudgeProgram(key) {
   });
 }
 
+// ---------- review guard: daily scan against the Review Guidelines ----------
+// Once a day (the first hourly tick at or after SCAN_HOUR Eastern) every review that
+// is new or was edited since the last scan is checked by server/guard.js. Each hit
+// becomes an open row in review_flags (the Alerts tab), the member gets one
+// courteous email per review listing what was flagged and a better way to say it
+// (medium/high only — low is style and only Eric sees it), and Eric gets a summary.
+const SCAN_HOUR = Number(process.env.SCAN_HOUR || 9);
+const SCAN_ENABLED = process.env.REVIEW_SCAN !== "off";
+
+function kvGet(key) { const r = db.prepare("SELECT value FROM kv WHERE key = ?").get(key); return r ? r.value : null; }
+function kvSet(key, value) { db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, String(value)); }
+
+function reviewSubjectLine(row) {
+  const parts = [];
+  if (row.hospital_name) parts.push(row.hospital_name);
+  if (row.group_name) parts.push(row.group_name);
+  if (row.agency_name) parts.push(row.agency_name);
+  if (row.agent_name) parts.push(row.agent_name);
+  return parts.join(" / ") || "your review";
+}
+
+function flagCardHtml(f) {
+  const color = f.severity === "high" ? "#8C3A32" : f.severity === "medium" ? "#B87F1E" : "#6B756F";
+  return `
+    <div style="border-left:4px solid ${color};padding:10px 14px;margin:14px 0;background:#F7F8F5;">
+      <div style="font-weight:bold;color:${color};font-size:13px;">${escapeHtml(f.label)} <span style="font-weight:normal;color:#6B756F;">— in your ${escapeHtml(f.where_found || f.where)}</span></div>
+      <p style="margin:8px 0;font-style:italic;color:#3C4A45;">"${escapeHtml(f.excerpt)}"</p>
+      <p style="margin:8px 0;"><strong>Why it matters:</strong> ${escapeHtml(f.issue)}</p>
+      <p style="margin:8px 0;"><strong>A better way to say it:</strong> ${escapeHtml(f.suggestion)}</p>
+    </div>`;
+}
+
+function sendGuidelineNoticeEmail(member, row, flags) {
+  const subject = `A quick look at your CRNA Critics review of ${reviewSubjectLine(row)}`;
+  return sendEmail({
+    to: member.email,
+    replyTo: REPLY_TO,
+    subject,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;font-size:15px;line-height:1.55;color:#14231F;">
+        ${emailHeaderHtml(BASE_URL, 560)}
+        <p>Hi ${escapeHtml(firstNameOf(member.name))},</p>
+        <p>Thank you for posting a review — it's exactly what makes the site useful. Our automated check of new reviews flagged ${flags.length === 1 ? "one thing" : `${flags.length} things`} in your review of <strong>${escapeHtml(reviewSubjectLine(row))}</strong> that could be worth a second look under the <a href="${BASE_URL}" style="color:#13A15A;">Online Review Instructions &amp; Guidelines</a>. This is about protecting <em>you</em>: the person who writes a review is the one who answers for it, and small wording changes make a review both safer and more useful to the next CRNA.</p>
+        ${flags.map(flagCardHtml).join("")}
+        <p>You can edit the review any time under <strong>My reviews</strong> on the site — the score and everything else stays. If you read this and think the wording is fine as it is, no action is needed; this is an automated check and it can be over-cautious.</p>
+        <p><a href="${BASE_URL}" style="background:#0B1526;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;display:inline-block;">Open My reviews</a></p>
+        <p style="color:#6B756F;font-size:13px;">Questions? Just reply to this email.<br/>— Eric, CRNA Critics</p>
+      </div>`,
+  });
+}
+
+function sendAdminScanSummary(newFlags) {
+  if (!process.env.ADMIN_EMAIL || newFlags.length === 0) return Promise.resolve();
+  const byReviewer = {};
+  newFlags.forEach((f) => { (byReviewer[f.reviewer_name || f.reviewer_email] = byReviewer[f.reviewer_name || f.reviewer_email] || []).push(f); });
+  const html = Object.entries(byReviewer).map(([who, fs]) => `
+    <h3 style="margin:16px 0 4px;color:#8C3A32;">${escapeHtml(who)} <span style="font-weight:normal;color:#6B756F;font-size:13px;">— ${escapeHtml(fs[0].subject)}</span></h3>
+    ${fs.map((f) => `<p style="margin:4px 0;"><strong>${escapeHtml(f.severity.toUpperCase())}</strong> · ${escapeHtml(f.label)} — <em>"${escapeHtml(f.excerpt)}"</em>${f.emailed ? " · member emailed" : " · not emailed (style only)"}</p>`).join("")}`).join("");
+  return sendEmail({
+    to: process.env.ADMIN_EMAIL,
+    subject: `CRNA Critics — ${newFlags.length} review alert${newFlags.length === 1 ? "" : "s"} to look at`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;font-size:14px;line-height:1.5;">${emailHeaderHtml(BASE_URL, 560)}<p>The daily review scan flagged the following. Open <strong>Site admin → Alerts</strong> to see each one with the member highlighted, resolve or dismiss it, or re-send the notice.</p>${html}</div>`,
+  }).catch((e) => console.error("Admin scan summary failed:", e.message));
+}
+
+async function runReviewScan({ all = false, notify = true } = {}) {
+  const since = all ? null : kvGet("review_scan_last");
+  const rows = since
+    ? db.prepare("SELECT * FROM reviews WHERE date > ? OR (edited_at IS NOT NULL AND edited_at > ?)").all(since, since)
+    : db.prepare("SELECT * FROM reviews").all();
+  const startedAt = new Date().toISOString();
+  const newFlags = [];
+  const selOpen = db.prepare("SELECT * FROM review_flags WHERE review_id = ? AND status = 'open'");
+  const insert = db.prepare("INSERT INTO review_flags (id, review_id, reviewer_email, rule, severity, label, where_found, excerpt, issue, suggestion, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,'open',?)");
+  const resolve = db.prepare("UPDATE review_flags SET status='resolved', resolved_at=?, resolved_by='edit' WHERE id = ?");
+  const updateExcerpt = db.prepare("UPDATE review_flags SET where_found=?, excerpt=? WHERE id = ?");
+
+  for (const row of rows) {
+    const hits = scanReview(row);
+    const open = selOpen.all(row.id);
+    // Flags whose rule no longer matches were fixed by an edit.
+    open.forEach((f) => { if (!hits.find((h) => h.rule === f.rule)) resolve.run(startedAt, f.id); });
+    for (const h of hits) {
+      const existing = open.find((f) => f.rule === h.rule);
+      if (existing) { updateExcerpt.run(h.where, h.excerpt, existing.id); continue; }
+      const id = crypto.randomUUID();
+      insert.run(id, row.id, row.reviewer_email, h.rule, h.severity, h.label, h.where, h.excerpt, h.issue, h.suggestion, startedAt);
+      newFlags.push({ id, review: row, ...h, where_found: h.where, reviewer_email: row.reviewer_email, reviewer_name: row.reviewer_name, subject: reviewSubjectLine(row), emailed: false });
+    }
+  }
+
+  // One email per review for medium/high flags.
+  if (notify) {
+    const byReview = {};
+    newFlags.filter((f) => SEVERITY_RANK[f.severity] >= 2).forEach((f) => { (byReview[f.review.id] = byReview[f.review.id] || []).push(f); });
+    for (const [reviewId, fs] of Object.entries(byReview)) {
+      const member = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(fs[0].reviewer_email);
+      if (!member || member.status !== "approved") continue;
+      try {
+        await sendGuidelineNoticeEmail(member, fs[0].review, fs);
+        const t = new Date().toISOString();
+        fs.forEach((f) => { f.emailed = true; db.prepare("UPDATE review_flags SET notified_at = ? WHERE id = ?").run(t, f.id); });
+      } catch (e) {
+        console.error(`Guideline notice to ${fs[0].reviewer_email} failed:`, e.message);
+      }
+    }
+  }
+
+  kvSet("review_scan_last", startedAt);
+  console.log(`Review scan: ${rows.length} review(s) checked, ${newFlags.length} new flag(s).`);
+  if (notify) await sendAdminScanSummary(newFlags);
+  return { checked: rows.length, newFlags: newFlags.length };
+}
+
+function maybeRunDailyScan() {
+  if (!SCAN_ENABLED) return;
+  const hour = easternHour();
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date()); // YYYY-MM-DD
+  if (hour < SCAN_HOUR || kvGet("review_scan_day") === today) return;
+  kvSet("review_scan_day", today);
+  runReviewScan().catch((e) => console.error("Review scan failed:", e.message));
+}
+
 function runReviewNudges() {
+  maybeRunDailyScan();
   if (NUDGE_MAX <= 0) return;
   const [from, to] = NUDGE_HOURS.split("-").map(Number);
   const hour = easternHour();
@@ -740,6 +867,56 @@ app.get("/api/admin/nudges", requireAdmin, (req, res) => {
 app.post("/api/admin/nudges/run", requireAdmin, (req, res) => {
   runReviewNudges();
   res.json({ ok: true });
+});
+
+// --- review guard admin API ---
+app.get("/api/admin/flags", requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT f.*, r.reviewer_name, r.date AS review_date, r.edited_at, r.hospital_name, r.group_name, r.agency_name, r.agent_name, r.anonymous,
+           a.id AS member_id, a.name AS member_name
+    FROM review_flags f
+    LEFT JOIN reviews r ON r.id = f.review_id
+    LEFT JOIN access_requests a ON a.email = f.reviewer_email
+    ORDER BY CASE f.status WHEN 'open' THEN 0 ELSE 1 END, CASE f.severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, f.created_at DESC
+    LIMIT 500`).all();
+  // Flags whose review has since been deleted are closed here so they don't linger.
+  rows.filter((f) => f.status === "open" && !f.review_date).forEach((f) => {
+    db.prepare("UPDATE review_flags SET status='resolved', resolved_at=?, resolved_by='delete' WHERE id=?").run(new Date().toISOString(), f.id);
+    f.status = "resolved"; f.resolved_by = "delete";
+  });
+  res.json({ flags: rows, lastScan: kvGet("review_scan_last"), scanHour: SCAN_HOUR });
+});
+app.post("/api/admin/flags/:id", requireAdmin, (req, res) => {
+  const status = ["open", "resolved", "dismissed"].includes(req.body?.status) ? req.body.status : null;
+  if (!status) return res.status(400).json({ error: "bad_status" });
+  const changed = db.prepare("UPDATE review_flags SET status=?, resolved_at=?, resolved_by=? WHERE id=?")
+    .run(status, status === "open" ? null : new Date().toISOString(), status === "open" ? "" : "admin", req.params.id).changes;
+  if (!changed) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true });
+});
+app.post("/api/admin/flags/:id/notify", requireAdmin, async (req, res) => {
+  const f = db.prepare("SELECT * FROM review_flags WHERE id = ?").get(req.params.id);
+  if (!f) return res.status(404).json({ error: "not_found" });
+  const row = db.prepare("SELECT * FROM reviews WHERE id = ?").get(f.review_id);
+  const member = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(f.reviewer_email);
+  if (!row || !member) return res.status(404).json({ error: "not_found" });
+  const flags = db.prepare("SELECT * FROM review_flags WHERE review_id = ? AND status = 'open'").all(row.id);
+  try {
+    await sendGuidelineNoticeEmail(member, row, flags.length ? flags : [f]);
+    const t = new Date().toISOString();
+    (flags.length ? flags : [f]).forEach((x) => db.prepare("UPDATE review_flags SET notified_at = ? WHERE id = ?").run(t, x.id));
+    res.json({ ok: true, sentTo: member.email });
+  } catch (e) {
+    res.status(502).json({ error: "send_failed", detail: e.message });
+  }
+});
+app.post("/api/admin/scan/run", requireAdmin, async (req, res) => {
+  try {
+    const out = await runReviewScan({ all: !!req.body?.all, notify: req.body?.notify !== false });
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    res.status(500).json({ error: "scan_failed", detail: e.message });
+  }
 });
 
 app.get("/api/admin/campaigns", requireAdmin, (req, res) => {
