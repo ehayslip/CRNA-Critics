@@ -1802,16 +1802,27 @@ function termsLine(r) {
 
 // One expandable member row: name + status on the closed row, everything on file
 // plus the per-member actions once it's open.
+// "New" = approved within the last 7 days.
+const NEW_MEMBER_DAYS = 7;
+function isNewMember(r) {
+  if (r.status !== "approved" || !r.decided_at) return false;
+  return Date.now() - Date.parse(r.decided_at) < NEW_MEMBER_DAYS * 24 * 60 * 60 * 1000;
+}
 function memberCardHtml(r) {
   const open = state.adminOpenId === r.id;
   const confirming = state.adminConfirmId === r.id;
   const note = state.adminNotes[r.id] || "";
   const statusColor = r.status === "approved" ? "#1F5C57" : "#8C3A32";
+  const n = r.reviewCount || 0;
+  const badges = r.status !== "approved" ? "" : `
+    ${isNewMember(r) ? `<span class="member-badge member-new" title="Approved in the last ${NEW_MEMBER_DAYS} days">★ NEW</span>` : ""}
+    <span class="member-badge member-posts${n ? " has-posts" : ""}" title="Reviews posted">${n} post${n === 1 ? "" : "s"}</span>
+    ${r.feedbackSubmittedAt ? `<span class="member-badge member-fb" title="Reviewed the site (feedback form submitted ${adminDate(r.feedbackSubmittedAt)})">✓ site feedback</span>` : ""}`;
   return `
     <div class="card member-card${open ? " open" : ""}">
       <button type="button" class="member-head" data-member="${r.id}">
-        <span>
-          <span class="member-name">${esc(r.name)}</span>
+        <span style="min-width:0">
+          <span class="member-name">${esc(r.name)}${badges}</span>
           <span class="member-sub">${esc(r.email)}</span>
         </span>
         <span style="display:flex;align-items:center;gap:8px;flex-shrink:0">
