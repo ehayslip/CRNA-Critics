@@ -91,6 +91,9 @@ addColumnIfMissing("reviews", "guidelines_accepted_at", "TEXT NOT NULL DEFAULT '
 // Bulk (broadcast) email opt-out. Account mail — approvals, sign-in links, password
 // resets — ignores this flag completely; only campaigns honor it.
 addColumnIfMissing("access_requests", "bulk_unsubscribed", "INTEGER NOT NULL DEFAULT 0");
+// Automatic "Ask for a review" nudges to approved members who haven't posted yet.
+addColumnIfMissing("access_requests", "nudge_count", "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("access_requests", "last_nudged_at", "TEXT");
 addColumnIfMissing("access_requests", "unsubscribed_at", "TEXT");
 // Beta feedback form: when the admin last sent a member the link (resend overwrites this).
 addColumnIfMissing("access_requests", "feedback_sent_at", "TEXT");
