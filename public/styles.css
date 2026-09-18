@@ -477,3 +477,73 @@ a.tiny-btn { text-decoration: none; }
   background: #F7F8F5; border: 1px solid #EEF2ED; padding: 9px 11px; margin: 10px 0 0;
   max-height: 260px; overflow-y: auto;
 }
+
+/* ---------- Locum vs. full-time/part-time sides (Sep 18, 2026) ---------- */
+.side-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  background: var(--side); color: #fff; padding: 10px 14px; border-bottom: 3px solid #F5B301;
+}
+.side-now { display: flex; flex-direction: column; line-height: 1.15; }
+.side-kicker { font-size: 10px; letter-spacing: 1.2px; font-weight: 700; opacity: 0.8; }
+.side-name { font-family: 'Special Elite', monospace; font-size: 20px; font-weight: 700; letter-spacing: 1px; }
+.side-sub { font-size: 11.5px; opacity: 0.85; margin-top: 2px; }
+.side-switch {
+  background: #F5B301; color: #14231F; border: 2px solid #fff; padding: 10px 16px; cursor: pointer;
+  font-family: Inter, sans-serif; font-size: 14px; font-weight: 900; letter-spacing: 0.2px;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.25);
+}
+.side-switch:hover { background: #FFC933; }
+@media (max-width: 519px) {
+  .side-bar { flex-direction: column; align-items: stretch; text-align: center; }
+  .side-now { align-items: center; }
+  .side-switch { width: 100%; font-size: 15px; padding: 12px; }
+}
+.side-choice { border-left: 6px solid var(--side); }
+.side-choice .choice-title { color: var(--side); font-size: 17px; }
+.side-tag { display: inline-block; margin-top: 8px; font-size: 10.5px; font-weight: 800; letter-spacing: 0.6px; color: #fff; background: var(--side); padding: 3px 8px; }
+.badge.side-badge { letter-spacing: 0.4px; }
+
+/* ---------- search filters ---------- */
+.filter-toggle {
+  width: 100%; display: flex; justify-content: space-between; align-items: center; margin: -4px 0 12px;
+  background: #fff; border: 1px solid #C9D2C6; padding: 10px 12px; cursor: pointer;
+  font-family: Inter, sans-serif; font-size: 13.5px; font-weight: 700; color: #14231F;
+}
+.filter-toggle.has-active { border-color: #F5B301; background: #FFF9EE; }
+.filter-n { background: #F5B301; color: #14231F; font-size: 11px; padding: 1px 6px; margin-left: 6px; }
+.filter-panel { background: #fff; border: 1px solid #C9D2C6; border-top: none; margin: -13px 0 14px; padding: 4px 12px 12px; }
+.filter-row { margin-top: 12px; }
+.filter-label { font-size: 12.5px; font-weight: 700; margin-bottom: 5px; }
+.filter-check { margin: 4px 0 !important; font-size: 13px; }
+.filter-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.filter-panel .loc-row input { margin: 0; }
+
+/* ---------- N/A on a rating category ---------- */
+.stars-with-na { display: flex; align-items: center; flex-wrap: wrap; }
+.na-btn {
+  margin-left: 10px; padding: 4px 10px; font-size: 11.5px; font-weight: 800; letter-spacing: 0.5px;
+  border: 1px solid #C9D2C6; background: #fff; color: #6B756F; cursor: pointer; font-family: Inter, sans-serif;
+}
+.na-btn.active { background: #5B6660; border-color: #5B6660; color: #fff; }
+
+/* ---------- which parts of the assignment a review covers ---------- */
+.parts-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.part-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; cursor: pointer;
+  border: 2px solid #C9D2C6; font-size: 13.5px; font-weight: 700; color: #6B756F; background: #fff;
+}
+.part-chip input { width: auto; margin: 0; accent-color: var(--part); }
+.part-chip.on { border-color: var(--part); color: var(--part); background: #FAFBF8; }
+
+/* ---------- "spell it out" pop-up on name boxes ---------- */
+.name-tip {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 6;
+  background: #14231F; color: #fff; padding: 9px 11px; font-size: 12.5px; line-height: 1.4;
+  box-shadow: 0 6px 16px rgba(20, 35, 31, 0.25); border-left: 4px solid #F5B301;
+}
+.name-tip[hidden] { display: none; }
+.name-tip strong { display: block; color: #F5B301; margin-bottom: 2px; }
+.name-tip::after {
+  content: ""; position: absolute; left: 22px; top: 100%;
+  border: 7px solid transparent; border-top-color: #14231F;
+}
