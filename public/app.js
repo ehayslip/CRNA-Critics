@@ -53,6 +53,26 @@ const PTO_RANGES = ["Under 5 weeks", "6 weeks", "7 weeks", "8 weeks", "9+ weeks"
 // What the group pays for PRN / extra shifts, hourly. Informational, like the rest of this row.
 const PRN_RATES = ["Under $170", "$171–180", "$181–190", "$191–200", "$201–210", "Above $210"];
 
+// Travel & housing on a locum assignment: paid by the agency, or rolled into an all-inclusive rate.
+const TRAVEL_COVERAGE = ["Covered by agency", "All-inclusive rate"];
+// "Not applicable" on a rating category. Stored as -1 so it never counts toward a score
+// (every average only looks at values above 0), but still marks the category as answered.
+const NA = -1;
+
+// Locum and full-time/part-time reviews live on separate sides of the site and are never combined.
+const SIDES = {
+  locum: { label: "Locum side", long: "Locum / 1099", kinds: ["hospital", "agency", "agent"], color: "#123C3A" },
+  staff: { label: "Full-time / Part-time side", long: "Full-time / Part-time (W-2)", kinds: ["hospital", "group"], color: "#3F5E8C" },
+};
+function currentSide() { return state.side === "staff" ? "staff" : "locum"; }
+function otherSide() { return currentSide() === "staff" ? "locum" : "staff"; }
+function reviewSide(r) { return r.employmentType === "staff" ? "staff" : "locum"; }
+function sideReviews() { const side = currentSide(); return state.reviews.filter((r) => reviewSide(r) === side); }
+function sideSections() { const kinds = SIDES[currentSide()].kinds; return SEARCH_SECTIONS.filter(([t]) => kinds.includes(t)); }
+// The side lasts for this browser tab; every new sign-in asks again.
+function loadSide() { try { const v = sessionStorage.getItem("crna-side"); return v === "staff" || v === "locum" ? v : null; } catch { return null; } }
+function saveSide(v) { try { if (v) sessionStorage.setItem("crna-side", v); else sessionStorage.removeItem("crna-side"); } catch { /* storage blocked — they'll just be asked again */ } }
+
 // A score at or below this, on any name, gets the CRNA BEWARE stamp.
 const BEWARE_AT = 2;
 function isBeware(avg) { return avg > 0 && avg <= BEWARE_AT; }
@@ -293,6 +313,9 @@ const state = {
   tab: "search",
   query: "",
   kind: "hospital", // which kind the search tab is showing — one at a time
+  side: null,       // "locum" | "staff" — chosen at every sign-in, switchable from the bar at the top
+  filtersOpen: false,
+  filters: null,    // search filters, see emptyFilters()
   detail: null,
   toast: "",
   gateMode: "signin", // signin | request | link
@@ -343,11 +366,13 @@ const state = {
 };
 
 // `notes` holds the small per-category comment boxes: { categoryKey: "what they wrote" }.
-const aaForm = { agencyName: "", agentName: "", payRange: "", ratings: {}, notes: {}, wouldReturn: "", comment: "" };
+const aaForm = { agencyName: "", agentName: "", payRange: "", travelCovered: "", ratings: {}, notes: {}, wouldReturn: "", comment: "" };
 const agtForm = { ratings: {}, notes: {}, wouldReturn: "", comment: "" };
 const grpForm = { name: "", payType: "", payRange: "", familyInsurance: "", ptoWeeks: "", prnRate: "", ratings: {}, notes: {}, wouldReturn: "", comment: "" };
 const hospForm = { name: "", city: "", state: "", ratings: {}, notes: {}, wouldReturn: "", comment: "" };
 const postOpts = { anonymous: false };
+// Which parts of the assignment this review covers — a member can review just the hospital, just the agency, etc.
+const postParts = { hospital: true, agency: true, agent: true, group: true };
 const FORMS = { aa: { form: aaForm, categories: AGENCY_CATEGORIES }, agt: { form: agtForm, categories: AGENT_CATEGORIES }, grp: { form: grpForm, categories: GROUP_CATEGORIES }, hosp: { form: hospForm, categories: HOSPITAL_CATEGORIES } };
 function resetForms() {
   AGENCY_CATEGORIES.forEach((c) => { aaForm.ratings[c.key] = 0; aaForm.notes[c.key] = ""; });
@@ -355,7 +380,8 @@ function resetForms() {
   agtForm.wouldReturn = ""; agtForm.comment = "";
   GROUP_CATEGORIES.forEach((c) => { grpForm.ratings[c.key] = 0; grpForm.notes[c.key] = ""; });
   HOSPITAL_CATEGORIES.forEach((c) => { hospForm.ratings[c.key] = 0; hospForm.notes[c.key] = ""; });
-  aaForm.agencyName = ""; aaForm.agentName = ""; aaForm.payRange = ""; aaForm.wouldReturn = ""; aaForm.comment = "";
+  aaForm.agencyName = ""; aaForm.agentName = ""; aaForm.payRange = ""; aaForm.travelCovered = ""; aaForm.wouldReturn = ""; aaForm.comment = "";
+  postParts.hospital = true; postParts.agency = true; postParts.agent = true; postParts.group = true;
   grpForm.name = ""; grpForm.wouldReturn = ""; grpForm.comment = "";
   grpForm.payType = ""; grpForm.payRange = ""; grpForm.familyInsurance = ""; grpForm.ptoWeeks = ""; grpForm.prnRate = "";
   hospForm.name = ""; hospForm.city = ""; hospForm.state = ""; hospForm.wouldReturn = ""; hospForm.comment = "";
@@ -369,13 +395,13 @@ function formMode() {
     const r = state.reviews.find((x) => x.id === state.editingId);
     if (r) return r.employmentType === "staff" ? "staff" : "locum";
   }
-  return state.user && state.user.employmentType === "staff" ? "staff" : "locum";
+  return currentSide();
 }
 
 function loadReviewIntoForms(r) {
   resetForms();
   aaForm.agencyName = r.agencyName || ""; aaForm.agentName = r.agentName || "";
-  aaForm.payRange = r.payRange || "";
+  aaForm.payRange = r.payRange || ""; aaForm.travelCovered = r.travelCovered || "";
   AGENCY_CATEGORIES.forEach((c) => { aaForm.ratings[c.key] = (r.agencyAgentRatings || {})[c.key] || 0; aaForm.notes[c.key] = (r.agencyAgentNotes || {})[c.key] || ""; });
   aaForm.wouldReturn = r.agencyAgentWouldReturn || ""; aaForm.comment = r.agencyAgentComment || "";
   AGENT_CATEGORIES.forEach((c) => { agtForm.ratings[c.key] = (r.agentRatings || {})[c.key] || 0; agtForm.notes[c.key] = (r.agentNotes || {})[c.key] || ""; });
@@ -391,6 +417,8 @@ function loadReviewIntoForms(r) {
   HOSPITAL_CATEGORIES.forEach((c) => { hospForm.ratings[c.key] = (r.hospitalRatings || {})[c.key] || 0; hospForm.notes[c.key] = (r.hospitalNotes || {})[c.key] || ""; });
   hospForm.wouldReturn = r.hospitalWouldReturn || ""; hospForm.comment = r.hospitalComment || "";
   postOpts.anonymous = !!r.anonymous;
+  postParts.hospital = !!r.hospitalName; postParts.group = !!r.groupName;
+  postParts.agency = !!r.agencyName; postParts.agent = !!r.agentName;
 }
 
 function startEditing(id) {
@@ -428,6 +456,7 @@ async function init() {
     const params = new URLSearchParams(window.location.search);
     const cameFromLink = params.get("setpw") === "1";
     if (cameFromLink) window.history.replaceState({}, "", "/");
+    state.side = loadSide();
     state.view = cameFromLink || !state.user.hasPassword ? "setpw" : nextViewAfterAuth();
     await loadReviews();
   } catch {
@@ -437,8 +466,10 @@ async function init() {
 }
 
 // Members pick how they're working (locum vs. staff) once; it decides which review form they get.
+// Every sign-in starts by choosing a side (locum or full-time/part-time); after that the
+// switch bar at the top flips between them.
 function nextViewAfterAuth() {
-  return state.user && state.user.employmentType ? "app" : "employment";
+  return state.side ? "app" : "employment";
 }
 
 async function loadReviews() {
@@ -457,12 +488,12 @@ async function loadReviews() {
 
 function typeLabel(t) { return ENTITY[t] ? ENTITY[t].label : t; }
 
-function searchResults(query = state.query) {
+function searchResults(query = state.query, useFilters = true) {
   const q = String(query || "").trim().toLowerCase();
-  const types = Object.keys(ENTITY);
+  const types = SIDES[currentSide()].kinds;
   const byType = {};
   types.forEach((t) => (byType[t] = new Map()));
-  state.reviews.forEach((r) => {
+  sideReviews().forEach((r) => {
     types.forEach((t) => {
       const raw = r[ENTITY[t].field];
       if (!raw) return;
@@ -477,7 +508,9 @@ function searchResults(query = state.query) {
       const cats = ENTITY[type].categories;
       const scores = rows.map((r) => weighted(cats, r[ENTITY[type].ratings])).filter((v) => v > 0);
       const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
-      items.push({ type, name, count: scores.length, total: rows.length, avg, location: type === "hospital" ? commonLocation(rows) : "" });
+      const item = { type, name, rows, count: scores.length, total: rows.length, avg, location: type === "hospital" ? commonLocation(rows) : "" };
+      if (useFilters && !passesFilters(item)) return;
+      items.push(item);
     });
   });
   items.sort((a, b) => (b.count - a.count) || (b.avg - a.avg) || a.name.localeCompare(b.name));
@@ -502,9 +535,10 @@ function render() {
   if (state.view === "admin") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body" id="admin-root"></div>` + footerHtml(); attachFooterHandlers(); renderAdmin(); return; }
   if (state.view === "terms") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${termsPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachTermsPageHandlers(); return; }
   if (state.view === "guidelines") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${guidelinesPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachGuidelinesPageHandlers(); return; }
-  root.innerHTML = headerHtml() + toastHtml() + navHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
+  root.innerHTML = headerHtml() + toastHtml() + navHtml() + sideBarHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
   attachFooterHandlers();
   attachNavHandlers();
+  attachSideBarHandlers();
   renderTab();
 }
 
@@ -618,6 +652,7 @@ function attachNavHandlers() {
       if (tab === "signout") {
         await api("/api/auth/logout", { method: "POST" });
         state.user = null; state.view = "home"; state.tab = "search"; state.detail = null;
+        state.side = null; saveSide(null); state.filters = null;
         render();
         return;
       }
@@ -626,6 +661,39 @@ function attachNavHandlers() {
       render();
     };
   });
+}
+
+// The bold bar under the nav: which side you're on, and one tap to the other.
+function sideBarHtml() {
+  const side = currentSide();
+  const other = otherSide();
+  return `
+    <div class="side-bar" style="--side:${SIDES[side].color};--other:${SIDES[other].color}">
+      <div class="side-now">
+        <span class="side-kicker">YOU'RE ON THE</span>
+        <span class="side-name">${esc(SIDES[side].label.toUpperCase())}</span>
+        <span class="side-sub">Only ${esc(SIDES[side].long)} reviews are shown here.</span>
+      </div>
+      <button type="button" class="side-switch" id="side-switch">&#8644; Switch to ${esc(SIDES[other].label)}</button>
+    </div>`;
+}
+function setSide(side) {
+  state.side = side === "staff" ? "staff" : "locum";
+  saveSide(state.side);
+  state.filters = null;
+  state.detail = null;
+  if (!SIDES[state.side].kinds.includes(state.kind)) state.kind = "hospital";
+  if (state.editingId) { state.editingId = null; }
+  resetForms();
+  // Remember the last side on the account too (harmless if it fails).
+  api("/api/auth/employment", { method: "POST", body: { employmentType: state.side } })
+    .then(() => { if (state.user) state.user.employmentType = state.side; }).catch(() => {});
+  state.view = "app";
+  flash(`You're on the ${SIDES[state.side].label}. Reviews from the other side are kept separate.`);
+}
+function attachSideBarHandlers() {
+  const btn = document.getElementById("side-switch");
+  if (btn) btn.onclick = () => { setSide(otherSide()); window.scrollTo(0, 0); };
 }
 
 function renderTab() {
@@ -891,41 +959,26 @@ function attachSetPasswordHandlers() {
   if (skip) skip.onclick = () => { state.view = nextViewAfterAuth(); render(); };
 }
 function employmentHtml() {
-  const current = state.user.employmentType;
   const card = (type, title, desc) => `
-    <button type="button" class="choice-card${current === type ? " active" : ""}" data-employment="${type}">
+    <button type="button" class="choice-card side-choice" data-employment="${type}" style="--side:${SIDES[type].color}">
       <div class="choice-title">${title}</div>
       <div class="choice-desc">${desc}</div>
     </button>`;
   return `
     <div class="card" style="max-width:560px">
-      <div class="section-label">${current ? "CHANGE HOW YOU'RE WORKING" : "HOW ARE YOU WORKING RIGHT NOW?"}</div>
-      <p class="hint-text" style="margin-top:0">This decides what you review. You can change it any time from My reviews.</p>
+      <div class="section-label">WHICH SIDE DO YOU WANT TODAY?</div>
+      <p class="hint-text" style="margin-top:0">Locum and full-time/part-time reviews are kept completely separate — locums are treated differently, so their scores are never mixed. You can switch any time with the button at the top of the page.</p>
       <div class="choice-grid">
-        ${card("staff", "Full-time / part-time staff", "W-2 employee of a hospital or anesthesia group. You'll review the <strong>anesthesia group</strong> and the <strong>hospital</strong>.")}
-        ${card("locum", "Locum / 1099 contractor", "Working assignments through an agency. You'll review the <strong>agency</strong>, your <strong>agent</strong>, and the <strong>hospital</strong>.")}
+        ${card("locum", "Locum side", "Locum / 1099 contract work. Search and review <strong>agencies</strong>, <strong>recruiters</strong>, and <strong>hospitals</strong> as locums see them.")}
+        ${card("staff", "Full-time / Part-time side", "W-2 staff jobs. Search and review <strong>anesthesia groups</strong> and <strong>hospitals</strong> as staff CRNAs see them.")}
       </div>
       <div id="employment-error" class="error-text"></div>
-      ${current ? `<button type="button" class="link-btn" id="employment-cancel">Keep it as ${esc(EMPLOYMENT[current].label)}</button>` : ""}
     </div>`;
 }
 function attachEmploymentHandlers() {
   document.querySelectorAll("[data-employment]").forEach((btn) => {
-    btn.onclick = async () => {
-      const type = btn.dataset.employment;
-      try {
-        await api("/api/auth/employment", { method: "POST", body: { employmentType: type } });
-        state.user.employmentType = type;
-        resetForms();
-        state.view = "app";
-        flash(`Set to ${EMPLOYMENT[type].label}. You can review ${EMPLOYMENT[type].reviews}.`);
-      } catch {
-        document.getElementById("employment-error").textContent = "Couldn't save that. Try again.";
-      }
-    };
+    btn.onclick = () => { state.tab = "search"; setSide(btn.dataset.employment); };
   });
-  const cancel = document.getElementById("employment-cancel");
-  if (cancel) cancel.onclick = () => { state.view = "app"; render(); };
 }
 function requestFormHtml() {
   return `
@@ -972,6 +1025,7 @@ function attachGateHandlers() {
       try {
         await api("/api/auth/login", { method: "POST", body: { email, password } });
         state.gateMode = "signin";
+        saveSide(null);
         await init();
       } catch (e) {
         const code = e.data && e.data.error;
@@ -1043,8 +1097,8 @@ function attachGateHandlers() {
 // ---------- search ----------
 
 function kindBarHtml() {
-  const all = searchResults("");
-  return SEARCH_SECTIONS.map(([type, heading]) => {
+  const all = searchResults("", false);
+  return sideSections().map(([type, heading]) => {
     const n = all.filter((r) => r.type === type).length;
     return `<button type="button" class="kind-tab${state.kind === type ? " active" : ""}" data-kind="${type}" style="--kind:${COLORS[type]}">${heading}<span class="kind-n">${n}</span></button>`;
   }).join("");
@@ -1053,30 +1107,178 @@ function searchPlaceholder() {
   return `Search ${KIND_LABELS[state.kind].toLowerCase()}…`;
 }
 function searchHtml() {
+  if (!SIDES[currentSide()].kinds.includes(state.kind)) state.kind = "hospital";
   const results = searchResults();
   return `
     <p class="kind-hint">Tap a category to see every name reviewed under it, or search by name.</p>
-    <div class="kind-bar" id="kind-bar">${kindBarHtml()}</div>
+    <div class="kind-bar kind-bar-${sideSections().length}" id="kind-bar">${kindBarHtml()}</div>
     <input class="search-input" id="search-box" placeholder="${searchPlaceholder()}" value="${esc(state.query)}" />
+    <div id="filter-root">${filterPanelHtml()}</div>
     <div id="search-results">${searchResultsHtml(results)}</div>`;
 }
+
+// ---------- search filters ----------
+function emptyFilters() {
+  return { minStars: 0, state: "", city: "", wouldReturn: false, meals: false, payMin: "", travelCovered: false,
+    staffPayType: "", staffPayMin: "", ptoMin: "", prnMin: "" };
+}
+function filters() { if (!state.filters) state.filters = emptyFilters(); return state.filters; }
+// Which filters make sense for the kind being shown on this side.
+function filterFields() {
+  const side = currentSide();
+  const kind = state.kind;
+  const f = ["minStars", "wouldReturn", "location"];
+  if (kind === "hospital") f.push("meals");
+  if (side === "locum") f.push("payMin", "travelCovered");
+  if (side === "staff") f.push("staffPayType", "staffPayMin", "ptoMin", "prnMin");
+  return f;
+}
+function activeFilterCount() {
+  const fl = filters();
+  const on = filterFields();
+  let n = 0;
+  if (on.includes("minStars") && fl.minStars) n++;
+  if (on.includes("wouldReturn") && fl.wouldReturn) n++;
+  if (on.includes("location") && (fl.state || fl.city.trim())) n++;
+  ["meals", "travelCovered"].forEach((k) => { if (on.includes(k) && fl[k]) n++; });
+  ["payMin", "staffPayType", "staffPayMin", "ptoMin", "prnMin"].forEach((k) => { if (on.includes(k) && fl[k]) n++; });
+  return n;
+}
+// A bracket and everything above it: "at least $221–240" also matches "$281+".
+function atLeast(list, chosen, value) {
+  if (!chosen) return true;
+  const want = list.indexOf(chosen), got = list.indexOf(value);
+  return got >= 0 && got >= want;
+}
+function passesFilters(item) {
+  if (!state.filters) return true;
+  const fl = state.filters;
+  const on = filterFields();
+  const rows = item.rows || [];
+  const any = (fn) => rows.some(fn);
+  if (on.includes("minStars") && fl.minStars && !(item.count > 0 && item.avg >= fl.minStars)) return false;
+  if (on.includes("wouldReturn") && fl.wouldReturn) {
+    const ret = ENTITY[item.type].ret;
+    const answered = rows.filter((r) => r[ret]);
+    const yes = answered.filter((r) => r[ret] === "Y").length;
+    if (answered.length === 0 || yes * 2 <= answered.length) return false;
+  }
+  if (on.includes("location")) {
+    if (fl.state && !any((r) => (r.hospitalState || "").toUpperCase() === fl.state)) return false;
+    const city = fl.city.trim().toLowerCase();
+    if (city && !any((r) => (r.hospitalCity || "").toLowerCase().includes(city))) return false;
+  }
+  if (on.includes("meals") && fl.meals) {
+    const vals = rows.map((r) => (r.hospitalRatings || {}).meals).filter((v) => v > 0);
+    const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+    if (avg < 3) return false;
+  }
+  if (on.includes("payMin") && fl.payMin && !any((r) => atLeast(PAY_RANGES, fl.payMin, r.payRange))) return false;
+  if (on.includes("travelCovered") && fl.travelCovered && !any((r) => r.travelCovered === "Covered by agency")) return false;
+  if (on.includes("staffPayType") && fl.staffPayType && !any((r) => r.staffPayType === fl.staffPayType)) return false;
+  if (on.includes("staffPayMin") && fl.staffPayMin && !any((r) => atLeast(STAFF_PAY_RANGES, fl.staffPayMin, r.staffPayRange))) return false;
+  if (on.includes("ptoMin") && fl.ptoMin && !any((r) => atLeast(PTO_RANGES, fl.ptoMin, r.ptoWeeks))) return false;
+  if (on.includes("prnMin") && fl.prnMin && !any((r) => atLeast(PRN_RATES, fl.prnMin, r.prnRate))) return false;
+  return true;
+}
+function filterChoiceRow(key, label, options, value, hint) {
+  return `
+    <div class="filter-row">
+      <div class="filter-label">${esc(label)}</div>
+      <div class="pay-grid">${options.map(([v, text]) =>
+        `<button type="button" class="return-btn${String(value) === String(v) ? " active" : ""}" data-filter="${key}" data-value="${esc(v)}">${esc(text)}</button>`).join("")}</div>
+      ${hint ? `<div class="hint-text">${esc(hint)}</div>` : ""}
+    </div>`;
+}
+function filterPanelHtml() {
+  const fl = filters();
+  const on = filterFields();
+  const n = activeFilterCount();
+  const toggle = `<button type="button" class="filter-toggle${n ? " has-active" : ""}" id="filter-toggle">
+      <span>&#9881; Filters${n ? ` <span class="filter-n">${n} on</span>` : ""}</span><span>${state.filtersOpen ? "&#9650;" : "&#9660;"}</span></button>`;
+  if (!state.filtersOpen) return toggle;
+  const rows = [];
+  if (on.includes("minStars")) rows.push(filterChoiceRow("minStars", "Overall score", [[0, "Any"], [2, "2★ +"], [3, "3★ +"], [4, "4★ +"], [4.5, "4.5★ +"]], fl.minStars));
+  if (on.includes("location")) rows.push(`
+    <div class="filter-row">
+      <div class="filter-label">Location${state.kind === "hospital" ? "" : " (where reviewers worked)"}</div>
+      <div class="loc-row">
+        <input id="filter-city" placeholder="City" value="${esc(fl.city)}" />
+        <select id="filter-state"><option value="">Any state</option>${US_STATES.map((st) => `<option value="${st}"${fl.state === st ? " selected" : ""}>${st}</option>`).join("")}</select>
+      </div>
+    </div>`);
+  const checks = [];
+  if (on.includes("wouldReturn")) checks.push(["wouldReturn", "Most reviewers would go back"]);
+  if (on.includes("meals")) checks.push(["meals", "Free meals provided (Free Meals averages 3★ or better)"]);
+  if (on.includes("travelCovered")) checks.push(["travelCovered", "Travel & housing covered by the agency (not all-inclusive)"]);
+  if (checks.length) rows.push(`<div class="filter-row">${checks.map(([k, label]) =>
+    `<label class="checkbox-row filter-check"><input type="checkbox" data-filter-check="${k}"${fl[k] ? " checked" : ""} /><span>${esc(label)}</span></label>`).join("")}</div>`);
+  if (on.includes("payMin")) rows.push(filterChoiceRow("payMin", "Hourly pay quoted — this bracket or higher", [["", "Any"]].concat(PAY_RANGES.slice(1).map((v) => [v, v])), fl.payMin));
+  if (on.includes("staffPayType")) rows.push(filterChoiceRow("staffPayType", "Paid as", [["", "Any"]].concat(STAFF_PAY_TYPES.map((v) => [v, v])), fl.staffPayType));
+  if (on.includes("staffPayMin")) rows.push(filterChoiceRow("staffPayMin", "Annual pay — this range or higher", [["", "Any"]].concat(STAFF_PAY_RANGES.slice(1).map((v) => [v, v])), fl.staffPayMin));
+  if (on.includes("ptoMin")) rows.push(filterChoiceRow("ptoMin", "Vacation / PTO — at least", [["", "Any"]].concat(PTO_RANGES.slice(1).map((v) => [v, v])), fl.ptoMin));
+  if (on.includes("prnMin")) rows.push(filterChoiceRow("prnMin", "PRN / extra shift rate — this bracket or higher", [["", "Any"]].concat(PRN_RATES.slice(1).map((v) => [v, v])), fl.prnMin));
+  return toggle + `
+    <div class="filter-panel">
+      ${rows.join("")}
+      <div class="filter-foot">
+        <span class="hint-text" style="margin:0">Pay, location, W-2/1099, vacation and travel match a name when any review of it reports that.</span>
+        ${n ? `<button type="button" class="tiny-btn" id="filter-clear">Clear filters</button>` : ""}
+      </div>
+    </div>`;
+}
+function refreshFilterPanel() {
+  const el = document.getElementById("filter-root");
+  if (el) el.innerHTML = filterPanelHtml();
+  attachFilterHandlers();
+}
+function attachFilterHandlers() {
+  const t = document.getElementById("filter-toggle");
+  if (t) t.onclick = () => { state.filtersOpen = !state.filtersOpen; refreshFilterPanel(); };
+  const clear = document.getElementById("filter-clear");
+  if (clear) clear.onclick = () => { state.filters = emptyFilters(); refreshFilterPanel(); refreshSearchResults(); };
+  document.querySelectorAll("[data-filter]").forEach((btn) => {
+    btn.onclick = () => {
+      const key = btn.dataset.filter;
+      const fl = filters();
+      fl[key] = key === "minStars" ? Number(btn.dataset.value) : btn.dataset.value;
+      refreshFilterPanel(); refreshSearchResults();
+    };
+  });
+  document.querySelectorAll("[data-filter-check]").forEach((box) => {
+    box.onchange = () => { filters()[box.dataset.filterCheck] = box.checked; refreshFilterPanel(); refreshSearchResults(); };
+  });
+  const st = document.getElementById("filter-state");
+  if (st) st.onchange = () => { filters().state = st.value; refreshFilterPanel(); refreshSearchResults(); };
+  const city = document.getElementById("filter-city");
+  if (city) city.oninput = () => {
+    filters().city = city.value;
+    refreshSearchResults();
+    // update the "n on" count without redrawing the box being typed in
+    const tog = document.getElementById("filter-toggle");
+    if (tog) { const n = activeFilterCount(); tog.classList.toggle("has-active", n > 0); tog.firstElementChild.innerHTML = `&#9881; Filters${n ? ` <span class="filter-n">${n} on</span>` : ""}`; }
+  };
+}
 function searchResultsHtml(results) {
-  if (state.reviews.length === 0) {
-    return `<div class="empty-box"><p style="margin:0;font-weight:700">No cases on file yet.</p><p class="hint-text">Be the first to post a review — it'll show up here for the next CRNA weighing an offer.</p></div>`;
+  if (sideReviews().length === 0) {
+    return `<div class="empty-box"><p style="margin:0;font-weight:700">No ${esc(SIDES[currentSide()].long)} reviews on file yet.</p><p class="hint-text">Be the first to post one — it'll show up here for the next CRNA weighing an offer.</p></div>`;
   }
   const kind = state.kind;
   const label = KIND_LABELS[kind];
   const q = state.query.trim();
   const mine = results.filter((r) => r.type === kind);
   // If the search hits names of another kind, say so — one tap switches over.
-  const elsewhere = SEARCH_SECTIONS.filter(([t]) => t !== kind)
+  const elsewhere = sideSections().filter(([t]) => t !== kind)
     .map(([t]) => [t, results.filter((r) => r.type === t).length]).filter(([, n]) => n > 0);
   const elsewhereHtml = q && elsewhere.length
     ? `<p class="hint-text" style="margin-top:10px">Also found under ${elsewhere.map(([t, n]) =>
         `<button type="button" class="inline-link" data-kind="${t}" style="color:${COLORS[t]}">${esc(KIND_LABELS[t])} (${n})</button>`).join(", ")}.</p>`
     : "";
   if (mine.length === 0) {
-    const msg = q
+    const filtered = activeFilterCount() > 0;
+    const msg = filtered
+      ? `No ${label.toLowerCase()} match these filters${q ? ` and "${esc(q)}"` : ""}. Loosen a filter or clear them.`
+      : q
       ? `No ${label.toLowerCase()} match "${esc(q)}" yet. If you've worked with them, post the first review.`
       : `No ${label.toLowerCase()} reviewed yet. If you've worked with one, post the first review.`;
     return `<div class="empty-box"><p style="margin:0">${msg}</p>${elsewhereHtml}</div>`;
@@ -1105,7 +1307,7 @@ function searchResultsHtml(results) {
       <div class="result-group">
         <div class="result-head" style="border-color:${COLORS[kind]}">
           <span style="color:${COLORS[kind]}">${heading}</span>
-          <span class="result-count">${mine.length}${q ? ` of ${searchResults("").filter((r) => r.type === kind).length}` : ""}</span>
+          <span class="result-count">${mine.length}${q || activeFilterCount() ? ` of ${searchResults("", false).filter((r) => r.type === kind).length}` : ""}</span>
         </div>
         ${mine.map(cardHtml).join("")}
       </div>`;
@@ -1123,6 +1325,7 @@ function attachKindHandlers() {
       document.getElementById("kind-bar").innerHTML = kindBarHtml();
       const box = document.getElementById("search-box");
       if (box) box.placeholder = searchPlaceholder();
+      refreshFilterPanel();
       refreshSearchResults();
       const active = document.querySelector(".kind-tab.active");
       if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
@@ -1137,6 +1340,7 @@ function attachSearchHandlers() {
   };
   attachResultClickHandlers();
   attachKindHandlers();
+  attachFilterHandlers();
 }
 function attachResultClickHandlers() {
   document.querySelectorAll("[data-open]").forEach((btn) => {
@@ -1154,7 +1358,7 @@ function detailHtml() {
   const { type, name } = state.detail;
   const ent = ENTITY[type];
   const isHospital = type === "hospital";
-  const rows = state.reviews.filter((r) => r[ent.field] && canonicalName(r[ent.field]) === name).sort((a, b) => b.date.localeCompare(a.date));
+  const rows = sideReviews().filter((r) => r[ent.field] && canonicalName(r[ent.field]) === name).sort((a, b) => b.date.localeCompare(a.date));
   const otherSpellings = spellingsFor(rows, ent.field, name);
   const categories = ent.categories;
   const scores = rows.map((r) => weighted(categories, r[ent.ratings])).filter((v) => v > 0);
@@ -1201,7 +1405,7 @@ function detailHtml() {
       type === "hospital" && r.groupName ? `Anesthesia group: ${esc(r.groupName)}` : "";
     const roleLabel = r.employmentType && EMPLOYMENT[r.employmentType] ? EMPLOYMENT[r.employmentType].short : "";
     const isMine = !!r.isMine;
-    const chips = categories.map((c) => `<span class="chip">${esc(c.label.split(" ")[0])} ${ratings[c.key] > 0 ? ratings[c.key] : "–"}</span>`).join("");
+    const chips = categories.map((c) => `<span class="chip">${esc(c.label.split(" ")[0])} ${ratings[c.key] > 0 ? ratings[c.key] : ratings[c.key] === NA ? "N/A" : "–"}</span>`).join("");
     const rowScore = weighted(categories, ratings);
     return `
       <div class="card${isBeware(rowScore) ? " beware-card" : ""}">
@@ -1213,6 +1417,7 @@ function detailHtml() {
         ${type === "hospital" && locationLabel(r) ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Location: ${esc(locationLabel(r))}</div>` : ""}
         ${type === "group" && staffFactsLine(r) ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">${esc(staffFactsLine(r))}</div>` : ""}
         ${ent.hasPay && payLabel(r) ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Pay quoted: ${esc(payLabel(r))}</div>` : ""}
+        ${ent.hasPay && r.travelCovered ? `<div style="font-size:12px;color:#6B756F;margin-bottom:4px">Travel &amp; housing: ${esc(r.travelCovered.toLowerCase())}</div>` : ""}
         <div style="margin:6px 0">${chips}</div>
         <div style="margin:4px 0">${returnBadge(wouldReturn)}</div>
         ${categoryNotesHtml(r, categories, ent.notes, ent.ratings)}
@@ -1227,8 +1432,9 @@ function detailHtml() {
   // Running totals: cumulative average per category across every review on file for this name.
   const categoryStats = categories.map((c) => {
     const vals = rows.map((r) => (r[ent.ratings] || {})[c.key]).filter((v) => v > 0);
+    const na = rows.filter((r) => (r[ent.ratings] || {})[c.key] === NA).length;
     const catAvg = vals.length ? vals.reduce((x, y) => x + y, 0) / vals.length : null;
-    return { label: c.label, n: vals.length, avg: catAvg, anchors: c.anchors };
+    return { label: c.label, n: vals.length, na, avg: catAvg, anchors: c.anchors };
   });
   const returnField = ent.ret;
   const returnTally = { Y: 0, Maybe: 0, N: 0 };
@@ -1244,7 +1450,7 @@ function detailHtml() {
               <span class="stat-label">${esc(st.label)}</span>
               <span class="stat-stars">${st.avg != null ? starsHtml(Math.round(st.avg), 13) : ""}</span>
               <span class="stat-avg">${st.avg != null ? `${st.avg.toFixed(1)} <span class="stat-of">of 5.0</span>` : "—"}</span>
-              <span class="stat-n">${st.n > 0 ? `n=${st.n}` : "no data"}</span>
+              <span class="stat-n">${st.n > 0 ? `n=${st.n}` : "no data"}${st.na ? ` · ${st.na} N/A` : ""}</span>
             </div>
             <ul class="anchor-list stat-anchors">
               ${st.anchors.map(([s, t]) => `<li><span class="score">${s} ★ —</span><span>${esc(t)}</span></li>`).join("")}
@@ -1261,6 +1467,7 @@ function detailHtml() {
 
   return `
     <button class="back-btn" id="detail-back">&larr; Back to search</button>
+    <div class="side-tag" style="--side:${SIDES[currentSide()].color}">${esc(SIDES[currentSide()].label.toUpperCase())} · ${esc(SIDES[currentSide()].long)} reviews only</div>
     <div class="card border-${type}${isBeware(avg) ? " beware-card" : ""}" style="margin-top:10px">
       <div style="font-size:11px;letter-spacing:0.3px;color:${COLORS[type]};font-weight:700">${typeLabel(type).toUpperCase()}</div>
       <div style="font-family:'Special Elite',monospace;font-size:24px;margin:4px 0">${esc(name)}</div>
@@ -1300,9 +1507,11 @@ function bindCategoryNotes() {
 function starsInteractiveHtml(value, group, key) {
   let h = "";
   for (let n = 1; n <= 5; n++) {
-    h += `<button type="button" class="star${n <= value ? " filled" : ""}" data-rate="${group}::${key}::${n}">★</button>`;
+    h += `<button type="button" class="star${value > 0 && n <= value ? " filled" : ""}" data-rate="${group}::${key}::${n}">★</button>`;
   }
-  return `<div class="stars">${h}</div>`;
+  // "Not applicable" — e.g. Travel & Logistics on an all-inclusive rate. Never counts toward the score.
+  const na = `<button type="button" class="na-btn${value === NA ? " active" : ""}" data-na="${group}::${key}" title="Not applicable to this assignment — leaves this category out of the score">N/A</button>`;
+  return `<div class="stars stars-with-na">${h}${na}</div>`;
 }
 function returnToggleHtml(value, group) {
   const opts = [["Y", "Would return"], ["Maybe", "Maybe"], ["N", "Would not"]];
@@ -1312,12 +1521,12 @@ function returnToggleHtml(value, group) {
 
 // A row of one-of-N buttons for the informational (never scored) staff fields.
 // `key` names the property on grpForm; clicking the active choice again clears it.
-function choiceRowHtml(key, label, hint, options, value) {
+function choiceRowHtml(key, label, hint, options, value, group = "grp") {
   return `
     <div style="margin-top:14px">
       <div style="font-size:13px;font-weight:600;margin-bottom:4px">${esc(label)}</div>
       <div class="pay-grid" data-choice-row="${key}">${options
-        .map((o) => `<button type="button" class="return-btn${value === o ? " active" : ""}" data-choice="${key}::${esc(o)}">${esc(o)}</button>`)
+        .map((o) => `<button type="button" class="return-btn${value === o ? " active" : ""}" data-choice="${key}::${esc(o)}" data-choice-form="${group}">${esc(o)}</button>`)
         .join("")}</div>
       ${hint ? `<div class="hint-text">${esc(hint)}</div>` : ""}
     </div>`;
@@ -1326,18 +1535,28 @@ function bindChoiceRows() {
   document.querySelectorAll("[data-choice]").forEach((btn) => {
     btn.onclick = () => {
       const [key, val] = btn.dataset.choice.split("::");
-      grpForm[key] = grpForm[key] === val ? "" : val; // click again to clear
+      const form = FORMS[btn.dataset.choiceForm || "grp"].form;
+      form[key] = form[key] === val ? "" : val; // click again to clear
       document.querySelectorAll(`[data-choice-row="${key}"] [data-choice]`).forEach((b) => {
-        b.classList.toggle("active", b.dataset.choice.split("::")[1] === grpForm[key]);
+        b.classList.toggle("active", b.dataset.choice.split("::")[1] === form[key]);
       });
     };
   });
 }
 
 // A name input that suggests names already on the site. `key` is only used to build element ids.
+// The pop-up that appears on every name box: spell it out, no abbreviations or nicknames.
+const NAME_TIPS = {
+  hospital: ["Spell out the hospital's full name", "e.g. “Memorial Hospital of Chattanooga” — not “Memorial,” “MHC,” or a nickname. Full names keep every review of a place on one page."],
+  agency: ["Spell out the agency's full name", "e.g. “LocumTenens.com” — not “LT”; “Royal Surgical Associates” — not “RSA.” Full names keep every review of a company on one page."],
+  agent: ["Spell out your agent's full name", "First and last name — e.g. “Sarah Johnson,” not “Sarah” or “SJ.” That's how the next CRNA finds the same person."],
+  group: ["Spell out the group's full name", "e.g. “Southeast Anesthesia Associates” — not “SAA” or “the group.” Full names keep every review of a practice on one page."],
+};
 function suggestInputHtml(id, type, placeholder, value) {
+  const tip = NAME_TIPS[type];
   return `
     <div class="suggest-wrap" data-suggest="${id}" data-type="${type}">
+      ${tip ? `<div class="name-tip" id="${id}-tip" role="note" hidden><strong>${esc(tip[0])}</strong><span>${esc(tip[1])}</span></div>` : ""}
       <input id="${id}" placeholder="${esc(placeholder)}" value="${esc(value)}" autocomplete="off" />
       <div class="suggest-list" id="${id}-list" hidden></div>
       <div class="suggest-hint" id="${id}-hint" hidden></div>
@@ -1380,8 +1599,13 @@ function attachSuggest(id, type, onPick) {
     paint();
   };
 
+  const tip = document.getElementById(id + "-tip");
   input.addEventListener("input", refresh);
   input.addEventListener("focus", refresh);
+  if (tip) {
+    input.addEventListener("focus", () => { tip.hidden = false; });
+    input.addEventListener("blur", () => { tip.hidden = true; });
+  }
   input.addEventListener("keydown", (e) => {
     if (list.hidden) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -1428,11 +1652,20 @@ function submitHtml() {
       <div class="section-label">POSTING AS</div>
       <div style="font-family:'Special Elite',monospace;font-size:17px">${esc(state.user.name)}, ${esc(state.user.credentials)}</div>
       <p class="hint-text">Tied to your verified account. You can post under your name or anonymously.</p>
-      <p class="hint-text" style="margin-top:6px">Reviewing as <strong>${esc(EMPLOYMENT[mode].label)}</strong> — ${EMPLOYMENT[mode].reviews}.
-        ${editing ? "" : `<button type="button" class="inline-link" id="switch-employment">Switch</button>`}</p>
+      <p class="hint-text" style="margin-top:6px">Posting on the <strong>${esc(SIDES[mode].label)}</strong> — ${EMPLOYMENT[mode].reviews}. It only counts toward ${mode === "staff" ? "full-time/part-time" : "locum"} scores.${editing ? "" : ` Use the switch at the top to post on the other side.`}</p>
       <label class="checkbox-row anon-row"><input type="checkbox" id="post-anon" ${postOpts.anonymous ? "checked" : ""} />
         <span><strong>Post anonymously.</strong> Your name is hidden from other members and shown as "Anonymous CRNA." The review is still tied to your verified account — nobody can pretend to be a CRNA — and you can delete it any time from My reviews.</span>
       </label>
+    </div>`;
+  const partList = mode === "staff"
+    ? [["group", "Anesthesia group", COLORS.group], ["hospital", "Hospital", COLORS.hospital]]
+    : [["agency", "Agency", COLORS.agency], ["agent", "Agent / recruiter", COLORS.agent], ["hospital", "Hospital", COLORS.hospital]];
+  const partsCard = `
+    <div class="card parts-card">
+      <div class="section-label">WHAT ARE YOU REVIEWING?</div>
+      <p class="hint-text" style="margin-top:0">Review the whole assignment or only part of it — for example just the hospital, or just the agency when your agency and agent are the same. Untick anything you don't want to rate.</p>
+      <div class="parts-row">${partList.map(([k, label, color]) =>
+        `<label class="part-chip${postParts[k] ? " on" : ""}" style="--part:${color}"><input type="checkbox" data-part="${k}"${postParts[k] ? " checked" : ""} /> ${esc(label)}</label>`).join("")}</div>
     </div>`;
   const groupCard = `
     <div class="card border-group" style="margin-bottom:12px">
@@ -1460,6 +1693,7 @@ function submitHtml() {
         <div class="pay-grid" id="pay-grid">${PAY_RANGES.map((pr) => `<button type="button" class="return-btn${aaForm.payRange === pr ? " active" : ""}" data-pay="${esc(pr)}">${esc(pr)}</button>`).join("")}</div>
         <div class="hint-text">Optional. Shown on the agency's page as the range CRNAs are being quoted — it's information, not a score.</div>
       </div>
+      ${choiceRowHtml("travelCovered", "Travel & housing", "Optional. Did the agency cover travel and housing, or was it an all-inclusive rate you paid out of? (If all-inclusive, you can mark Travel & Logistics below N/A.)", TRAVEL_COVERAGE, aaForm.travelCovered, "aa")}
       <div style="margin-top:14px">${AGENCY_CATEGORIES.map((c) => categoryRowHtml(c, "aa")).join("")}</div>
       <div class="score-row"><span style="font-size:12px;color:#6B756F">Weighted score</span><span class="big" id="aa-score">${weighted(AGENCY_CATEGORIES, aaForm.ratings).toFixed(2)}</span></div>
       <div style="margin-top:8px">
@@ -1467,10 +1701,11 @@ function submitHtml() {
         ${returnToggleHtml(aaForm.wouldReturn, "aa")}
       </div>
       <textarea id="aa-comment" style="margin-top:10px" rows="3" placeholder="Anything else another CRNA should know about this agency?">${esc(aaForm.comment)}</textarea>
-    </div>
+    </div>`;
+  const agentCard = `
     <div class="card border-agent" style="margin-bottom:12px">
       <div class="section-label" style="color:${COLORS.agent}">YOUR AGENT / RECRUITER</div>
-      <p class="hint-text" style="margin-top:0">Agents are rated on their own, separate from the agency — not all agents are created equal. Leave the name blank to skip this section.</p>
+      <p class="hint-text" style="margin-top:0">Agents are rated on their own, separate from the agency — not all agents are created equal. Untick "Agent / recruiter" above (or leave the name blank) to skip this section.</p>
       ${suggestInputHtml("aa-agent", "agent", "Agent / recruiter name", aaForm.agentName)}
       <div style="margin-top:14px">${AGENT_CATEGORIES.map((c) => categoryRowHtml(c, "agt")).join("")}</div>
       <div class="score-row"><span style="font-size:12px;color:#6B756F">Weighted score</span><span class="big" id="agt-score">${weighted(AGENT_CATEGORIES, agtForm.ratings).toFixed(2)}</span></div>
@@ -1501,7 +1736,10 @@ function submitHtml() {
       </div>
       <textarea id="hosp-comment" style="margin-top:10px" rows="3" placeholder="Anything else another CRNA should know about this hospital?">${esc(hospForm.comment)}</textarea>
     </div>`;
-  return header + (mode === "staff" ? groupCard : agencyCard) + hospitalCard + `
+  const cards = mode === "staff"
+    ? (postParts.group ? groupCard : "") + (postParts.hospital ? hospitalCard : "")
+    : (postParts.agency ? agencyCard : "") + (postParts.agent ? agentCard : "") + (postParts.hospital ? hospitalCard : "");
+  return header + partsCard + (cards || `<div class="empty-box"><p style="margin:0">Tick at least one thing to review above.</p></div>`) + `
     <div class="card ack-card">
       <div class="section-label">BEFORE YOU ${editing ? "SAVE" : "POST"}</div>
       <label class="checkbox-row ack-row"><input type="checkbox" id="ack-guidelines" />
@@ -1517,17 +1755,25 @@ function attachSubmitHandlers() {
   const mode = formMode();
   const first = mode === "staff" ? "grp" : "aa";
   const editingId = state.editingId;
-  const sw = document.getElementById("switch-employment");
-  if (sw) sw.onclick = () => { state.view = "employment"; render(); };
   ["cancel-edit", "cancel-edit-bottom"].forEach((id) => { const el = document.getElementById(id); if (el) el.onclick = cancelEditing; });
   document.getElementById("post-anon").onchange = (e) => (postOpts.anonymous = e.target.checked);
+  document.querySelectorAll("[data-part]").forEach((box) => {
+    box.onchange = () => {
+      postParts[box.dataset.part] = box.checked;
+      const y = window.scrollY;
+      renderTab();
+      window.scrollTo(0, y);
+    };
+  });
+  const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el[ev] = fn; };
+  const inc = (part) => !!postParts[part];
   if (mode === "locum") {
-    document.getElementById("aa-agency").oninput = (e) => (aaForm.agencyName = e.target.value);
-    document.getElementById("aa-agent").oninput = (e) => (aaForm.agentName = e.target.value);
+    on("aa-agency", "oninput", (e) => (aaForm.agencyName = e.target.value));
+    on("aa-agent", "oninput", (e) => (aaForm.agentName = e.target.value));
     attachSuggest("aa-agency", "agency", (n) => (aaForm.agencyName = n));
     attachSuggest("aa-agent", "agent", (n) => (aaForm.agentName = n));
-    document.getElementById("aa-comment").oninput = (e) => (aaForm.comment = e.target.value);
-    document.getElementById("agt-comment").oninput = (e) => (agtForm.comment = e.target.value);
+    on("aa-comment", "oninput", (e) => (aaForm.comment = e.target.value));
+    on("agt-comment", "oninput", (e) => (agtForm.comment = e.target.value));
     const bindPay = () => document.querySelectorAll("#pay-grid [data-pay]").forEach((btn) => {
       btn.onclick = () => {
         aaForm.payRange = aaForm.payRange === btn.dataset.pay ? "" : btn.dataset.pay; // click again to clear
@@ -1535,21 +1781,22 @@ function attachSubmitHandlers() {
       };
     });
     bindPay();
-    AGENT_CATEGORIES.forEach((c) => attachSubmitHandlers.rebindStars("agt", c.key));
-    rebindReturnToggle("agt");
+    bindChoiceRows();
   } else {
-    document.getElementById("grp-name").oninput = (e) => (grpForm.name = e.target.value);
-    document.getElementById("grp-comment").oninput = (e) => (grpForm.comment = e.target.value);
+    on("grp-name", "oninput", (e) => (grpForm.name = e.target.value));
+    on("grp-comment", "oninput", (e) => (grpForm.comment = e.target.value));
     attachSuggest("grp-name", "group", (n) => (grpForm.name = n));
     bindChoiceRows();
   }
-  document.getElementById("hosp-name").oninput = (e) => (hospForm.name = e.target.value);
+  on("hosp-name", "oninput", (e) => (hospForm.name = e.target.value));
   attachSuggest("hosp-name", "hospital", (n) => (hospForm.name = n));
-  document.getElementById("hosp-city").oninput = (e) => (hospForm.city = e.target.value);
-  document.getElementById("hosp-state").onchange = (e) => (hospForm.state = e.target.value);
-  document.getElementById("hosp-comment").oninput = (e) => (hospForm.comment = e.target.value);
+  on("hosp-city", "oninput", (e) => (hospForm.city = e.target.value));
+  on("hosp-state", "onchange", (e) => (hospForm.state = e.target.value));
+  on("hosp-comment", "oninput", (e) => (hospForm.comment = e.target.value));
 
-  [first, "hosp"].forEach((group) => {
+  // Only the sections on the page get their stars wired.
+  const shown = mode === "staff" ? [["grp", "group"], ["hosp", "hospital"]] : [["aa", "agency"], ["agt", "agent"], ["hosp", "hospital"]];
+  shown.filter(([, part]) => inc(part)).forEach(([group]) => {
     FORMS[group].categories.forEach((c) => attachSubmitHandlers.rebindStars(group, c.key));
     rebindReturnToggle(group);
   });
@@ -1565,46 +1812,60 @@ function attachSubmitHandlers() {
       if (ackEl) ackEl.closest(".ack-card").scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
-    const firstName = mode === "staff" ? grpForm.name : aaForm.agencyName;
-    if (!firstName.trim() || !hospForm.name.trim()) {
-      errEl.textContent = mode === "staff" ? "An anesthesia group name and a hospital name are required." : "An agency name and a hospital name are required.";
-      return;
+    // Every category answered (stars or N/A), and at least one real star rating per section.
+    const answered = (g) => FORMS[g].categories.every((c) => FORMS[g].form.ratings[c.key] > 0 || FORMS[g].form.ratings[c.key] === NA);
+    const scored = (g) => FORMS[g].categories.some((c) => FORMS[g].form.ratings[c.key] > 0);
+    const checks = [];
+    if (mode === "staff") {
+      if (inc("group")) checks.push(["grp", grpForm.name, "the anesthesia group", true]);
+    } else {
+      if (inc("agency")) checks.push(["aa", aaForm.agencyName, "the agency", true]);
+      if (inc("agent")) checks.push(["agt", aaForm.agentName, "the agent", false]);
     }
-    const firstRated = FORMS[first].categories.every((c) => FORMS[first].form.ratings[c.key] > 0);
-    const hospRated = HOSPITAL_CATEGORIES.every((c) => hospForm.ratings[c.key] > 0);
-    if (!firstRated || !hospRated) { errEl.textContent = "Give a star rating for every category in each section."; return; }
-    const hasAgent = mode === "locum" && aaForm.agentName.trim();
-    if (hasAgent && !AGENT_CATEGORIES.every((c) => agtForm.ratings[c.key] > 0)) {
-      errEl.textContent = "You named an agent — rate every agent category too, or clear the agent name to skip it."; return;
+    if (inc("hospital")) checks.push(["hosp", hospForm.name, "the hospital", true]);
+    const sections = [];
+    for (const [g, name, what, nameRequired] of checks) {
+      if (!String(name || "").trim()) {
+        if (!nameRequired) continue; // a blank agent name still just skips the agent
+        errEl.textContent = `Enter the full name of ${what}, or untick it under "What are you reviewing?"`;
+        return;
+      }
+      if (!answered(g)) { errEl.textContent = `Rate every category for ${what} — stars, or N/A if it doesn't apply.`; return; }
+      if (!scored(g)) { errEl.textContent = `Give ${what} at least one star rating — every category can't be N/A.`; return; }
+      sections.push(g);
     }
+    if (sections.length === 0) { errEl.textContent = "Pick at least one thing to review under \"What are you reviewing?\""; return; }
+    const has = (g) => sections.includes(g);
     errEl.textContent = "";
     const body = {
       employmentType: mode,
       anonymous: postOpts.anonymous,
       acceptedGuidelines: true,
       guidelinesVersion: (window.CRNA_GUIDELINES && window.CRNA_GUIDELINES.version) || "",
-      hospitalName: hospForm.name.trim(),
-      hospitalCity: hospForm.city.trim(),
-      hospitalState: hospForm.state,
-      hospitalRatings: hospForm.ratings,
-      hospitalNotes: hospForm.notes,
-      hospitalWouldReturn: hospForm.wouldReturn,
-      hospitalComment: hospForm.comment.trim(),
+      hospitalName: has("hosp") ? hospForm.name.trim() : "",
+      hospitalCity: has("hosp") ? hospForm.city.trim() : "",
+      hospitalState: has("hosp") ? hospForm.state : "",
+      hospitalRatings: has("hosp") ? hospForm.ratings : {},
+      hospitalNotes: has("hosp") ? hospForm.notes : {},
+      hospitalWouldReturn: has("hosp") ? hospForm.wouldReturn : "",
+      hospitalComment: has("hosp") ? hospForm.comment.trim() : "",
     };
     if (mode === "staff") {
+      const g = has("grp");
       Object.assign(body, {
-        groupName: grpForm.name.trim(), groupRatings: grpForm.ratings, groupNotes: grpForm.notes,
-        groupWouldReturn: grpForm.wouldReturn, groupComment: grpForm.comment.trim(),
-        staffPayType: grpForm.payType, staffPayRange: grpForm.payRange,
-        familyInsurance: grpForm.familyInsurance, ptoWeeks: grpForm.ptoWeeks,
-        prnRate: grpForm.prnRate,
+        groupName: g ? grpForm.name.trim() : "", groupRatings: g ? grpForm.ratings : {}, groupNotes: g ? grpForm.notes : {},
+        groupWouldReturn: g ? grpForm.wouldReturn : "", groupComment: g ? grpForm.comment.trim() : "",
+        staffPayType: g ? grpForm.payType : "", staffPayRange: g ? grpForm.payRange : "",
+        familyInsurance: g ? grpForm.familyInsurance : "", ptoWeeks: g ? grpForm.ptoWeeks : "",
+        prnRate: g ? grpForm.prnRate : "",
       });
     } else {
+      const a = has("aa"), hasAgent = has("agt");
       Object.assign(body, {
-        agencyName: aaForm.agencyName.trim(), agentName: aaForm.agentName.trim(),
-        payRange: aaForm.payRange, payRate: null,
-        agencyAgentRatings: aaForm.ratings, agencyAgentNotes: aaForm.notes,
-        agencyAgentWouldReturn: aaForm.wouldReturn, agencyAgentComment: aaForm.comment.trim(),
+        agencyName: a ? aaForm.agencyName.trim() : "", agentName: hasAgent ? aaForm.agentName.trim() : "",
+        payRange: a ? aaForm.payRange : "", payRate: null, travelCovered: a ? aaForm.travelCovered : "",
+        agencyAgentRatings: a ? aaForm.ratings : {}, agencyAgentNotes: a ? aaForm.notes : {},
+        agencyAgentWouldReturn: a ? aaForm.wouldReturn : "", agencyAgentComment: a ? aaForm.comment.trim() : "",
         agentRatings: hasAgent ? agtForm.ratings : {}, agentNotes: hasAgent ? agtForm.notes : {},
         agentWouldReturn: hasAgent ? agtForm.wouldReturn : "", agentComment: hasAgent ? agtForm.comment.trim() : "",
       });
@@ -1631,20 +1892,32 @@ function rebindReturnToggle(group) {
       const [g, v] = btn.dataset.return.split("::");
       const form = FORMS[g].form;
       form.wouldReturn = v;
-      document.getElementById(`return-${g}`).outerHTML = returnToggleHtml(v, g);
+      const el = document.getElementById(`return-${g}`);
+      if (el) el.outerHTML = returnToggleHtml(v, g);
       rebindReturnToggle(g);
     };
   });
 }
 attachSubmitHandlers.rebindStars = function (group, key) {
+  const repaint = (g, k) => {
+    const form = FORMS[g].form;
+    document.getElementById(`stars-${g}-${k}`).innerHTML = starsInteractiveHtml(form.ratings[k], g, k);
+    attachSubmitHandlers.rebindStars(g, k);
+    document.getElementById(`${g}-score`).textContent = weighted(FORMS[g].categories, form.ratings).toFixed(2);
+  };
   document.querySelectorAll(`#stars-${group}-${key} [data-rate]`).forEach((btn) => {
     btn.onclick = () => {
       const [g, k, n] = btn.dataset.rate.split("::");
+      FORMS[g].form.ratings[k] = Number(n);
+      repaint(g, k);
+    };
+  });
+  document.querySelectorAll(`#stars-${group}-${key} [data-na]`).forEach((btn) => {
+    btn.onclick = () => {
+      const [g, k] = btn.dataset.na.split("::");
       const form = FORMS[g].form;
-      form.ratings[k] = Number(n);
-      document.getElementById(`stars-${g}-${k}`).innerHTML = starsInteractiveHtml(form.ratings[k], g, k);
-      attachSubmitHandlers.rebindStars(g, k);
-      document.getElementById(`${g}-score`).textContent = weighted(FORMS[g].categories, form.ratings).toFixed(2);
+      form.ratings[k] = form.ratings[k] === NA ? 0 : NA; // tap again to undo
+      repaint(g, k);
     };
   });
 };
@@ -1658,10 +1931,10 @@ function mineHtml() {
       <div>
         <div class="section-label" style="margin-bottom:2px">ACCOUNT</div>
         <div style="font-size:13px;color:#6B756F">${esc(state.user.email)}</div>
-        <div style="font-size:13px;color:#6B756F">Working as: <strong>${esc(state.user.employmentType && EMPLOYMENT[state.user.employmentType] ? EMPLOYMENT[state.user.employmentType].label : "not set")}</strong></div>
+        <div style="font-size:13px;color:#6B756F">Viewing: <strong>${esc(SIDES[currentSide()].label)}</strong> · My reviews shows both sides</div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="tiny-btn" id="change-employment-btn">Change work type</button>
+        <button class="tiny-btn" id="change-employment-btn">Switch to ${esc(SIDES[otherSide()].label)}</button>
         <button class="tiny-btn" id="change-pw-btn">Change password</button>
       </div>
     </div>`;
@@ -1671,7 +1944,7 @@ function mineHtml() {
   return account + mine.map((r) => `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}${r.editedAt ? " · edited" : ""}${r.anonymous ? ` · <span class="badge anon">🔒 ANONYMOUS</span>` : ""}</span>
+        <span style="font-size:12px;color:#6B756F">${new Date(r.date).toLocaleDateString()}${r.editedAt ? " · edited" : ""} · <span class="badge side-badge" style="background:${SIDES[reviewSide(r)].color}">${esc(SIDES[reviewSide(r)].label.toUpperCase())}</span>${r.anonymous ? ` · <span class="badge anon">🔒 ANONYMOUS</span>` : ""}</span>
         <span style="display:flex;gap:6px"><button class="tiny-btn" data-edit="${r.id}">Edit</button><span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span></span>
       </div>
       ${reviewBodyHtml(r)}
@@ -1704,6 +1977,7 @@ function reviewBodyHtml(r) {
           <span style="font-size:13px;font-weight:700">${weighted(AGENCY_CATEGORIES, r.agencyAgentRatings).toFixed(1)} out of 5.0</span>
           ${isBeware(weighted(AGENCY_CATEGORIES, r.agencyAgentRatings)) ? bewareStampHtml("sm") : ""}
           ${payLabel(r) ? `<span style="font-size:12px;color:#6B756F">· pay quoted ${esc(payLabel(r))}</span>` : ""}
+          ${r.travelCovered ? `<span style="font-size:12px;color:#6B756F">· travel ${esc(r.travelCovered.toLowerCase())}</span>` : ""}
         </div>
         ${returnBadge(r.agencyAgentWouldReturn)}
         ${categoryNotesHtml(r, AGENCY_CATEGORIES, "agencyAgentNotes", "agencyAgentRatings")}
@@ -1722,6 +1996,7 @@ function reviewBodyHtml(r) {
         ${categoryNotesHtml(r, AGENT_CATEGORIES, "agentNotes", "agentRatings")}
         ${r.agentComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.agentComment)}</p>` : ""}` : `<div class="hint-text" style="margin-top:2px">Not rated separately (posted before agent scorecards). Edit this review to add one.</div>`}
       </div>` : ""}
+      ${r.hospitalName ? `
       <div style="padding-left:10px;border-left:3px solid ${COLORS.hospital}">
         <div style="font-size:11px;color:${COLORS.hospital};font-weight:700">HOSPITAL: ${esc(r.hospitalName)}${locationLabel(r) ? ` — ${esc(locationLabel(r))}` : ""}</div>
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0">
@@ -1732,12 +2007,12 @@ function reviewBodyHtml(r) {
         ${returnBadge(r.hospitalWouldReturn)}
         ${categoryNotesHtml(r, HOSPITAL_CATEGORIES, "hospitalNotes", "hospitalRatings")}
         ${r.hospitalComment ? `<p style="margin:4px 0 0;font-size:13px">${esc(r.hospitalComment)}</p>` : ""}
-      </div>`;
+      </div>` : ""}`;
 }
 function attachMineHandlers() {
   attachDeleteHandlers();
   document.getElementById("change-pw-btn").onclick = () => { state.view = "setpw"; render(); };
-  document.getElementById("change-employment-btn").onclick = () => { state.view = "employment"; render(); };
+  document.getElementById("change-employment-btn").onclick = () => { setSide(otherSide()); };
 }
 
 function attachDeleteHandlers() {
