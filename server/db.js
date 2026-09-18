@@ -88,6 +88,8 @@ addColumnIfMissing("reviews", "agency_agent_notes", "TEXT NOT NULL DEFAULT '{}'"
 addColumnIfMissing("reviews", "agent_notes", "TEXT NOT NULL DEFAULT '{}'");
 addColumnIfMissing("reviews", "guidelines_version", "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("reviews", "guidelines_accepted_at", "TEXT NOT NULL DEFAULT ''");
+// Locum: did the agency cover travel & housing, or was it an all-inclusive rate? Informational, never scored.
+addColumnIfMissing("reviews", "travel_covered", "TEXT NOT NULL DEFAULT ''");
 // Bulk (broadcast) email opt-out. Account mail — approvals, sign-in links, password
 // resets — ignores this flag completely; only campaigns honor it.
 addColumnIfMissing("access_requests", "bulk_unsubscribed", "INTEGER NOT NULL DEFAULT 0");
