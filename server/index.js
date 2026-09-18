@@ -1177,6 +1177,7 @@ function rowToReview(r, viewerEmail) {
     agencyAgentNotes: safeJson(r.agency_agent_notes),
     payRate: r.pay_rate,
     payRange: r.pay_range || "",
+    travelCovered: r.travel_covered || "",
     agentRatings: JSON.parse(r.agent_ratings || "{}"),
     agentWouldReturn: r.agent_would_return || "",
     agentComment: r.agent_comment || "",
@@ -1209,45 +1210,67 @@ app.get("/api/reviews", requireSession, (req, res) => {
 
 // Validates a review body and returns the column values shared by create and edit,
 // or { error } if something required is missing.
+// Star ratings: 1–5, or -1 for "Not applicable" (never counted toward a score).
+function cleanRatings(v) {
+  const out = {};
+  if (!v || typeof v !== "object") return out;
+  Object.entries(v).slice(0, 40).forEach(([k, n]) => {
+    const x = Number(n);
+    if (x === -1 || (Number.isInteger(x) && x >= 1 && x <= 5)) out[String(k).slice(0, 40)] = x;
+  });
+  return out;
+}
+const TRAVEL_COVERAGE = ["Covered by agency", "All-inclusive rate"];
+
+// A review can cover the whole assignment or only part of it (just the hospital, just the
+// agency, ...). At least one part has to be there, and each part it names has to be rated.
 function reviewColumns(b) {
   const employmentType = b.employmentType === "staff" ? "staff" : "locum";
   if (!b.acceptedGuidelines) return { error: "guidelines_not_acknowledged" };
-  if (!b.hospitalName || !b.hospitalRatings) return { error: "missing_fields" };
-  if (employmentType === "staff" && (!b.groupName || !b.groupRatings)) return { error: "missing_fields" };
-  if (employmentType === "locum" && (!b.agencyName || !b.agencyAgentRatings)) return { error: "missing_fields" };
   const isStaff = employmentType === "staff";
+  const name = (v) => String(v || "").trim();
+  const hasHospital = !!name(b.hospitalName);
+  const hasGroup = isStaff && !!name(b.groupName);
+  const hasAgency = !isStaff && !!name(b.agencyName);
+  const hasAgent = !isStaff && !!name(b.agentName);
+  if (!hasHospital && !hasGroup && !hasAgency && !hasAgent) return { error: "missing_fields" };
+  const scored = (r) => Object.values(cleanRatings(r)).some((x) => x > 0);
+  if (hasHospital && !scored(b.hospitalRatings)) return { error: "missing_fields" };
+  if (hasGroup && !scored(b.groupRatings)) return { error: "missing_fields" };
+  if (hasAgency && !scored(b.agencyAgentRatings)) return { error: "missing_fields" };
   return {
     values: {
-      agency_name: isStaff ? "" : b.agencyName,
-      agent_name: isStaff ? "" : (b.agentName || ""),
-      agency_agent_ratings: JSON.stringify(isStaff ? {} : b.agencyAgentRatings),
-      agency_agent_would_return: isStaff ? "" : (b.agencyAgentWouldReturn || ""),
-      agency_agent_comment: isStaff ? "" : (b.agencyAgentComment || ""),
-      agency_agent_notes: JSON.stringify(isStaff ? {} : cleanNotes(b.agencyAgentNotes)),
-      pay_rate: isStaff || b.payRate === "" || b.payRate == null ? null : Number(b.payRate),
-      pay_range: isStaff ? "" : String(b.payRange || ""),
-      agent_ratings: JSON.stringify(isStaff || !b.agentName ? {} : (b.agentRatings || {})),
-      agent_would_return: isStaff || !b.agentName ? "" : (b.agentWouldReturn || ""),
-      agent_comment: isStaff || !b.agentName ? "" : (b.agentComment || ""),
-      agent_notes: JSON.stringify(isStaff || !b.agentName ? {} : cleanNotes(b.agentNotes)),
-      hospital_name: b.hospitalName,
-      hospital_city: String(b.hospitalCity || "").trim(),
-      hospital_state: String(b.hospitalState || "").trim().toUpperCase().slice(0, 2),
-      hospital_ratings: JSON.stringify(b.hospitalRatings),
-      hospital_would_return: b.hospitalWouldReturn || "",
-      hospital_comment: b.hospitalComment || "",
-      hospital_notes: JSON.stringify(cleanNotes(b.hospitalNotes)),
+      agency_name: hasAgency ? name(b.agencyName) : "",
+      agent_name: hasAgent ? name(b.agentName) : "",
+      agency_agent_ratings: JSON.stringify(hasAgency ? cleanRatings(b.agencyAgentRatings) : {}),
+      agency_agent_would_return: hasAgency ? (b.agencyAgentWouldReturn || "") : "",
+      agency_agent_comment: hasAgency ? (b.agencyAgentComment || "") : "",
+      agency_agent_notes: JSON.stringify(hasAgency ? cleanNotes(b.agencyAgentNotes) : {}),
+      pay_rate: !hasAgency || b.payRate === "" || b.payRate == null ? null : Number(b.payRate),
+      pay_range: hasAgency ? String(b.payRange || "") : "",
+      travel_covered: hasAgency && TRAVEL_COVERAGE.includes(b.travelCovered) ? b.travelCovered : "",
+      agent_ratings: JSON.stringify(hasAgent ? cleanRatings(b.agentRatings) : {}),
+      agent_would_return: hasAgent ? (b.agentWouldReturn || "") : "",
+      agent_comment: hasAgent ? (b.agentComment || "") : "",
+      agent_notes: JSON.stringify(hasAgent ? cleanNotes(b.agentNotes) : {}),
+      hospital_name: hasHospital ? name(b.hospitalName) : "",
+      hospital_city: hasHospital ? String(b.hospitalCity || "").trim() : "",
+      hospital_state: hasHospital ? String(b.hospitalState || "").trim().toUpperCase().slice(0, 2) : "",
+      hospital_ratings: JSON.stringify(hasHospital ? cleanRatings(b.hospitalRatings) : {}),
+      hospital_would_return: hasHospital ? (b.hospitalWouldReturn || "") : "",
+      hospital_comment: hasHospital ? (b.hospitalComment || "") : "",
+      hospital_notes: JSON.stringify(hasHospital ? cleanNotes(b.hospitalNotes) : {}),
       employment_type: employmentType,
-      staff_pay_type: isStaff ? String(b.staffPayType || "") : "",
-      staff_pay_range: isStaff ? String(b.staffPayRange || "") : "",
-      family_insurance: isStaff ? String(b.familyInsurance || "") : "",
-      pto_weeks: isStaff ? String(b.ptoWeeks || "") : "",
-      prn_rate: isStaff ? String(b.prnRate || "") : "",
-      group_name: isStaff ? b.groupName : "",
-      group_ratings: JSON.stringify(isStaff ? b.groupRatings : {}),
-      group_would_return: isStaff ? (b.groupWouldReturn || "") : "",
-      group_comment: isStaff ? (b.groupComment || "") : "",
-      group_notes: JSON.stringify(isStaff ? cleanNotes(b.groupNotes) : {}),
+      staff_pay_type: hasGroup ? String(b.staffPayType || "") : "",
+      staff_pay_range: hasGroup ? String(b.staffPayRange || "") : "",
+      family_insurance: hasGroup ? String(b.familyInsurance || "") : "",
+      pto_weeks: hasGroup ? String(b.ptoWeeks || "") : "",
+      prn_rate: hasGroup ? String(b.prnRate || "") : "",
+      group_name: hasGroup ? name(b.groupName) : "",
+      group_ratings: JSON.stringify(hasGroup ? cleanRatings(b.groupRatings) : {}),
+      group_would_return: hasGroup ? (b.groupWouldReturn || "") : "",
+      group_comment: hasGroup ? (b.groupComment || "") : "",
+      group_notes: JSON.stringify(hasGroup ? cleanNotes(b.groupNotes) : {}),
       anonymous: b.anonymous ? 1 : 0,
       guidelines_version: String(b.guidelinesVersion || "").slice(0, 20),
       guidelines_accepted_at: new Date().toISOString(),
