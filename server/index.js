@@ -9,6 +9,7 @@ const { sign, verify, hashPassword, verifyPassword } = require("./auth");
 const { sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, firstNameOf, TOKENS } = require("./email");
 const { EMAIL_LOGO_PNG_BASE64, emailHeaderHtml } = require("./brand");
 const { scanReview, SEVERITY_RANK } = require("./guard");
+const { checkApplicant } = require("./nbcrna");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,6 +20,8 @@ const SESSION_SECONDS = 60 * 60 * 24 * 90; // members stay signed in for 90 days
 const LINK_SECONDS = 60 * 60 * 48; // emailed sign-in links (welcome + forgot-password) are good for 48 hours
 const FEEDBACK_LINK_SECONDS = 60 * 60 * 24 * 60; // beta feedback links stay open for 60 days — testers take their time
 const MIN_PASSWORD_LENGTH = 8;
+// New sign-ups are checked against the NBCRNA public lookup and approved on a clean match. AUTO_VERIFY=off turns it off.
+const AUTO_VERIFY = String(process.env.AUTO_VERIFY || "on").toLowerCase() !== "off";
 
 app.use(express.json());
 app.use(cookieParser());
@@ -75,6 +78,76 @@ app.post("/api/request-access", async (req, res) => {
   }
   const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
 
+  res.json({ ok: true });
+
+  // Eric chose (Sep 19, 2026): check NBCRNA in the background and approve a clean
+  // match on the spot; anything else goes to his inbox with Approve / Reject.
+  handleNewRequest(row, { wasRejected: existing?.status === "rejected" }).catch((e) => console.error("New-request handling failed:", e.message));
+});
+
+async function handleNewRequest(row, { wasRejected = false } = {}) {
+  let check = null;
+  if (AUTO_VERIFY) {
+    try {
+      check = await checkApplicant(row);
+    } catch (e) {
+      check = { verified: false, error: true, reason: `couldn't reach the NBCRNA lookup (${e.message})` };
+    }
+    db.prepare("UPDATE access_requests SET nbcrna_check=?, nbcrna_checked_at=? WHERE id=?").run(
+      JSON.stringify(check).slice(0, 2000),
+      new Date().toISOString(),
+      row.id
+    );
+  }
+
+  // Someone Eric rejected before never gets back in automatically — he decides.
+  if (check && check.verified && wasRejected) {
+    check = { ...check, verified: false, reason: "NBCRNA matches, but you rejected this email before — your call" };
+  }
+  // Only a request that is still pending — never overrides a decision Eric already made.
+  if (check && check.verified) {
+    const r = db
+      .prepare("UPDATE access_requests SET status='approved', decided_at=? WHERE id=? AND status='pending'")
+      .run(new Date().toISOString(), row.id);
+    if (r.changes === 1) {
+      sendWelcomeEmail(row).catch((e) => console.error("Failed to send welcome email:", e.message));
+      if (process.env.ADMIN_EMAIL) {
+        sendEmail({
+          to: process.env.ADMIN_EMAIL,
+          replyTo: row.email,
+          subject: `CRNA Critics — ${escapeHtml(row.name)} approved automatically ✓`,
+          html: autoApprovedEmailHtml(row, check),
+        }).catch((e) => console.error("Failed to send auto-approve notice:", e.message));
+      }
+      return;
+    }
+  }
+  sendVerifyRequestEmail(row, check);
+}
+
+function nbcrnaRecordLine(check) {
+  const rec = check && check.record;
+  if (!rec) return "";
+  return `NBCRNA shows: ${escapeHtml(rec.name)} · #${escapeHtml(rec.certNumber || rec.id)} · ${escapeHtml(rec.status)} · ${escapeHtml(rec.period)}${rec.residence ? " · " + escapeHtml(rec.residence) : ""}`;
+}
+
+function autoApprovedEmailHtml(row, check) {
+  return `
+        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+          ${emailHeaderHtml(BASE_URL, 480)}
+          <h2 style="color:#123C3A;">New member approved automatically</h2>
+          <p><strong>${escapeHtml(row.name)}</strong></p>
+          <p>NBCRNA #: ${escapeHtml(row.nbcrna_number)}<br/>
+             Email: ${escapeHtml(row.email)}<br/>
+             Phone: ${escapeHtml(row.phone)}</p>
+          <p style="background:#EEF6F1;border-left:4px solid #1F5C57;padding:10px 12px;">&#10003; ${escapeHtml(check.reason)}.<br/>${nbcrnaRecordLine(check)}</p>
+          <p style="color:#555;font-size:12px;">Terms v${escapeHtml(String(row.terms_version || "?"))} accepted ${escapeHtml(String(row.terms_accepted_at || ""))} from ${escapeHtml(String(row.terms_ip || "unknown IP"))}${row.sms_consent ? " &middot; opted in to automated calls/texts" : ""}</p>
+          <p style="color:#555;">Their welcome email has gone out. Nothing for you to do &mdash; if something looks off, remove them from Admin &rarr; Members.</p>
+        </div>
+      `;
+}
+
+function sendVerifyRequestEmail(row, check) {
   const approveToken = sign({ id: row.id, decision: "approved" }, 60 * 60 * 24 * 30);
   const rejectToken = sign({ id: row.id, decision: "rejected" }, 60 * 60 * 24 * 30);
   const approveUrl = `${BASE_URL}/api/admin/decide/${approveToken}`;
@@ -85,16 +158,17 @@ app.post("/api/request-access", async (req, res) => {
       to: process.env.ADMIN_EMAIL,
       // Replying to the alert writes to the CRNA who just applied, not to the site.
       replyTo: row.email,
-      subject: `CRNA Critics — verify ${escapeHtml(name)}?`,
+      subject: `CRNA Critics — verify ${escapeHtml(row.name)}?`,
       html: `
         <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
           ${emailHeaderHtml(BASE_URL, 480)}
           <h2 style="color:#123C3A;">New CRNA verification request</h2>
-          <p><strong>${escapeHtml(name)}</strong></p>
+          <p><strong>${escapeHtml(row.name)}</strong></p>
           <p>NBCRNA #: ${escapeHtml(row.nbcrna_number)}<br/>
              Email: ${escapeHtml(row.email)}<br/>
              Phone: ${escapeHtml(row.phone)}</p>
           <p style="color:#555;font-size:12px;">Terms v${escapeHtml(String(row.terms_version || "?"))} accepted ${escapeHtml(String(row.terms_accepted_at || ""))} from ${escapeHtml(String(row.terms_ip || "unknown IP"))}${row.sms_consent ? " &middot; opted in to automated calls/texts" : ""}</p>
+          ${check ? `<p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;">Automatic NBCRNA check: <strong>not verified</strong> &mdash; ${escapeHtml(check.reason)}.${check.record ? "<br/>" + nbcrnaRecordLine(check) : ""}</p>` : ""}
           <p style="margin-top:24px;">
             <a href="${approveUrl}" style="background:#1F5C57;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;margin-right:12px;">Approve</a>
             <a href="${rejectUrl}" style="background:#8C3A32;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Reject</a>
@@ -105,8 +179,8 @@ app.post("/api/request-access", async (req, res) => {
     }).catch((e) => console.error("Failed to send admin notification email:", e.message));
   }
 
-  res.json({ ok: true });
-});
+}
+
 
 // One-click approve/reject from the emailed link — no admin login required,
 // the signed token itself is the credential.
