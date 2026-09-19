@@ -48,6 +48,8 @@ function addColumnIfMissing(table, column, definition) {
 }
 addColumnIfMissing("access_requests", "password_hash", "TEXT");
 addColumnIfMissing("access_requests", "employment_type", "TEXT"); // 'locum' | 'staff'
+addColumnIfMissing("access_requests", "nbcrna_check", "TEXT"); // JSON result of the automatic NBCRNA lookup
+addColumnIfMissing("access_requests", "nbcrna_checked_at", "TEXT");
 // Staff (W-2) reviews rate an anesthesia group instead of an agency/agent.
 addColumnIfMissing("reviews", "employment_type", "TEXT NOT NULL DEFAULT 'locum'");
 addColumnIfMissing("reviews", "group_name", "TEXT NOT NULL DEFAULT ''");
