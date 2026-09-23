@@ -136,13 +136,69 @@ function namesMatch(applicantName, recordName) {
   return firstOk && lastOk;
 }
 
+// The details URL takes NBCRNA's *internal* customer ID. For CRNAs certified
+// years ago it equals the certification number (Eric: 125095 = 125095), but for
+// newer ones it doesn't (cert #144366 → internal 1126369), so a direct lookup
+// says "No data found" — or lands on someone else. When that happens, search
+// the public directory by name and follow the result link (which carries the
+// internal ID) to the record whose certification number matches.
+// Env NBCRNA_DIRECTORY=off disables the fallback.
+async function findByNameAndNumber(name, want, deps) {
+  if (String(process.env.NBCRNA_DIRECTORY || "").toLowerCase() === "off") return null;
+  const tokens = nameTokens(name);
+  if (tokens.length < 2) return null;
+  const first = tokens[0];
+  const last = tokens[tokens.length - 1];
+  const search = (deps && deps.searchDirectory) || require("./nbcrna-directory").searchDirectory;
+  const lookup = (deps && deps.lookupNbcrna) || lookupNbcrna;
+  const hits = await search(first, last);
+  const seen = [];
+  let record = null;
+  for (const h of hits.slice(0, 10)) {
+    if (!h.custId) continue;
+    const rec = await lookup(h.custId);
+    if (!rec.found) continue;
+    seen.push(rec);
+    if (digitsOnly(rec.certNumber) === want) {
+      record = rec;
+      break;
+    }
+  }
+  return { hits, seen, record };
+}
+
 // → { verified, reason, record? }  (throws only on network/layout problems)
-async function checkApplicant({ name, nbcrna_number }, now = new Date()) {
-  const rec = await lookupNbcrna(nbcrna_number);
-  if (!rec.found) return { verified: false, reason: rec.reason };
+// `deps` lets tests swap the network calls.
+async function checkApplicant({ name, nbcrna_number }, now = new Date(), deps = {}) {
+  const lookup = deps.lookupNbcrna || lookupNbcrna;
   const want = digitsOnly(nbcrna_number);
-  if (digitsOnly(rec.certNumber) !== want && digitsOnly(rec.id) !== want) {
-    return { verified: false, reason: `number mismatch (NBCRNA shows #${rec.certNumber || rec.id})`, record: rec };
+  let rec = await lookup(nbcrna_number);
+  const direct = rec.found && (digitsOnly(rec.certNumber) === want || digitsOnly(rec.id) === want);
+  if (!direct) {
+    const viaName = await findByNameAndNumber(name, want, deps);
+    if (viaName && viaName.record) {
+      rec = { ...viaName.record, foundVia: "directory search by name" };
+    } else if (viaName) {
+      const tokens = nameTokens(name);
+      const who = `${tokens[0] || ""} ${tokens[tokens.length - 1] || ""}`.trim();
+      if (!viaName.hits.length) {
+        return {
+          verified: false,
+          reason: `no NBCRNA record for #${want}, and nobody named "${who}" in the NBCRNA directory`,
+          record: rec.found ? rec : undefined,
+        };
+      }
+      const others = viaName.seen.map((r) => `${r.name} (#${r.certNumber})`);
+      return {
+        verified: false,
+        reason: `no NBCRNA record for #${want}; the directory has ${others.length ? others.join(", ") : `"${who}" with a different number`} — number doesn't match`,
+        record: viaName.seen[0] || (rec.found ? rec : undefined),
+      };
+    } else {
+      // Fallback disabled — report what the direct lookup said.
+      if (!rec.found) return { verified: false, reason: rec.reason };
+      return { verified: false, reason: `number mismatch (NBCRNA shows #${rec.certNumber || rec.id})`, record: rec };
+    }
   }
   if (!namesMatch(name, rec.name)) {
     return { verified: false, reason: `name mismatch — NBCRNA #${want} belongs to "${rec.name}"`, record: rec };
@@ -153,7 +209,11 @@ async function checkApplicant({ name, nbcrna_number }, now = new Date()) {
   if (!rec.periodEnd || rec.periodEnd < now || (rec.periodStart && rec.periodStart > now)) {
     return { verified: false, reason: `certification period "${rec.period || "blank"}" doesn't cover today`, record: rec };
   }
-  return { verified: true, reason: "NBCRNA number, name and active status all match", record: rec };
+  return {
+    verified: true,
+    reason: `NBCRNA number, name and active status all match${rec.foundVia ? ` (found via ${rec.foundVia})` : ""}`,
+    record: rec,
+  };
 }
 
-module.exports = { checkApplicant, lookupNbcrna, parseDetails, namesMatch, digitsOnly, DETAILS_URL };
+module.exports = { checkApplicant, lookupNbcrna, findByNameAndNumber, parseDetails, namesMatch, digitsOnly, DETAILS_URL };
