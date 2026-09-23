@@ -851,7 +851,7 @@ function landingHtml() {
     <section class="lp-section">
       <div class="lp-label">HOW IT WORKS</div>
       <ol class="step-list">
-        <li><span class="step-n">1</span><div><strong>First time here — get verified.</strong> Submit your name, NBCRNA number, and contact information. An admin reviews it personally.</div></li>
+        <li><span class="step-n">1</span><div><strong>First time here — get verified.</strong> Submit your first and last name (exactly as on your NBCRNA credential), NBCRNA number, and contact information. An admin reviews it personally.</div></li>
         <li><span class="step-n">2</span><div><strong>Create your password.</strong> Once approved, a one-time email link signs you in to set a password. After that, it's just email and password — no more links.</div></li>
         <li><span class="step-n">3</span><div><strong>Choose how you work, then contribute.</strong> Pick full-time/part-time staff or locum, look up any hospital, group, agency, or agent by name, and post your own rated review of the places you've worked.</div></li>
       </ol>
@@ -985,7 +985,14 @@ function requestFormHtml() {
     <div class="card">
       <div class="section-label">FIRST TIME HERE — CRNA VERIFICATION</div>
       <p class="hint-text" style="margin-top:0">CRNA Critics is for practicing CRNAs only — not agencies, recruiters, or anesthesiologists. Submit your info below; an admin reviews it before you get access to reviews.</p>
-      <input id="req-name" placeholder="Full name" />
+      <div class="name-match-note">
+        <strong>Your name must match your NBCRNA credential exactly.</strong>
+        Enter your legal first and last name as it appears on the NBCRNA credential lookup — no nicknames, initials, or maiden names that aren't on your record. We check every sign-up against NBCRNA; if the name doesn't match your certification number, your request will be denied.
+      </div>
+      <div class="name-row">
+        <input id="req-first" placeholder="First name" autocomplete="given-name" />
+        <input id="req-last" placeholder="Last name" autocomplete="family-name" />
+      </div>
       <input id="req-nbcrna" style="margin-top:8px" placeholder="NBCRNA #" />
       <input id="req-email" style="margin-top:8px" type="email" placeholder="Email" />
       <input id="req-phone" style="margin-top:8px" type="tel" placeholder="Phone number" />
@@ -1071,7 +1078,8 @@ function attachGateHandlers() {
     document.getElementById("terms-open-full").onclick = () => { openTerms(); };
 
     submitBtn.onclick = async () => {
-      const name = document.getElementById("req-name").value.trim();
+      const firstName = document.getElementById("req-first").value.trim().replace(/\s+/g, " ");
+      const lastName = document.getElementById("req-last").value.trim().replace(/\s+/g, " ");
       const nbcrnaNumber = document.getElementById("req-nbcrna").value.trim();
       const email = document.getElementById("req-email").value.trim();
       const phone = document.getElementById("req-phone").value.trim();
@@ -1080,13 +1088,15 @@ function attachGateHandlers() {
       const smsConsent = document.getElementById("req-sms").checked;
       const termsVersion = (window.CRNA_TERMS || {}).version || "";
       const errEl = document.getElementById("gate-error");
-      if (!name || !nbcrnaNumber || !email || !phone) { errEl.textContent = "Fill in every field — this is how we verify you're a practicing CRNA."; return; }
+      if (!firstName || !lastName) { errEl.textContent = "Enter both your first and last name, exactly as they appear on your NBCRNA credential."; return; }
+      if (firstName.replace(/[^A-Za-z]/g, "").length < 2 || lastName.replace(/[^A-Za-z]/g, "").length < 2) { errEl.textContent = "Spell out your full first and last name — no initials. It must match your NBCRNA credential or your request will be denied."; return; }
+      if (!nbcrnaNumber || !email || !phone) { errEl.textContent = "Fill in every field — this is how we verify you're a practicing CRNA."; return; }
       if (!attest) { errEl.textContent = "Please confirm the attestation above."; return; }
       if (!acceptedTerms) { errEl.textContent = "You have to accept the Terms of Use & Member Agreement to request access."; return; }
       errEl.textContent = "";
       try {
-        await api("/api/request-access", { method: "POST", body: { name, nbcrnaNumber, email, phone, acceptedTerms, termsVersion, smsConsent } });
-        document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Submitted.</p><p class="hint-text">An admin reviews every NBCRNA number by hand. You'll get an email once you're approved.</p></div>`;
+        await api("/api/request-access", { method: "POST", body: { firstName, lastName, nbcrnaNumber, email, phone, acceptedTerms, termsVersion, smsConsent } });
+        document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Submitted.</p><p class="hint-text">We check your first and last name and NBCRNA number against the NBCRNA credential record. You'll get an email once you're approved.</p></div>`;
       } catch (e) {
         errEl.textContent = "Something went wrong saving your request. Try again.";
       }
