@@ -8,6 +8,7 @@ const db = require("./db");
 const { sign, verify, hashPassword, verifyPassword } = require("./auth");
 const { sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, firstNameOf, TOKENS } = require("./email");
 const { EMAIL_LOGO_PNG_BASE64, emailHeaderHtml } = require("./brand");
+const { SITE_ICONS } = require("./icons");
 const { scanReview, SEVERITY_RANK } = require("./guard");
 const { checkApplicant } = require("./nbcrna");
 
@@ -1459,6 +1460,35 @@ app.get("/email-logo.png", (req, res) => {
   res.set("Content-Type", "image/png");
   res.set("Cache-Control", "public, max-age=31536000, immutable");
   res.send(EMAIL_LOGO_BYTES);
+});
+
+// Site icons — the shield beside the domain in Google/Bing/Yahoo results and in browser tabs.
+// Served explicitly so /favicon.ico never falls through to the SPA catch-all (HTML).
+for (const [route, icon] of Object.entries(SITE_ICONS)) {
+  const bytes = Buffer.from(icon.b64, "base64");
+  app.get(route, (req, res) => {
+    res.set("Content-Type", icon.type);
+    res.set("Cache-Control", "public, max-age=604800");
+    res.send(bytes);
+  });
+}
+app.get("/site.webmanifest", (req, res) => {
+  res.set("Content-Type", "application/manifest+json");
+  res.send(JSON.stringify({
+    name: "CRNA Critics",
+    short_name: "CRNA Critics",
+    icons: [
+      { src: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+      { src: "/favicon-96.png", sizes: "96x96", type: "image/png" },
+      { src: "/favicon.svg", sizes: "any", type: "image/svg+xml" },
+    ],
+    theme_color: "#0B1526",
+    background_color: "#FFFFFF",
+    display: "standalone",
+  }));
+});
+app.get("/robots.txt", (req, res) => {
+  res.type("text/plain").send("User-agent: *\nAllow: /\n");
 });
 
 app.get("/feedback", (req, res) => {
