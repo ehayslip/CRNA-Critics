@@ -1488,7 +1488,15 @@ app.get("/site.webmanifest", (req, res) => {
   }));
 });
 app.get("/robots.txt", (req, res) => {
-  res.type("text/plain").send("User-agent: *\nAllow: /\n");
+  res.type("text/plain").send("User-agent: *\nAllow: /\nSitemap: https://crnacritics.com/sitemap.xml\n");
+});
+app.get("/sitemap.xml", (req, res) => {
+  res.type("application/xml").send(
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' +
+    '<url><loc>https://crnacritics.com/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>' +
+    '</urlset>\n'
+  );
 });
 
 app.get("/feedback", (req, res) => {
