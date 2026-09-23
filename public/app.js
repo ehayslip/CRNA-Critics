@@ -795,7 +795,7 @@ function landingHtml() {
 
     <section class="hero">
       <div class="hero-copy">
-        <div class="eyebrow">VERIFIED CRNAs ONLY</div>
+        <h1 class="eyebrow">CRNA JOB REVIEWS &middot; VERIFIED CRNAs ONLY</h1>
         <h2 class="hero-h">Know who you're signing with — before you sign.</h2>
         <p class="hero-sub">CRNA Critics is an independent review platform built by CRNAs, for CRNAs. Rate the hospitals, anesthesia groups, agencies, and agents you've actually worked with, and read honest accounts from colleagues who were there before you.</p>
         <div class="cta-row">
@@ -846,6 +846,22 @@ function landingHtml() {
           <p>Rated on their own, apart from the agency: trustworthiness (does what they said and what's in the contract actually happen?), responsiveness, whether they advocate for you, follow-through when something goes wrong, and respect for your decision.</p>
         </div>
       </div>
+    </section>
+
+    <section class="lp-section verify-band">
+      <div class="lp-label">LOCUM, 1099, AND STAFF CRNAs</div>
+      <h2 class="lp-h">CRNA reviews for every kind of anesthesia job.</h2>
+      <p class="lp-body">Whether you're a locum tenens CRNA weighing a 1099 contract, a travel CRNA comparing staffing agencies, or a W-2 staff CRNA looking at a new anesthesia group, CRNA Critics collects honest CRNA job reviews from nurse anesthetists who have actually worked there. Search any agency, recruiter, hospital, or anesthesia group and compare pay rates, contract terms, travel and housing, call, and culture before you sign.</p>
+      <ul class="kw-list">
+        <li>Locum CRNA reviews</li>
+        <li>1099 CRNA contracts</li>
+        <li>CRNA agency reviews</li>
+        <li>CRNA recruiter reviews</li>
+        <li>Hospital reviews for CRNAs</li>
+        <li>Anesthesia group reviews</li>
+        <li>CRNA pay rates</li>
+        <li>PRN &amp; per diem CRNA jobs</li>
+      </ul>
     </section>
 
     <section class="lp-section">
