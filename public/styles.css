@@ -547,3 +547,10 @@ a.tiny-btn { text-decoration: none; }
   content: ""; position: absolute; left: 22px; top: 100%;
   border: 7px solid transparent; border-top-color: #14231F;
 }
+
+/* Sign-up: separate first/last name + NBCRNA name-match notice */
+.name-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.name-row input { min-width: 0; }
+@media (max-width: 380px) { .name-row { grid-template-columns: 1fr; } }
+.name-match-note { background: #FFF7E0; border: 1px solid #F5B301; border-left-width: 4px; border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; font-size: 13px; line-height: 1.45; color: #3D3200; }
+.name-match-note strong { display: block; margin-bottom: 2px; color: #0B1526; }
