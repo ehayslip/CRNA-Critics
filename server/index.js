@@ -54,9 +54,15 @@ function requireAdmin(req, res, next) {
 // ---------- access requests ----------
 
 app.post("/api/request-access", async (req, res) => {
-  const { name, nbcrnaNumber, phone, acceptedTerms, termsVersion, smsConsent } = req.body || {};
+  const { nbcrnaNumber, phone, acceptedTerms, termsVersion, smsConsent } = req.body || {};
   const email = String(req.body?.email || "").trim().toLowerCase();
-  if (!name || !nbcrnaNumber || !phone || !email) {
+  // First and last name are separate required fields and must match the NBCRNA credential.
+  const clean = (v) => String(v || "").trim().replace(/\s+/g, " ").slice(0, 60);
+  const firstName = clean(req.body?.firstName);
+  const lastName = clean(req.body?.lastName);
+  if (!firstName || !lastName) return res.status(400).json({ error: "first_last_required" });
+  const name = `${firstName} ${lastName}`;
+  if (!nbcrnaNumber || !phone || !email) {
     return res.status(400).json({ error: "missing_fields" });
   }
   // Click-wrap: no account request is accepted without an affirmative acceptance of the Terms.
