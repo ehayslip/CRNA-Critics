@@ -265,6 +265,7 @@ a.tiny-btn { text-decoration: none; }
   font-family: 'Special Elite', monospace;
   font-size: 11px; letter-spacing: 1.4px; color: #F5B301; margin-bottom: 10px;
 }
+.hero h1.eyebrow { font-weight: 400; margin: 0 0 10px; }
 .hero-h {
   font-family: 'Special Elite', monospace;
   font-weight: 400; font-size: 27px; line-height: 1.22; margin: 0 0 12px;
@@ -334,6 +335,12 @@ a.tiny-btn { text-decoration: none; }
 .check-list { list-style: none; padding: 0; margin: 14px auto 0; max-width: 620px; }
 .check-list li { margin-bottom: 9px; font-size: 14px; line-height: 1.5; color: #3C4A45; }
 .check-list li::before { content: "✓"; color: #13A15A; font-weight: 800; font-size: 15px; margin-right: 8px; }
+
+.kw-list { list-style: none; padding: 0; margin: 14px auto 0; max-width: 620px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.kw-list li { background: #fff; border: 1px solid #C9D2C6; border-radius: 999px; padding: 6px 12px; font-size: 13px; color: #14231F; }
+.seo-fallback { max-width: 620px; margin: 0 auto; padding: 32px 18px; text-align: center; }
+.seo-fallback h1 { font-family: 'Special Elite', monospace; font-weight: 400; font-size: 24px; margin: 0 0 12px; }
+.seo-fallback p { font-size: 14.5px; line-height: 1.65; color: #3C4A45; }
 
 .feature-grid { display: grid; gap: 12px; grid-template-columns: 1fr; margin-top: 14px; max-width: 960px; }
 .feature { background: #fff; border: 1px solid #C9D2C6; border-top-width: 4px; padding: 16px; }
