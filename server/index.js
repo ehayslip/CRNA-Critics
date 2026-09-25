@@ -402,6 +402,7 @@ function sendWelcomeEmail(row) {
         ${emailHeaderHtml(BASE_URL, 480)}
         <h2 style="color:#123C3A;">You're verified</h2>
         <p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics.</p>
+        <p style="background:#EEF6F1;border-left:4px solid #1F5C57;padding:10px 12px;">&#128274; <strong>You're anonymous.</strong> Your name is never shown on the site — every review you post appears as "Anonymous CRNA," so no one will know who you are.</p>
         <p>Use the button below to sign in for the first time and create your password. After that, you'll sign in with your email and password — no more links.</p>
         <p><a href="${loginUrl}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Sign in &amp; create password</a></p>
         <p style="color:#888;font-size:12px;">This link expires in 48 hours. If it expires, use "Forgot password" on the sign-in screen to get a new one.</p>
@@ -1404,10 +1405,10 @@ function cleanNotes(obj) {
 }
 
 // viewerEmail decides ownership; the reviewer's email is never sent to the client,
-// and an anonymous review hides the name from everyone but its author.
+// and every review is anonymous — the name is hidden from everyone but its author.
 function rowToReview(r, viewerEmail) {
   const isMine = !!viewerEmail && r.reviewer_email === viewerEmail;
-  const anonymous = !!r.anonymous;
+  const anonymous = true;
   return {
     id: r.id,
     date: r.date,
@@ -1415,7 +1416,7 @@ function rowToReview(r, viewerEmail) {
     anonymous,
     editedAt: r.edited_at || null,
     reviewer: {
-      name: anonymous && !isMine ? "Anonymous CRNA" : r.reviewer_name,
+      name: isMine ? r.reviewer_name : "Anonymous CRNA",
       credentials: r.reviewer_credentials,
     },
     agencyName: r.agency_name,
@@ -1532,7 +1533,7 @@ function reviewColumns(b) {
       group_would_return: hasGroup ? (b.groupWouldReturn || "") : "",
       group_comment: hasGroup ? (b.groupComment || "") : "",
       group_notes: JSON.stringify(hasGroup ? cleanNotes(b.groupNotes) : {}),
-      anonymous: b.anonymous ? 1 : 0,
+      anonymous: 1, // always anonymous
       guidelines_version: String(b.guidelinesVersion || "").slice(0, 20),
       guidelines_accepted_at: new Date().toISOString(),
     },
