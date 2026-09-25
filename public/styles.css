@@ -601,3 +601,4 @@ a.tiny-btn { text-decoration: none; }
 @media (max-width: 519px) {
   .nav .nav-btn { font-size: 12px; padding: 12px 3px; }
 }
+.msg-anon-banner { background: #123C3A; color: #fff; padding: 9px 12px; font-size: 13px; line-height: 1.45; margin: 8px 0 4px; }
