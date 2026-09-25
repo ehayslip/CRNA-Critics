@@ -1111,6 +1111,8 @@ function runReviewNudges() {
   Object.keys(NUDGE_PROGRAMS).forEach((key) => {
     try { runNudgeProgram(key); } catch (e) { console.error(`Nudge program ${key} failed:`, e.message); }
   });
+  // One reminder email for private messages still unanswered after a few days (server/messages.js).
+  messaging.runMessageReminders().catch((e) => console.error("Message reminders failed:", e.message));
 }
 
 // Admin can see who is due for each program and force a check.
@@ -1453,6 +1455,11 @@ function rowToReview(r, viewerEmail) {
 // ---------- private messages ("Ask this reviewer") — see server/messages.js ----------
 const messaging = registerMessages(app, {
   db, requireSession, requireAdmin, sendEmail, escapeHtml, emailHeaderHtml, BASE_URL, REPLY_TO, RULES, reviewSubjectLine,
+});
+
+// Admin can force the unanswered-message reminder check (normally hourly, daytime Eastern).
+app.post("/api/admin/message-reminders/run", requireAdmin, async (req, res) => {
+  res.json(await messaging.runMessageReminders());
 });
 
 app.get("/api/reviews", requireSession, (req, res) => {
