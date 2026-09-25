@@ -46,7 +46,7 @@ window.CRNA_GUIDELINES = {
   <li><strong>Opinion, clearly labeled, based on disclosed facts.</strong> "In my experience," "I felt," "I would not go back" are opinions. Opinions are protected when the facts they rest on are true and stated.</li>
   <li><strong>Truth.</strong> A true statement of fact is a complete defense to defamation. Keep the emails, texts, and contracts that back up what you wrote.</li>
   <li><strong>Federal law protects your right to review.</strong> The Consumer Review Fairness Act voids contract clauses that try to stop you from posting an honest review. It does not override a genuine confidentiality clause about the contents of a document, and it does not protect false statements.</li>
-  <li><strong>What does not protect you:</strong> posting anonymously (your review is tied to your verified account and can be subpoenaed — see Terms Section 5); deleting a review later (screenshots exist); saying "allegedly"; writing "in my opinion" in front of a factual accusation ("in my opinion he's a thief" is still an accusation of theft).</li>
+  <li><strong>What does not protect you:</strong> being anonymous on the Site (your review is tied to your verified account and can be subpoenaed — see Terms Section 5); deleting a review later (screenshots exist); saying "allegedly"; writing "in my opinion" in front of a factual accusation ("in my opinion he's a thief" is still an accusation of theft).</li>
   <li><strong>The Site is not your lawyer.</strong> If you receive a demand letter or a subpoena about something you posted, we cannot represent you or advise you. Get your own counsel.</li>
 </ul>
 
