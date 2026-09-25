@@ -9,7 +9,8 @@ const { sign, verify, hashPassword, verifyPassword } = require("./auth");
 const { sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, firstNameOf, TOKENS } = require("./email");
 const { EMAIL_LOGO_PNG_BASE64, emailHeaderHtml } = require("./brand");
 const { SITE_ICONS } = require("./icons");
-const { scanReview, SEVERITY_RANK } = require("./guard");
+const { scanReview, SEVERITY_RANK, RULES } = require("./guard");
+const registerMessages = require("./messages");
 const { checkApplicant } = require("./nbcrna");
 
 const app = express();
@@ -1449,9 +1450,16 @@ function rowToReview(r, viewerEmail) {
   };
 }
 
+// ---------- private messages ("Ask this reviewer") — see server/messages.js ----------
+const messaging = registerMessages(app, {
+  db, requireSession, requireAdmin, sendEmail, escapeHtml, emailHeaderHtml, BASE_URL, REPLY_TO, RULES, reviewSubjectLine,
+});
+
 app.get("/api/reviews", requireSession, (req, res) => {
   const rows = db.prepare("SELECT * FROM reviews ORDER BY date DESC").all();
-  res.json({ reviews: rows.map((r) => rowToReview(r, req.user.email)) });
+  // acceptsQuestions only says whether to show "Ask this reviewer" — it never reveals who the reviewer is.
+  const optedOut = messaging.optedOutEmails();
+  res.json({ reviews: rows.map((r) => ({ ...rowToReview(r, req.user.email), acceptsQuestions: !optedOut.has(r.reviewer_email) })) });
 });
 
 // Validates a review body and returns the column values shared by create and edit,
