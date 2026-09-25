@@ -309,7 +309,13 @@ function sendRejectionEmail(row, reasonKey, note) {
         <h2 style="color:#123C3A;">We couldn't verify you yet</h2>
         <p>Hi ${escapeHtml(first)}, thanks for applying to CRNA Critics. We check every applicant against the NBCRNA public record before approving, and we weren't able to verify your account this time.</p>
         <p style="background:#F6F3EC;border-left:4px solid #B87F1E;padding:10px 12px;"><strong>Reason:</strong> ${r.text ? escapeHtml(r.text) : escapeHtml(note)}${r.text && note ? `<br/><br/>${escapeHtml(note)}` : ""}</p>
-        <p><strong>How to fix it:</strong> go to <a href="${BASE_URL}" style="color:#123C3A;">crnacritics.com</a>, choose <em>First time here? Get verified</em>, and submit your details again. We'll take another look.</p>
+        <p><strong>How to get re-verified:</strong> signing in won't work on this account, so you'll need to apply again as a first-time user:</p>
+        <ol style="padding-left:20px;margin-top:0;">
+          <li>Go to <a href="${BASE_URL}" style="color:#123C3A;">crnacritics.com</a>.</li>
+          <li>Tap <strong>First time here? Get verified</strong> (not <em>Already a member? Sign in</em>).</li>
+          <li>Use this same email address, enter your name and NBCRNA number exactly as they appear on your NBCRNA record, accept the terms and submit.</li>
+        </ol>
+        <p>We'll review it again. Once you're approved you'll get a new welcome email with a link to sign in and create your password.</p>
         <p>If you think this is a mistake, just reply to this email.</p>
       </div>
     `,
