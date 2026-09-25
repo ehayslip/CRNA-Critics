@@ -102,7 +102,9 @@ textarea { resize: vertical; }
 .badge.maybe { background: #B87F1E; }
 .badge.anon { background: #5B6660; }
 .edit-banner { border-left: 4px solid #F5B301; background: #FFF9EE; }
-.anon-row { margin-top: 12px; padding-top: 10px; border-top: 1px solid #EEF2ED; }
+.anon-notice { background: #EEF6F1; border: 1px solid #1F5C57; border-left-width: 4px; border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 13px; line-height: 1.45; color: #123C3A; }
+.hero-anon { margin: 10px auto 0; max-width: 540px; font-size: 14px; line-height: 1.45; color: #D8E6E1; }
+.hero-anon strong { color: #fff; }
 
 .chip { font-size: 11px; color: #5B6660; margin-right: 10px; }
 
@@ -390,6 +392,7 @@ a.tiny-btn { text-decoration: none; }
   .landing .hero-sub { margin-left: 0; }
   .landing .hero .cta-row { justify-content: flex-start; }
   .landing .hero-warning { margin-left: 0; }
+  .landing .hero-anon { margin-left: 0; }
   .lp-h { font-size: 24px; }
   .feature-grid { grid-template-columns: repeat(2, 1fr); }
 }
