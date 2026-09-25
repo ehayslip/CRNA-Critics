@@ -78,8 +78,8 @@ request access and do not use the Site.</p>
 
 <h3>5. Anonymous posting is not a guarantee of anonymity</h3>
 <ul>
-  <li>Choosing "post anonymously" hides your name from other members. It does not make you untraceable. Your review
-      stays linked to your account in our records.</li>
+  <li>Every review is posted anonymously: other members see only "Anonymous CRNA," never your name. That does not make
+      you untraceable. Your review stays linked to your account in our records.</li>
   <li>Details you include can identify you on their own — a small facility, an unusual date range, a specific dispute.
       Write accordingly.</li>
   <li>We may be compelled by subpoena, court order, or law to disclose account or review information, and we may do so
