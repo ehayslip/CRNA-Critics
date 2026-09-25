@@ -311,6 +311,16 @@ const state = {
   user: null,
   reviews: [],
   tab: "search",
+  msgList: null,      // conversations for the Messages tab (loaded when opened)
+  msgUnread: 0,       // badge on the Messages tab
+  msgSettings: null,  // { acceptQuestions, messageEmails }
+  msgOpenId: null,    // conversation being read
+  msgThread: null,    // { conversation, messages }
+  msgCompose: null,   // { reviewId, subject } when asking a reviewer a new question
+  msgDraft: "",
+  msgWarnings: null,  // guard warnings for the draft — shown with "Send anyway"
+  msgReporting: false,
+  msgNote: "",
   query: "",
   kind: "hospital", // which kind the search tab is showing — one at a time
   side: null,       // "locum" | "staff" — chosen at every sign-in, switchable from the bar at the top
@@ -456,9 +466,11 @@ async function init() {
     const params = new URLSearchParams(window.location.search);
     const cameFromLink = params.get("setpw") === "1";
     if (cameFromLink) window.history.replaceState({}, "", "/");
+    if (params.get("messages") === "1") { state.tab = "messages"; window.history.replaceState({}, "", "/"); }
     state.side = loadSide();
     state.view = cameFromLink || !state.user.hasPassword ? "setpw" : nextViewAfterAuth();
     await loadReviews();
+    startUnreadPolling();
   } catch {
     state.view = "home";
   }
@@ -640,9 +652,9 @@ function attachGuidelinesPageHandlers() {
 }
 
 function navHtml() {
-  const items = [["search", "Search"], ["submit", "Post a review"], ["mine", "My reviews"], ["signout", "Sign out"]];
+  const items = [["search", "Search"], ["submit", "Post a review"], ["mine", "My reviews"], ["messages", "Messages"], ["signout", "Sign out"]];
   return `<div class="nav">${items
-    .map(([key, label]) => `<button class="nav-btn${state.tab === key ? " active" : ""}" data-tab="${key}">${label}</button>`)
+    .map(([key, label]) => `<button class="nav-btn${state.tab === key ? " active" : ""}" data-tab="${key}">${label}${key === "messages" ? msgBadgeHtml() : ""}</button>`)
     .join("")}</div>`;
 }
 function attachNavHandlers() {
@@ -658,6 +670,7 @@ function attachNavHandlers() {
       }
       if (tab !== "submit" && state.editingId) { state.editingId = null; resetForms(); }
       state.tab = tab; state.detail = null;
+      if (tab === "messages") { state.msgOpenId = null; state.msgThread = null; state.msgCompose = null; state.msgList = null; }
       render();
     };
   });
@@ -711,6 +724,10 @@ function renderTab() {
   } else if (state.tab === "mine") {
     el.innerHTML = mineHtml();
     attachMineHandlers();
+  } else if (state.tab === "messages") {
+    el.innerHTML = messagesHtml();
+    attachMessagesHandlers();
+    if (state.msgList === null && !state.msgOpenId && !state.msgCompose) loadMessages();
   }
 }
 
@@ -1450,7 +1467,7 @@ function detailHtml() {
         ${comment ? `<p style="margin:6px 0">${esc(comment)}</p>` : ""}
         <div style="display:flex;justify-content:space-between;align-items:center">
           <p style="margin:0;font-size:12px;color:#6B756F">— ${r.anonymous ? `Anonymous CRNA${isMine ? ` (you)` : ""}` : esc(r.reviewer.name || "Verified CRNA")}, ${esc(r.reviewer.credentials)}${roleLabel ? ` · ${roleLabel}` : ""}${r.anonymous ? ` · <span title="Posted anonymously by a verified CRNA">🔒 anonymous</span>` : ""}</p>
-          ${isMine ? `<span style="display:flex;gap:6px"><button class="tiny-btn" data-edit="${r.id}">Edit</button><span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span></span>` : ""}
+          ${isMine ? `<span style="display:flex;gap:6px"><button class="tiny-btn" data-edit="${r.id}">Edit</button><span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span></span>` : r.acceptsQuestions ? `<button class="tiny-btn ask-btn" data-ask="${r.id}" title="Send this reviewer a private question — you both stay anonymous">&#9993; Ask this reviewer</button>` : ""}
         </div>
       </div>`;
   }).join("");
@@ -2063,6 +2080,7 @@ function attachDeleteHandlers() {
     };
   });
   document.getElementById("detail-back") && (document.getElementById("detail-back").onclick = () => { state.detail = null; renderTab(); });
+  document.querySelectorAll("[data-ask]").forEach((btn) => { btn.onclick = () => askReviewer(btn.dataset.ask); });
 }
 
 // patch detail view to wire up back + delete buttons
@@ -2071,6 +2089,277 @@ renderTab = function () {
   _renderTab();
   if (state.tab === "search" && state.detail) attachDeleteHandlers();
 };
+
+// ---------- messages ("Ask this reviewer") ----------
+//
+// Private, anonymous, 1-to-1. A conversation only starts from a review. The server never
+// sends a name or email for the other person — they are "the reviewer" or "Anonymous CRNA".
+
+function msgBadgeHtml() {
+  return state.msgUnread > 0 ? ` <span class="tab-badge msg-badge" id="msg-badge">${state.msgUnread}</span>` : ` <span id="msg-badge"></span>`;
+}
+function paintMsgBadge() {
+  const el = document.getElementById("msg-badge");
+  if (!el) return;
+  if (state.msgUnread > 0) { el.className = "tab-badge msg-badge"; el.textContent = state.msgUnread; }
+  else { el.className = ""; el.textContent = ""; }
+}
+let unreadTimer = null;
+async function refreshUnread() {
+  if (!state.user) return;
+  try { const d = await api("/api/messages/unread"); state.msgUnread = d.unread || 0; paintMsgBadge(); } catch { /* signed out or offline */ }
+}
+function startUnreadPolling() {
+  refreshUnread();
+  if (unreadTimer) return;
+  unreadTimer = setInterval(() => { if (document.visibilityState !== "hidden") refreshUnread(); }, 60000);
+}
+
+async function loadMessages() {
+  try {
+    const d = await api("/api/messages");
+    state.msgList = d.conversations;
+    state.msgUnread = d.unread;
+    state.msgSettings = d.settings;
+  } catch { state.msgList = []; }
+  if (state.tab === "messages") { renderTab(); paintMsgBadge(); }
+}
+async function openThread(id) {
+  state.msgOpenId = id; state.msgThread = null; state.msgCompose = null;
+  state.msgDraft = ""; state.msgWarnings = null; state.msgReporting = false; state.msgNote = "";
+  renderTab();
+  try {
+    state.msgThread = await api(`/api/messages/${id}`);
+  } catch { state.msgOpenId = null; flash("Couldn't open that conversation."); }
+  refreshUnread();
+  renderTab();
+  const log = document.getElementById("msg-log");
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
+function reviewSubjectOf(r) {
+  return [r.hospitalName, r.groupName, r.agencyName, r.agentName].filter(Boolean).join(" / ") || "this review";
+}
+
+// From a review card: continue an existing conversation about that review, or start a new one.
+async function askReviewer(reviewId) {
+  const r = state.reviews.find((x) => x.id === reviewId);
+  if (!r) return;
+  state.tab = "messages"; state.detail = null;
+  state.msgReturnDetail = null;
+  try { const d = await api("/api/messages"); state.msgList = d.conversations; state.msgSettings = d.settings; state.msgUnread = d.unread; } catch { state.msgList = []; }
+  const existing = (state.msgList || []).find((c) => c.reviewId === reviewId && c.role === "asker");
+  if (existing) { render(); openThread(existing.id); return; }
+  state.msgOpenId = null; state.msgThread = null;
+  state.msgCompose = { reviewId, subject: reviewSubjectOf(r) };
+  state.msgDraft = ""; state.msgWarnings = null; state.msgNote = "";
+  render();
+  window.scrollTo(0, 0);
+  const ta = document.getElementById("msg-input"); if (ta) ta.focus();
+}
+
+function whenLabel(iso) {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function msgPrivacyNoteHtml() {
+  return `<div class="msg-privacy">&#128274; <strong>Both of you stay anonymous.</strong> The other CRNA sees you only as "Anonymous CRNA" — never your name or email. Anonymity holds only as long as you don't share identifying details yourself. No patient information, ever. Messages are stored and can be reported (see the <a href="#" class="inline-link" id="msg-guidelines-link">Review Guidelines</a>).</div>`;
+}
+
+function msgComposerHtml(placeholder, sendLabel) {
+  return `
+    ${state.msgWarnings ? `
+      <div class="msg-warning">
+        <div style="font-weight:800;margin-bottom:4px">Before you send — take another look</div>
+        ${state.msgWarnings.map((w) => `<p style="margin:4px 0"><strong>${esc(w.label)}.</strong> ${esc(w.warning)}</p>`).join("")}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <button class="tiny-btn" id="msg-edit-btn">Edit my message</button>
+          <button class="tiny-btn reject" id="msg-send-anyway">Send anyway</button>
+        </div>
+        <p class="hint-text" style="margin:6px 0 0">If you send it anyway, the site admin is notified and can read this conversation.</p>
+      </div>` : ""}
+    <textarea id="msg-input" class="msg-input" maxlength="2000" placeholder="${esc(placeholder)}">${esc(state.msgDraft)}</textarea>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span class="hint-text" id="msg-count" style="margin:0">${state.msgDraft.length}/2000</span>
+      <button class="primary-btn msg-send" id="msg-send-btn">${sendLabel}</button>
+    </div>
+    ${state.msgNote ? `<p class="hint-text" style="color:#8C3A32;font-weight:700">${esc(state.msgNote)}</p>` : ""}`;
+}
+
+function messagesHtml() {
+  // New question from a review card
+  if (state.msgCompose) {
+    const c = state.msgCompose;
+    return `
+      <button class="back-btn" id="msg-back">&larr; Back to messages</button>
+      <div class="card" style="margin-top:10px">
+        <div class="section-label">ASK THIS REVIEWER</div>
+        <div class="msg-subject">About their review of <strong>${esc(c.subject)}</strong></div>
+        ${msgPrivacyNoteHtml()}
+        ${msgComposerHtml("Ask about the assignment — the contract, the call schedule, how the agency handled it…", "Send question")}
+      </div>`;
+  }
+  // One conversation
+  if (state.msgOpenId) {
+    if (!state.msgThread) return `<button class="back-btn" id="msg-back">&larr; Back to messages</button><p class="hint-text">Opening…</p>`;
+    const { conversation: c, messages } = state.msgThread;
+    const them = c.role === "asker" ? "Reviewer (anonymous)" : "Anonymous CRNA";
+    return `
+      <button class="back-btn" id="msg-back">&larr; Back to messages</button>
+      <div class="card" style="margin-top:10px">
+        <div class="section-label">${c.role === "asker" ? "YOUR QUESTION TO A REVIEWER" : "A CRNA ASKED ABOUT YOUR REVIEW"}</div>
+        <div class="msg-subject">About ${c.role === "asker" ? "their" : "your"} review of <strong>${esc(c.subject)}</strong>${c.reviewExists ? ` · <a href="#" class="inline-link" id="msg-view-review">view review</a>` : ` · <span class="hint-text" style="display:inline">review since deleted</span>`}</div>
+        <div class="msg-log" id="msg-log">
+          ${messages.map((m) => `
+            <div class="msg-row ${m.mine ? "mine" : "theirs"}">
+              <div class="msg-bubble">${m.removed ? `<em>Message removed by the site.</em>` : esc(m.body).replace(/\n/g, "<br>")}</div>
+              <div class="msg-meta">${m.mine ? "You" : them} · ${whenLabel(m.createdAt)}</div>
+            </div>`).join("")}
+        </div>
+        ${c.closed ? `<div class="msg-closed">This conversation is closed — ${esc(c.closed)}.${c.blockedByMe ? ` <button class="tiny-btn" id="msg-unblock">Reopen</button>` : ""}</div>` : msgComposerHtml("Write a reply…", "Send")}
+        <div class="msg-actions">
+          ${!c.closed ? `<button class="tiny-btn" id="msg-block">Close conversation</button>` : ""}
+          ${state.msgThread.conversation.reportedByMe ? `<span class="hint-text" style="margin:0">Reported — the site admin will review it.</span>` : `<button class="tiny-btn" id="msg-report">Report</button>`}
+        </div>
+        ${state.msgReporting ? `
+          <div class="msg-report-box">
+            <div style="font-weight:700;margin-bottom:4px">Report this conversation</div>
+            <p class="hint-text" style="margin:0 0 6px">The site admin will be able to read this conversation (and only this one) to review it.</p>
+            <textarea id="msg-report-reason" class="msg-input" style="min-height:70px" placeholder="What's wrong? e.g. harassment, patient information, someone trying to find out who I am…"></textarea>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px;margin:6px 0"><input type="checkbox" id="msg-report-block" checked /> Also close the conversation</label>
+            <div style="display:flex;gap:8px"><button class="tiny-btn reject" id="msg-report-send">Send report</button><button class="tiny-btn" id="msg-report-cancel">Cancel</button></div>
+          </div>` : ""}
+      </div>`;
+  }
+  // Inbox
+  const list = state.msgList;
+  const set = state.msgSettings || { acceptQuestions: true, messageEmails: true };
+  const intro = `
+    <div class="card">
+      <div class="section-label">MESSAGES</div>
+      <p style="margin:0 0 6px;font-size:14px">Private questions between CRNAs about a review. Tap <strong>&#9993; Ask this reviewer</strong> on any review to ask the CRNA who wrote it.</p>
+      ${msgPrivacyNoteHtml()}
+    </div>`;
+  const settings = `
+    <div class="card">
+      <div class="section-label">SETTINGS</div>
+      <label class="msg-setting"><input type="checkbox" id="set-accept" ${set.acceptQuestions ? "checked" : ""}/> Let other CRNAs ask me questions about my reviews</label>
+      <label class="msg-setting"><input type="checkbox" id="set-emails" ${set.messageEmails ? "checked" : ""}/> Email me when I get a new message (the email never includes the message itself)</label>
+    </div>`;
+  if (list === null) return intro + `<p class="hint-text">Loading your messages…</p>`;
+  const rows = list.length === 0
+    ? `<div class="empty-box"><p style="margin:0;font-weight:700">No messages yet.</p><p class="hint-text" style="margin-bottom:0">Open any hospital, group, agency or recruiter from Search and tap "Ask this reviewer" under a review.</p></div>`
+    : list.map((c) => `
+      <button class="msg-item${c.unread ? " unread" : ""}" data-conv="${c.id}">
+        <div class="msg-item-top">
+          <span class="msg-kind ${c.role}">${c.role === "asker" ? "YOU ASKED" : "QUESTION FOR YOU"}</span>
+          <span class="msg-when">${whenLabel(c.lastMessageAt)}</span>
+        </div>
+        <div class="msg-item-subject">${esc(c.subject)}</div>
+        <div class="msg-item-preview">${c.lastFromMe ? "You: " : ""}${esc(c.preview)}</div>
+        <div class="msg-item-foot">${c.unread ? `<span class="tab-badge msg-badge">${c.unread} new</span>` : ""}${c.closed ? `<span class="hint-text" style="margin:0;display:inline">closed</span>` : ""}</div>
+      </button>`).join("");
+  return intro + rows + settings;
+}
+
+async function sendMessage(sendAnyway) {
+  const input = document.getElementById("msg-input");
+  const body = (input ? input.value : state.msgDraft).trim();
+  state.msgDraft = input ? input.value : state.msgDraft;
+  if (!body) { state.msgNote = "Write a message first."; renderTab(); return; }
+  const btn = document.getElementById("msg-send-btn"); if (btn) btn.disabled = true;
+  try {
+    if (state.msgCompose) {
+      const out = await api("/api/messages", { method: "POST", body: { reviewId: state.msgCompose.reviewId, body, sendAnyway: !!sendAnyway } });
+      state.msgCompose = null; state.msgDraft = ""; state.msgWarnings = null;
+      flash("Question sent. You'll see the reply here under Messages.");
+      await openThread(out.conversationId);
+    } else {
+      await api(`/api/messages/${state.msgOpenId}/reply`, { method: "POST", body: { body, sendAnyway: !!sendAnyway } });
+      state.msgDraft = ""; state.msgWarnings = null;
+      await openThread(state.msgOpenId);
+    }
+  } catch (e) {
+    const code = e.message;
+    if (code === "guard_warning") { state.msgWarnings = e.data.warnings; state.msgNote = ""; }
+    else state.msgNote = ({
+      not_accepting: "This reviewer isn't taking questions right now.",
+      closed: "This conversation has been closed.",
+      too_many_today: "You've started the most new conversations allowed for one day. Try again tomorrow.",
+      slow_down: "You've sent a lot of messages in the last hour. Give it a little while.",
+      too_long: "That's over 2,000 characters — trim it a little.",
+      reviewer_unavailable: "The CRNA who wrote this review is no longer on the site.",
+      member_gone: "The other CRNA is no longer on the site.",
+      own_review: "That's your own review.",
+    })[code] || "Couldn't send — try again.";
+    renderTab();
+  }
+}
+
+function attachMessagesHandlers() {
+  const back = document.getElementById("msg-back");
+  if (back) back.onclick = () => { state.msgOpenId = null; state.msgThread = null; state.msgCompose = null; state.msgWarnings = null; state.msgList = null; renderTab(); };
+  const gl = document.getElementById("msg-guidelines-link");
+  if (gl) gl.onclick = (e) => { e.preventDefault(); openGuidelines(); };
+  document.querySelectorAll("[data-conv]").forEach((b) => { b.onclick = () => openThread(b.dataset.conv); });
+  const input = document.getElementById("msg-input");
+  if (input) input.oninput = () => {
+    state.msgDraft = input.value;
+    const n = document.getElementById("msg-count"); if (n) n.textContent = `${input.value.length}/2000`;
+  };
+  const send = document.getElementById("msg-send-btn"); if (send) send.onclick = () => sendMessage(false);
+  const anyway = document.getElementById("msg-send-anyway"); if (anyway) anyway.onclick = () => sendMessage(true);
+  const edit = document.getElementById("msg-edit-btn");
+  if (edit) edit.onclick = () => { state.msgWarnings = null; renderTab(); const t = document.getElementById("msg-input"); if (t) t.focus(); };
+  const view = document.getElementById("msg-view-review");
+  if (view) view.onclick = (e) => {
+    e.preventDefault();
+    const r = state.reviews.find((x) => x.id === state.msgThread.conversation.reviewId);
+    if (!r) return;
+    // Open the page of the first thing the review rated, on the side it was posted.
+    const type = r.hospitalName ? "hospital" : r.groupName ? "group" : r.agencyName ? "agency" : "agent";
+    const name = canonicalName(r[ENTITY[type].field]);
+    if (reviewSide(r) !== currentSide()) { state.side = reviewSide(r); saveSide(state.side); }
+    state.tab = "search"; state.kind = type; state.detail = { type, name };
+    render(); window.scrollTo(0, 0);
+  };
+  const block = document.getElementById("msg-block");
+  if (block) block.onclick = async () => {
+    if (block.dataset.armed !== "1") { block.dataset.armed = "1"; block.textContent = "Tap again to close for good"; block.classList.add("reject"); return; }
+    try { await api(`/api/messages/${state.msgOpenId}/block`, { method: "POST", body: { block: true } }); await openThread(state.msgOpenId); }
+    catch { flash("Couldn't close it — try again."); }
+  };
+  const unblock = document.getElementById("msg-unblock");
+  if (unblock) unblock.onclick = async () => {
+    try { await api(`/api/messages/${state.msgOpenId}/block`, { method: "POST", body: { block: false } }); await openThread(state.msgOpenId); }
+    catch { flash("Couldn't reopen — try again."); }
+  };
+  const report = document.getElementById("msg-report");
+  if (report) report.onclick = () => { state.msgReporting = true; renderTab(); const t = document.getElementById("msg-report-reason"); if (t) t.focus(); };
+  const rc = document.getElementById("msg-report-cancel"); if (rc) rc.onclick = () => { state.msgReporting = false; renderTab(); };
+  const rs = document.getElementById("msg-report-send");
+  if (rs) rs.onclick = async () => {
+    const reason = document.getElementById("msg-report-reason").value.trim();
+    if (!reason) { document.getElementById("msg-report-reason").focus(); return; }
+    try {
+      await api(`/api/messages/${state.msgOpenId}/report`, { method: "POST", body: { reason, block: document.getElementById("msg-report-block").checked } });
+      state.msgReporting = false;
+      flash("Reported. The site admin will review this conversation.");
+      await openThread(state.msgOpenId);
+    } catch { flash("Couldn't send the report — try again."); }
+  };
+  const setting = (id, key) => {
+    const el = document.getElementById(id);
+    if (el) el.onchange = async () => {
+      try { const d = await api("/api/messages/settings", { method: "POST", body: { [key]: el.checked } }); state.msgSettings = d.settings; flash("Saved."); }
+      catch { el.checked = !el.checked; flash("Couldn't save — try again."); }
+    };
+  };
+  setting("set-accept", "acceptQuestions");
+  setting("set-emails", "messageEmails");
+}
 
 // ---------- admin ----------
 
@@ -2485,6 +2774,7 @@ async function loadAdminFlags(force) {
   } catch {
     state.adminFlags = [];
   }
+  try { state.adminMsgFlags = await api("/api/admin/message-flags"); } catch { state.adminMsgFlags = { flags: [], conversations: [] }; }
   paintAdmin();
 }
 
@@ -2501,7 +2791,7 @@ function paintAdmin() {
     .sort(byLastName);
 
   const tab = ["members", "reviews", "email", "names", "alerts"].includes(state.adminTab) ? state.adminTab : "members";
-  const openFlags = (state.adminFlags || []).filter((f) => f.status === "open").length;
+  const openFlags = (state.adminFlags || []).filter((f) => f.status === "open").length + msgAlertConvIds().length;
   const dupeCount = state.adminNames ? duplicateCandidates().length : 0;
   const membersSection = `
     <div class="section-label" style="margin:10px 0">PENDING VERIFICATION (${pending.length})</div>
@@ -2789,6 +3079,7 @@ function alertsSection() {
     ${state.adminFlagNote ? `<p class="hint-text" style="color:#1F5C57;font-weight:700">${esc(state.adminFlagNote)}</p>` : ""}
     ${open.length === 0 ? `<div class="empty-box"><p style="margin:0;font-weight:700">Nothing flagged.</p><p class="hint-text">Every review on file passes the guidelines check.</p></div>` : ""}
     ${[...byReview.values()].map(card).join("")}
+    ${messageAlertsHtml()}
     ${state.adminShowClosedFlags ? closed.map((x) => `
       <div class="card" style="opacity:.7">
         <div style="font-size:13px"><strong>${esc(x.member_name || x.reviewer_name || x.reviewer_email)}</strong> · ${flagSubject(x)} · ${esc(x.label)}
@@ -2796,8 +3087,65 @@ function alertsSection() {
         <div class="alert-actions"><button class="tiny-btn" data-flag-status="${x.id}::open">Reopen</button></div>
       </div>`).join("") : ""}`;
 }
+// Conversations the admin may read: only those with an open report or guard flag.
+function msgAlertConvIds() {
+  const m = state.adminMsgFlags;
+  if (!m) return [];
+  return [...new Set(m.flags.filter((f) => f.status === "open").map((f) => f.conversation_id))];
+}
+function messageAlertsHtml() {
+  const m = state.adminMsgFlags;
+  if (!m) return "";
+  const ids = msgAlertConvIds();
+  const head = `<div class="section-label" style="margin:18px 0 6px">FLAGGED MESSAGES (${ids.length} open)</div>
+    <p class="hint-text" style="margin-top:0">Private messages stay private. A conversation shows up here only when a CRNA reports it, or someone sent a message past a guideline warning. Both CRNAs are shown to you by name; they see each other only as "Anonymous CRNA".</p>`;
+  if (!ids.length) return head + `<div class="empty-box"><p style="margin:0;font-weight:700">No reported or flagged messages.</p></div>`;
+  return head + ids.map((cid) => {
+    const c = m.conversations.find((x) => x.id === cid);
+    if (!c) return "";
+    const fs = m.flags.filter((f) => f.conversation_id === cid && f.status === "open");
+    const who = (role) => role === "asker" ? `${esc(c.asker.name)} (asked)` : `${esc(c.reviewer.name)} (reviewer)`;
+    return `
+      <div class="card alert-card sev-border-high">
+        <div class="alert-head"><div>
+          <div class="alert-who">${esc(c.asker.name)} &rarr; ${esc(c.reviewer.name)}</div>
+          <div class="hint-text" style="margin:2px 0 0">About the review of <strong>${esc(c.subject)}</strong> · started ${adminDate(c.createdAt)}${c.closedByAdmin ? " · <strong>closed by you</strong>" : c.blockedBy ? ` · closed by the ${c.blockedBy}` : ""}</div>
+        </div></div>
+        ${fs.map((f) => `<div class="alert-item"><div class="alert-label"><span class="sev-pill sev-high">${f.source === "report" ? "REPORT" : "GUARD"}</span> ${esc(f.source === "report" ? `Reported by ${f.reporter_name || "a member"}` : `Sent past a warning: ${f.label}`)} <span class="hint-text" style="display:inline">— ${adminDate(f.created_at)}</span></div>${f.reason && f.source === "report" ? `<blockquote class="alert-quote">${esc(f.reason)}</blockquote>` : ""}</div>`).join("")}
+        <div class="msg-log admin-log">
+          ${c.messages.map((x) => `
+            <div class="msg-row ${x.from === "reviewer" ? "mine" : "theirs"}">
+              <div class="msg-bubble"${x.removed ? ` style="opacity:.5;text-decoration:line-through"` : ""}>${esc(x.body).replace(/\n/g, "<br>")}</div>
+              <div class="msg-meta">${who(x.from)} · ${adminDate(x.createdAt)} · <button class="link-btn" data-msg-remove="${x.id}::${x.removed ? "restore" : "remove"}">${x.removed ? "restore" : "remove"}</button></div>
+            </div>`).join("")}
+        </div>
+        <div class="alert-actions" style="margin-top:12px;border-top:1px solid #EEF2ED;padding-top:10px">
+          <button class="tiny-btn" data-msgflag-dismiss="${fs[0].id}">Nothing wrong — dismiss</button>
+          <button class="tiny-btn reject" data-conv-close="${c.id}::${c.closedByAdmin ? "open" : "close"}">${c.closedByAdmin ? "Reopen conversation" : "Close conversation"}</button>
+          ${c.asker.id ? `<button class="tiny-btn" data-flag-member="${c.asker.id}">Open ${esc(c.asker.name)}</button>` : ""}
+          ${c.reviewer.id ? `<button class="tiny-btn" data-flag-member="${c.reviewer.id}">Open ${esc(c.reviewer.name)}</button>` : ""}
+        </div>
+      </div>`;
+  }).join("");
+}
 function attachAlertHandlers() {
   const note = (t) => { state.adminFlagNote = t; paintAdmin(); };
+  const msgAct = async (fn, done) => { try { await fn(); await loadAdminFlags(true); note(done); } catch (e) { note(`Couldn't update: ${e.message || e}`); } };
+  document.querySelectorAll("[data-msgflag-dismiss]").forEach((btn) => {
+    btn.onclick = () => msgAct(() => api(`/api/admin/message-flags/${btn.dataset.msgflagDismiss}`, { method: "POST", body: { status: "dismissed", allInConversation: true } }), "Conversation cleared — it's private again.");
+  });
+  document.querySelectorAll("[data-conv-close]").forEach((btn) => {
+    btn.onclick = () => {
+      const [id, action] = btn.dataset.convClose.split("::");
+      msgAct(() => api(`/api/admin/conversations/${id}/close`, { method: "POST", body: { close: action === "close" } }), action === "close" ? "Conversation closed — neither CRNA can send more." : "Conversation reopened.");
+    };
+  });
+  document.querySelectorAll("[data-msg-remove]").forEach((btn) => {
+    btn.onclick = () => {
+      const [id, action] = btn.dataset.msgRemove.split("::");
+      msgAct(() => api(`/api/admin/messages/${id}/remove`, { method: "POST", body: { remove: action === "remove" } }), action === "remove" ? "Message removed." : "Message restored.");
+    };
+  });
   const scan = async (all) => {
     note(all ? "Re-scanning every review…" : "Scanning new and edited reviews…");
     try {
