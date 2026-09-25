@@ -2152,6 +2152,7 @@ function memberCardHtml(r) {
           <tr><td class="stats-label">Feedback nudges</td><td>${r.feedback_nudge_count ? `${r.feedback_nudge_count} sent, last ${adminDate(r.last_feedback_nudged_at)}` : (r.reviewCount ? "none yet" : "starts after their first review")}${r.feedbackSubmittedAt && r.feedback_nudge_count ? " — stopped, form submitted" : ""}</td></tr>
           <tr><td class="stats-label">Requested</td><td>${adminDate(r.requested_at)}</td></tr>
           <tr><td class="stats-label">Decided</td><td>${adminDate(r.decided_at)}</td></tr>
+          ${r.status === "rejected" && r.reject_reason ? `<tr><td class="stats-label">Reject reason</td><td>${esc(r.reject_reason)}${r.reject_note ? ` &mdash; ${esc(r.reject_note)}` : ""} <span style="color:#8A948E">(${r.reject_emailed_at ? `emailed ${adminDate(r.reject_emailed_at)}` : "not emailed"})</span></td></tr>` : ""}
         </table>
         <p class="hint-text" style="font-size:11px">${termsLine(r)}</p>
         <p class="hint-text" style="font-size:11px">Passwords are stored one-way encrypted, so no one — including you — can read a member's password. Use the reset button to let them set a new one.</p>
@@ -2515,7 +2516,7 @@ function paintAdmin() {
           : "No terms acceptance on file (pre-dates the agreement)"}</div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="tiny-btn approve" data-decide="${r.id}::approved">Approve</button>
-          <button class="tiny-btn reject" data-decide="${r.id}::rejected">Reject</button>
+          <a class="tiny-btn reject" href="/api/admin/reject/${encodeURIComponent(r.id)}" style="text-decoration:none">Reject&hellip;</a>
         </div>
       </div>`).join("")}
     <div class="section-label" style="margin:14px 0 8px">MEMBERS (${members.length}) &middot; BY LAST NAME</div>
