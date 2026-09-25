@@ -2211,6 +2211,7 @@ function messagesHtml() {
       <div class="card" style="margin-top:10px">
         <div class="section-label">${c.role === "asker" ? "YOUR QUESTION TO A REVIEWER" : "A CRNA ASKED ABOUT YOUR REVIEW"}</div>
         <div class="msg-subject">About ${c.role === "asker" ? "their" : "your"} review of <strong>${esc(c.subject)}</strong>${c.reviewExists ? ` · <a href="#" class="inline-link" id="msg-view-review">view review</a>` : ` · <span class="hint-text" style="display:inline">review since deleted</span>`}</div>
+        <div class="msg-anon-banner">&#128274; <strong>Your name and contact information are hidden.</strong> ${c.role === "reviewer" ? "This CRNA can only reach you here, anonymously. You can answer or ignore the question — nothing about you is shared." : "The reviewer sees you only as \"Anonymous CRNA\" and can only reach you here."}</div>
         <div class="msg-log" id="msg-log">
           ${messages.map((m) => `
             <div class="msg-row ${m.mine ? "mine" : "theirs"}">
