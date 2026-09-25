@@ -180,7 +180,7 @@ function sendVerifyRequestEmail(row, check) {
             <a href="${approveUrl}" style="background:#1F5C57;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;margin-right:12px;">Approve</a>
             <a href="${rejectUrl}" style="background:#8C3A32;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Reject</a>
           </p>
-          <p style="color:#888;font-size:12px;margin-top:24px;">These links work without logging in — one tap decides it. Expires in 30 days.</p>
+          <p style="color:#888;font-size:12px;margin-top:24px;">These links work without logging in. Approve decides it in one tap; Reject lets you pick the reason they'll be emailed. Expires in 30 days.</p>
         </div>
       `,
     }).catch((e) => console.error("Failed to send admin notification email:", e.message));
@@ -205,6 +205,13 @@ app.get("/api/admin/decide/:token", async (req, res) => {
   const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(payload.id);
   if (!row) return res.status(404).send(page("Request not found", "It may have been removed."));
 
+  // Reject no longer happens on the tap itself: it opens a page where Eric picks the
+  // reason, and the applicant is emailed that reason. (Also means an email scanner
+  // that pre-opens links can never reject anyone.)
+  if (payload.decision === "rejected") {
+    return res.send(rejectFormPage(row, `/api/admin/decide/${encodeURIComponent(req.params.token)}`));
+  }
+
   db.prepare("UPDATE access_requests SET status=?, decided_at=? WHERE id=?").run(
     payload.decision,
     new Date().toISOString(),
@@ -216,6 +223,158 @@ app.get("/api/admin/decide/:token", async (req, res) => {
   }
 
   res.send(page(payload.decision === "approved" ? "Approved ✓" : "Rejected", `${escapeHtml(row.name)} has been marked ${payload.decision}.`));
+});
+
+// ---------- Reject with a reason (Sep 25, 2026) ----------
+//
+// Eric picks why (preset reasons + optional note) and the applicant gets an email
+// saying so, with how to fix it and re-apply. Same page from the emailed Reject
+// link (token) and from the admin dashboard (admin cookie).
+
+const REJECT_REASONS = {
+  name: {
+    label: "Name doesn't match the NBCRNA record",
+    text: "The name you entered doesn't match the name on your NBCRNA record. Please apply again using your first and last name exactly as they appear on your NBCRNA certification (your legal name, not a nickname).",
+  },
+  number: {
+    label: "NBCRNA number not found or doesn't match",
+    text: "We couldn't match the NBCRNA number you entered to your record. Please double-check your certification number (it's in your NBCRNA portal account and on your certification card) and apply again.",
+  },
+  lapsed: {
+    label: "Certification lapsed or not active",
+    text: "NBCRNA doesn't currently show your certification as active. CRNA Critics is limited to currently certified CRNAs. If you've just recertified, NBCRNA's public record can take a few days to update, so you're welcome to apply again once it does.",
+  },
+  not_crna: {
+    label: "Couldn't confirm they're a CRNA",
+    text: "We weren't able to confirm from the NBCRNA public record that you're a certified CRNA. CRNA Critics is open only to CRNAs, so no agents, agencies, MDAs or AAs.",
+  },
+  other: { label: "Other (explain in the note)", text: "" },
+};
+
+// Best guess at the reason from the automatic NBCRNA check, so the right one is pre-selected.
+function suggestRejectReason(row) {
+  let reason = "";
+  try { reason = String(JSON.parse(row.nbcrna_check || "{}").reason || ""); } catch (_) {}
+  if (/name mismatch/i.test(reason)) return "name";
+  if (/number|no NBCRNA record/i.test(reason)) return "number";
+  if (/status is|doesn't cover today/i.test(reason)) return "lapsed";
+  return "";
+}
+
+function rejectPageShell(title, inner) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>${title} · CRNA Critics</title></head>
+    <body style="font-family:Arial,sans-serif;max-width:520px;margin:32px auto;padding:0 16px;color:#14231F;">${inner}</body></html>`;
+}
+
+function rejectFormPage(row, action) {
+  if (row.status === "rejected") {
+    return rejectPageShell("Already rejected", `<h2 style="color:#8C3A32;">Already rejected</h2>
+      <p>${escapeHtml(row.name)} was already rejected${row.reject_reason ? ` (${escapeHtml(row.reject_reason)})` : ""}.</p>`);
+  }
+  let check = null;
+  try { check = JSON.parse(row.nbcrna_check || "null"); } catch (_) {}
+  const pick = suggestRejectReason(row);
+  const options = Object.entries(REJECT_REASONS).map(([key, r]) => `
+      <label style="display:block;border:1px solid #D8DDD9;border-radius:6px;padding:10px 12px;margin:8px 0;cursor:pointer;">
+        <input type="radio" name="reason" value="${key}" ${key === pick ? "checked" : ""} required style="margin-right:8px;">
+        <strong>${escapeHtml(r.label)}</strong>
+        ${r.text ? `<div style="font-size:12px;color:#6B756F;margin:4px 0 0 24px;">${escapeHtml(r.text)}</div>` : ""}
+      </label>`).join("");
+  return rejectPageShell(`Reject ${escapeHtml(row.name)}`, `
+    <h2 style="color:#8C3A32;margin-bottom:4px;">Reject ${escapeHtml(row.name)}?</h2>
+    <p style="margin-top:0;color:#6B756F;font-size:14px;">NBCRNA #${escapeHtml(row.nbcrna_number)} · ${escapeHtml(row.email)}</p>
+    ${row.status === "approved" ? `<p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;">Heads up: this person is currently <strong>approved</strong>. Rejecting will sign them out.</p>` : ""}
+    ${check && check.reason ? `<p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;font-size:14px;">Automatic NBCRNA check: ${escapeHtml(check.reason)}.${check.record ? "<br/>" + nbcrnaRecordLine(check) : ""}</p>` : ""}
+    <form method="post" action="${escapeHtml(action)}">
+      <p style="font-weight:bold;margin-bottom:0;">Why? (they'll see this)</p>
+      ${options}
+      <p style="font-weight:bold;margin-bottom:4px;">Note to include in the email <span style="font-weight:normal;color:#6B756F;">(optional, required for Other)</span></p>
+      <textarea name="note" rows="3" maxlength="1000" style="width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid #D8DDD9;border-radius:6px;"></textarea>
+      <label style="display:block;margin:12px 0;font-size:14px;"><input type="checkbox" name="silent" value="1" style="margin-right:8px;">Reject without emailing them (e.g. obvious spam)</label>
+      <button type="submit" style="background:#8C3A32;color:#fff;border:0;padding:12px 20px;border-radius:4px;font-weight:bold;font-size:16px;">Reject</button>
+    </form>`);
+}
+
+function sendRejectionEmail(row, reasonKey, note) {
+  const r = REJECT_REASONS[reasonKey];
+  const first = firstNameOf(row.name) || row.name;
+  return sendEmail({
+    to: row.email,
+    replyTo: REPLY_TO,
+    subject: "Your CRNA Critics verification",
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+        ${emailHeaderHtml(BASE_URL, 480)}
+        <h2 style="color:#123C3A;">We couldn't verify you yet</h2>
+        <p>Hi ${escapeHtml(first)}, thanks for applying to CRNA Critics. We check every applicant against the NBCRNA public record before approving, and we weren't able to verify your account this time.</p>
+        <p style="background:#F6F3EC;border-left:4px solid #B87F1E;padding:10px 12px;"><strong>Reason:</strong> ${r.text ? escapeHtml(r.text) : escapeHtml(note)}${r.text && note ? `<br/><br/>${escapeHtml(note)}` : ""}</p>
+        <p><strong>How to fix it:</strong> go to <a href="${BASE_URL}" style="color:#123C3A;">crnacritics.com</a>, choose <em>First time here? Get verified</em>, and submit your details again. We'll take another look.</p>
+        <p>If you think this is a mistake, just reply to this email.</p>
+      </div>
+    `,
+  });
+}
+
+// Records the rejection and (unless silent) emails the applicant. Returns the result page.
+async function rejectWithReason(row, body) {
+  const key = String(body.reason || "");
+  const note = String(body.note || "").trim().slice(0, 1000);
+  const silent = body.silent === "1";
+  const again = (msg) => rejectPageShell("Reject", `<p style="color:#8C3A32;font-weight:bold;">${msg}</p><p><a href="javascript:history.back()">&larr; Back</a></p>`);
+  if (!REJECT_REASONS[key]) return again("Pick a reason.");
+  if (key === "other" && !note) return again("Add a note when you pick Other. That's what they'll read.");
+  if (row.status === "rejected") return rejectFormPage(row, "");
+
+  const label = REJECT_REASONS[key].label;
+  db.prepare("UPDATE access_requests SET status='rejected', decided_at=?, reject_reason=?, reject_note=?, reject_emailed_at=NULL WHERE id=?")
+    .run(new Date().toISOString(), label, note || null, row.id);
+
+  let emailLine = "No email was sent.";
+  if (!silent) {
+    try {
+      await sendRejectionEmail(row, key, note);
+      db.prepare("UPDATE access_requests SET reject_emailed_at=? WHERE id=?").run(new Date().toISOString(), row.id);
+      emailLine = `They've been emailed at ${escapeHtml(row.email)} with the reason and how to re-apply.`;
+    } catch (e) {
+      console.error("Failed to send rejection email:", e.message);
+      emailLine = `<span style="color:#8C3A32;font-weight:bold;">But the email to ${escapeHtml(row.email)} failed to send (${escapeHtml(e.message)}).</span> Write to them directly.`;
+    }
+  }
+  return rejectPageShell("Rejected", `<h2 style="color:#8C3A32;">Rejected</h2>
+    <p>${escapeHtml(row.name)} &mdash; ${escapeHtml(label)}.</p><p>${emailLine}</p>`);
+}
+
+app.post("/api/admin/decide/:token", express.urlencoded({ extended: false }), async (req, res) => {
+  const payload = verify(req.params.token);
+  if (!payload || !payload.id || payload.decision !== "rejected") {
+    return res.status(400).send(rejectPageShell("Link expired", "<h2>Link expired or invalid</h2><p>Reject them from the admin dashboard instead.</p>"));
+  }
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(payload.id);
+  if (!row) return res.status(404).send(rejectPageShell("Not found", "<h2>Request not found</h2><p>It may have been removed.</p>"));
+  res.send(await rejectWithReason(row, req.body || {}));
+});
+
+// Same page from the admin dashboard's Reject button (admin cookie instead of a token).
+function adminPage(req, res, next) {
+  const payload = verify(req.cookies.admin_session);
+  if (!payload || payload.role !== "admin") {
+    return res.status(401).send(rejectPageShell("Sign in", "<h2>Admin sign-in needed</h2><p>Open Site admin on crnacritics.com first, then try again.</p>"));
+  }
+  next();
+}
+
+app.get("/api/admin/reject/:id", adminPage, (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).send(rejectPageShell("Not found", "<h2>Request not found</h2>"));
+  res.send(rejectFormPage(row, `/api/admin/reject/${encodeURIComponent(row.id)}`));
+});
+
+app.post("/api/admin/reject/:id", adminPage, express.urlencoded({ extended: false }), async (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).send(rejectPageShell("Not found", "<h2>Request not found</h2>"));
+  const page = await rejectWithReason(row, req.body || {});
+  res.send(page.replace("</body>", `<p><a href="/" style="color:#123C3A;">&larr; Back to the site</a></p></body>`));
 });
 
 // ---------- CRNA sign-in ----------
