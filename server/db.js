@@ -61,6 +61,9 @@ addColumnIfMissing("reviews", "group_would_return", "TEXT NOT NULL DEFAULT ''");
 addColumnIfMissing("reviews", "group_comment", "TEXT NOT NULL DEFAULT ''");
 // Anonymous reviews hide the reviewer's name from other members (still tied to the account).
 addColumnIfMissing("reviews", "anonymous", "INTEGER NOT NULL DEFAULT 0");
+// Every CRNA is anonymous now (Sep 2026) — there is no longer a choice. Older reviews
+// posted under a name are switched over too.
+db.exec("UPDATE reviews SET anonymous = 1 WHERE anonymous = 0");
 addColumnIfMissing("reviews", "edited_at", "TEXT");
 // Agents are rated on their own short scorecard, separate from the agency.
 addColumnIfMissing("reviews", "agent_ratings", "TEXT NOT NULL DEFAULT '{}'");
@@ -190,7 +193,7 @@ Think about your last assignment — the hospital, the group, the agency, the re
 
 {{cta}}
 
-You can post under your name or anonymously. Either way, it counts.
+Every review is anonymous. Other CRNAs see you only as "Anonymous CRNA" — no one will know it was you.
 
 — Eric, CRNA Critics`,
   },
@@ -256,6 +259,11 @@ function seedTemplates() {
   });
 }
 seedTemplates();
+
+// Saved templates that still offer "post under your name or anonymously" get the new wording.
+db.prepare("UPDATE email_templates SET body = REPLACE(body, ?, ?) WHERE body LIKE ?").run(
+  'You can post under your name or anonymously. Either way, it counts.', 'Every review is anonymous. Other CRNAs see you only as "Anonymous CRNA" — no one will know it was you.', "%under your name or anonymously%"
+);
 
 // ---------- beta feedback ----------
 //
