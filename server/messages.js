@@ -88,28 +88,96 @@ module.exports = function registerMessages(app, deps) {
 
   function memberRow(email) { return db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email); }
 
+  // The alert email. The message itself is never in it, and the anonymity reminder always is.
+  // kind: "question" (new question to a reviewer) | "reply" | "reminder" (still unanswered after a few days)
+  function messageAlertEmail(conv, recipientRole, kind) {
+    const recipientEmail = recipientRole === "asker" ? conv.asker_email : conv.reviewer_email;
+    const toReviewer = recipientRole === "reviewer";
+    const link = `${BASE_URL}/?messages=1`;
+    const subjectLine = escapeHtml(conv.subject);
+    const copy = {
+      question: {
+        subject: "A CRNA has a question about your review",
+        headline: "A CRNA has a question about your review",
+        intro: `Another verified CRNA read your review of <strong>${subjectLine}</strong> and sent you a private question.`,
+        button: "Read the question",
+      },
+      reply: {
+        subject: toReviewer ? "New message about your review" : "You have a new reply to your question",
+        headline: toReviewer ? "New message about your review" : "You have a new reply to your question",
+        intro: toReviewer
+          ? `The CRNA who asked about your review of <strong>${subjectLine}</strong> sent you another message.`
+          : `The CRNA who wrote the review of <strong>${subjectLine}</strong> replied to your question.`,
+        button: "Read the message",
+      },
+      reminder: {
+        subject: toReviewer ? "Reminder: a CRNA is waiting on your answer" : "Reminder: you have an unanswered message",
+        headline: toReviewer ? "A CRNA is still waiting on your answer" : "You have an unanswered message",
+        intro: toReviewer
+          ? `A few days ago another verified CRNA asked you a question about your review of <strong>${subjectLine}</strong>. It hasn't been answered yet.`
+          : `A few days ago you received a message about the review of <strong>${subjectLine}</strong>. It hasn't been answered yet.`,
+        button: "Read and reply",
+      },
+    }[kind];
+    const privacy = toReviewer
+      ? `<strong>Your name and information stay anonymous.</strong> The CRNA asking does not have your name, email, or phone number. They see you only as "Anonymous CRNA," and they can reach you only through CRNA Critics. You can answer or ignore the question — either way, nothing about you is shared.`
+      : `<strong>Your name and information stay anonymous.</strong> The reviewer does not have your name, email, or phone number. They see you only as "Anonymous CRNA," and they can reach you only through CRNA Critics.`;
+    const footer = kind === "reminder"
+      ? `This is the only reminder we'll send about this message. Turn message emails off anytime under Messages → Settings.`
+      : `Turn these emails off anytime under Messages → Settings.`;
+    return sendEmail({
+      to: recipientEmail,
+      replyTo: REPLY_TO,
+      subject: copy.subject,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;font-size:15px;line-height:1.5;color:#14231F;">
+          ${emailHeaderHtml(BASE_URL, 480)}
+          <h2 style="color:#123C3A;">${copy.headline}</h2>
+          <p>${copy.intro}</p>
+          <div style="background:#EEF4F1;border-left:4px solid #123C3A;padding:10px 12px;margin:14px 0;">&#128274; ${privacy}</div>
+          <p>For your privacy, the message isn't in this email. Sign in to read it and reply.</p>
+          <p><a href="${link}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;display:inline-block;">${copy.button}</a></p>
+          <p style="color:#6B756F;font-size:13px;"><strong>Please don't reply to this email.</strong> Replies here don't reach the other CRNA — only answers sent on the site do.</p>
+          <p style="color:#888;font-size:12px;">${footer}</p>
+        </div>`,
+    });
+  }
+
   // One email per burst: only when this message is the first one the recipient hasn't read yet.
   function maybeEmailRecipient(conv, recipientRole, isNew) {
     const recipientEmail = recipientRole === "asker" ? conv.asker_email : conv.reviewer_email;
     const member = memberRow(recipientEmail);
     if (!member || member.status !== "approved" || member.message_emails === 0) return;
     if (unreadFor(conv, recipientRole) !== 1) return;
-    const link = `${BASE_URL}/?messages=1`;
-    const headline = isNew ? "A CRNA has a question about your review" : "You have a new reply";
-    sendEmail({
-      to: recipientEmail,
-      replyTo: REPLY_TO,
-      subject: isNew ? "New question about your review on CRNA Critics" : "New message on CRNA Critics",
-      html: `
-        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
-          ${emailHeaderHtml(BASE_URL, 480)}
-          <h2 style="color:#123C3A;">${headline}</h2>
-          <p>${isNew ? "Another verified CRNA read your review and sent you a private question." : "You have a new private message."} It's about <strong>${escapeHtml(conv.subject)}</strong>.</p>
-          <p>For your privacy the message isn't in this email. Sign in to read it — both of you stay anonymous.</p>
-          <p><a href="${link}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Open Messages</a></p>
-          <p style="color:#888;font-size:12px;">Don't want these emails? Turn them off under Messages → Settings. You can also stop accepting questions on your reviews there.</p>
-        </div>`,
-    }).catch((e) => console.error("Message alert email failed:", e.message));
+    messageAlertEmail(conv, recipientRole, isNew ? "question" : "reply")
+      .catch((e) => console.error("Message alert email failed:", e.message));
+  }
+
+  // One reminder per unanswered message: the last message came from the other side more than
+  // REMINDER_AFTER_DAYS ago, the recipient hasn't answered, and no reminder went out since it arrived.
+  // Called from the server's hourly daytime tick.
+  const REMINDER_AFTER_DAYS = Number(process.env.MESSAGE_REMINDER_DAYS || 3);
+  async function runMessageReminders() {
+    if (!(REMINDER_AFTER_DAYS > 0)) return { sent: 0 };
+    const cutoff = new Date(Date.now() - REMINDER_AFTER_DAYS * 86400e3).toISOString();
+    const convs = db.prepare("SELECT * FROM conversations WHERE blocked_by = '' AND closed_by_admin = 0 AND last_message_at < ?").all(cutoff);
+    let sent = 0;
+    for (const conv of convs) {
+      const last = db.prepare("SELECT sender_email, created_at FROM messages WHERE conversation_id = ? AND removed_by_admin = 0 ORDER BY created_at DESC LIMIT 1").get(conv.id);
+      if (!last) continue;
+      const recipientRole = last.sender_email === conv.asker_email ? "reviewer" : "asker";
+      const remindedCol = recipientRole === "asker" ? "asker_reminded_at" : "reviewer_reminded_at";
+      if (conv[remindedCol] && conv[remindedCol] >= last.created_at) continue; // already reminded about this one
+      const member = memberRow(recipientRole === "asker" ? conv.asker_email : conv.reviewer_email);
+      const sender = memberRow(last.sender_email);
+      if (!member || member.status !== "approved" || member.message_emails === 0) continue;
+      if (!sender || sender.status !== "approved") continue; // nobody left to answer
+      db.prepare(`UPDATE conversations SET ${remindedCol} = ? WHERE id = ?`).run(now(), conv.id); // stamp first: never twice
+      try { await messageAlertEmail(conv, recipientRole, "reminder"); sent += 1; }
+      catch (e) { console.error("Message reminder failed:", e.message); }
+    }
+    if (sent) console.log(`Message reminders: ${sent} sent.`);
+    return { sent };
   }
 
   function alertAdmin(subjectLine, detailHtml) {
@@ -337,5 +405,5 @@ module.exports = function registerMessages(app, deps) {
     return db.prepare("SELECT COUNT(DISTINCT conversation_id) AS n FROM message_flags WHERE status = 'open'").get().n;
   }
 
-  return { optedOutEmails, openMessageFlagCount, scanMessage };
+  return { optedOutEmails, openMessageFlagCount, scanMessage, runMessageReminders };
 };
