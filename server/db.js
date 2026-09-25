@@ -301,4 +301,57 @@ db.exec(`
   );
 `);
 
+// ---------- private messages ("Ask this reviewer") ----------
+//
+// A conversation always starts from one review: a member asks its author a question.
+// Both sides see each other only as "Anonymous CRNA"; emails never leave the server.
+// The admin sees a conversation only when it is reported or the guard flags a message.
+addColumnIfMissing("access_requests", "accept_questions", "INTEGER NOT NULL DEFAULT 1"); // 0 = hide "Ask this reviewer" on my reviews
+addColumnIfMissing("access_requests", "message_emails", "INTEGER NOT NULL DEFAULT 1");   // 0 = no "you have a new message" email
+db.exec(`
+  CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    review_id TEXT NOT NULL,
+    subject TEXT NOT NULL DEFAULT '',          -- snapshot of what the review covered, kept if the review is deleted
+    asker_email TEXT NOT NULL,
+    reviewer_email TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_message_at TEXT NOT NULL,
+    asker_read_at TEXT,
+    reviewer_read_at TEXT,
+    blocked_by TEXT NOT NULL DEFAULT '',       -- 'asker' | 'reviewer' | '' — either side can end it
+    closed_by_admin INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_conv_asker ON conversations (asker_email);
+  CREATE INDEX IF NOT EXISTS idx_conv_reviewer ON conversations (reviewer_email);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_pair ON conversations (review_id, asker_email);
+
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    sender_email TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    removed_by_admin INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages (conversation_id, created_at);
+
+  -- Why the admin can see a conversation: a member reported it, or the guard flagged a
+  -- message the sender chose to send anyway.
+  CREATE TABLE IF NOT EXISTS message_flags (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    message_id TEXT,
+    source TEXT NOT NULL,                      -- report | guard
+    reporter_email TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    label TEXT NOT NULL DEFAULT '',
+    excerpt TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',       -- open | dismissed | resolved
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_message_flags_status ON message_flags (status);
+`);
+
 module.exports = db;
