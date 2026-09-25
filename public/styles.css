@@ -561,3 +561,43 @@ a.tiny-btn { text-decoration: none; }
 @media (max-width: 380px) { .name-row { grid-template-columns: 1fr; } }
 .name-match-note { background: #FFF7E0; border: 1px solid #F5B301; border-left-width: 4px; border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; font-size: 13px; line-height: 1.45; color: #3D3200; }
 .name-match-note strong { display: block; margin-bottom: 2px; color: #0B1526; }
+
+/* ---------- messages ("Ask this reviewer") ---------- */
+.msg-badge { background: #8C3A32; color: #fff; }
+.ask-btn { border-color: #123C3A; color: #123C3A; white-space: nowrap; }
+.msg-privacy { background: #EEF4F1; border-left: 4px solid #123C3A; padding: 8px 10px; font-size: 12.5px; line-height: 1.45; margin: 8px 0 10px; color: #14231F; }
+.msg-subject { font-size: 14px; margin: 2px 0 6px; }
+.msg-input { width: 100%; min-height: 110px; border: 1px solid #C9D2C6; padding: 10px; font-size: 15px; font-family: inherit; resize: vertical; box-sizing: border-box; margin-bottom: 6px; }
+.msg-send { width: auto; padding: 11px 22px; margin-top: 0; }
+.msg-warning { background: #FFF6F5; border: 1px solid #8C3A32; border-left-width: 5px; padding: 10px 12px; font-size: 13px; margin-bottom: 10px; }
+.msg-log { max-height: 55vh; overflow-y: auto; padding: 10px 2px; margin: 8px 0 10px; border-top: 1px solid #EEF2ED; border-bottom: 1px solid #EEF2ED; }
+.admin-log { max-height: 360px; }
+.msg-row { display: flex; flex-direction: column; margin-bottom: 10px; }
+.msg-row.mine { align-items: flex-end; }
+.msg-row.theirs { align-items: flex-start; }
+.msg-bubble { max-width: 85%; padding: 9px 12px; font-size: 14px; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
+.msg-row.mine .msg-bubble { background: #123C3A; color: #fff; border-radius: 12px 12px 2px 12px; }
+.msg-row.theirs .msg-bubble { background: #F2F4F1; color: #14231F; border: 1px solid #DDE3DA; border-radius: 12px 12px 12px 2px; }
+.msg-meta { font-size: 11px; color: #6B756F; margin-top: 3px; }
+.msg-meta .link-btn { display: inline; width: auto; padding: 0; font-size: 11px; color: #8C3A32; }
+.msg-closed { background: #F7F8F5; border: 1px dashed #C9D2C6; padding: 10px; font-size: 13px; margin-bottom: 8px; }
+.msg-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+.msg-report-box { margin-top: 10px; padding: 10px; border: 1px solid #C9D2C6; background: #FFFBF2; }
+.msg-setting { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; margin: 6px 0; line-height: 1.35; }
+.msg-setting input { margin-top: 3px; width: auto; flex: 0 0 auto; }
+.msg-item { display: block; width: 100%; text-align: left; background: #fff; border: 1px solid #C9D2C6; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; font-family: inherit; color: #14231F; }
+.msg-item.unread { border-left: 5px solid #8C3A32; background: #FFFBF7; }
+.msg-item.unread .msg-item-subject { font-weight: 800; }
+.msg-item-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; }
+.msg-kind { font-size: 10px; font-weight: 800; letter-spacing: .5px; color: #fff; padding: 2px 6px; }
+.msg-kind.asker { background: #3F5E8C; }
+.msg-kind.reviewer { background: #B87F1E; }
+.msg-when { font-size: 11px; color: #6B756F; }
+.msg-item-subject { font-size: 14px; font-weight: 600; }
+.msg-item-preview { font-size: 13px; color: #6B756F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.msg-item-foot:empty { display: none; }
+.msg-item-foot { margin-top: 5px; display: flex; gap: 8px; }
+.msg-item-foot .tab-badge { margin-left: 0; }
+@media (max-width: 519px) {
+  .nav .nav-btn { font-size: 12px; padding: 12px 3px; }
+}
