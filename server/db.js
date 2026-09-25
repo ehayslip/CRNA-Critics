@@ -353,5 +353,8 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_message_flags_status ON message_flags (status);
 `);
+// One reminder email per unanswered message: when each side was last reminded.
+addColumnIfMissing("conversations", "asker_reminded_at", "TEXT");
+addColumnIfMissing("conversations", "reviewer_reminded_at", "TEXT");
 
 module.exports = db;
