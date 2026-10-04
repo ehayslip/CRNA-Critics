@@ -614,3 +614,18 @@ a.tiny-btn { text-decoration: none; }
 .srna-pill.no { background: #F6E3E0; color: #8C3A32; }
 .srna-pill.wait { background: #FFF4E5; color: #8A5A0A; }
 .srna-note { font-size: 12px; color: #1F5C57; margin-top: 6px; }
+
+/* Delete my profile */
+.danger-card { border-left: 4px solid #8C3A32; }
+.delete-list { margin: 0 0 8px; padding-left: 18px; font-size: 13px; color: #3D4A44; }
+.delete-list li { margin-bottom: 3px; }
+.delete-choice { background: #FBF3F2; border: 1px solid #E8CFCB; padding: 10px 12px; margin-top: 8px; }
+.delete-choice .check-row { display: flex; gap: 10px; align-items: center; justify-content: flex-start; text-align: left; font-size: 14px; font-weight: 600; cursor: pointer; }
+.delete-choice .check-row input { width: auto; flex: none; margin: 0; }
+.delete-choice .check-row span { flex: 1; }
+.danger-card .field-label { font-size: 13px; }
+.delete-choice .hint-text { margin-top: 6px; }
+.danger-btn { background: #8C3A32; color: #fff; border: 1px solid #8C3A32; padding: 10px 16px; font-size: 14px; font-weight: 700; cursor: pointer; }
+.danger-btn:disabled { opacity: 0.45; cursor: default; }
+.tiny-btn.danger-outline { color: #8C3A32; border-color: #8C3A32; }
+.inline-link.danger-link { color: #8C3A32; }
