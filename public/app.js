@@ -61,8 +61,8 @@ const NA = -1;
 
 // Locum and full-time/part-time reviews live on separate sides of the site and are never combined.
 const SIDES = {
-  locum: { label: "Locum side", long: "Locum / 1099", kinds: ["hospital", "agency", "agent"], color: "#123C3A" },
-  staff: { label: "Full-time / Part-time side", long: "Full-time / Part-time (W-2)", kinds: ["hospital", "group"], color: "#3F5E8C" },
+  locum: { label: "Locum side", long: "Locum", kinds: ["hospital", "agency", "agent"], color: "#123C3A" },
+  staff: { label: "Full-time / Part-time side", long: "Full-time / Part-time (W-2 & 1099)", kinds: ["hospital", "group"], color: "#3F5E8C" },
 };
 function currentSide() { return state.side === "staff" ? "staff" : "locum"; }
 function otherSide() { return currentSide() === "staff" ? "locum" : "staff"; }
@@ -244,7 +244,7 @@ function categoryNotesHtml(r, categories, notesField, ratingsField) {
     </div>`).join("")}</div>`;
 }
 const EMPLOYMENT = {
-  locum: { label: "Locum / 1099 contractor", short: "Locum", reviews: "agencies, agents, and hospitals" },
+  locum: { label: "Locum contractor", short: "Locum", reviews: "agencies, agents, and hospitals" },
   staff: { label: "Full-time / part-time staff", short: "Staff", reviews: "anesthesia groups and hospitals" },
 };
 
@@ -1003,8 +1003,8 @@ function employmentHtml() {
       <div class="section-label">WHICH SIDE DO YOU WANT TODAY?</div>
       <p class="hint-text" style="margin-top:0">Locum and full-time/part-time reviews are kept completely separate — locums are treated differently, so their scores are never mixed. You can switch any time with the button at the top of the page.</p>
       <div class="choice-grid">
-        ${card("locum", "Locum side", "Locum / 1099 contract work. Search and review <strong>agencies</strong>, <strong>recruiters</strong>, and <strong>hospitals</strong> as locums see them.")}
-        ${card("staff", "Full-time / Part-time side", "W-2 staff jobs. Search and review <strong>anesthesia groups</strong> and <strong>hospitals</strong> as staff CRNAs see them.")}
+        ${card("locum", "Locum side", "Locum contract work. Search and review <strong>agencies</strong>, <strong>recruiters</strong>, and <strong>hospitals</strong> as locums see them.")}
+        ${card("staff", "Full-time / Part-time side", "W-2 and 1099 staff jobs. Search and review <strong>anesthesia groups</strong> and <strong>hospitals</strong> as staff CRNAs see them.")}
       </div>
       <div id="employment-error" class="error-text"></div>
     </div>`;
@@ -2430,7 +2430,7 @@ function memberCardHtml(r) {
           <tr><td class="stats-label">Email</td><td><a href="mailto:${esc(r.email)}">${esc(r.email)}</a></td></tr>
           <tr><td class="stats-label">Phone</td><td>${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : "—"}</td></tr>
           <tr><td class="stats-label">NBCRNA #</td><td>${esc(r.nbcrna_number)}</td></tr>
-          <tr><td class="stats-label">Work type</td><td>${r.employment_type ? esc(r.employment_type === "staff" ? "Staff (W-2)" : "Locum (1099)") : "not chosen yet"}</td></tr>
+          <tr><td class="stats-label">Work type</td><td>${r.employment_type ? esc(r.employment_type === "staff" ? "Staff (W-2 / 1099)" : "Locum") : "not chosen yet"}</td></tr>
           <tr><td class="stats-label">Password</td><td>${r.hasPassword ? "set by member" : "<em>not set yet</em>"}</td></tr>
           <tr><td class="stats-label">Reviews posted</td><td>${r.reviewCount}</td></tr>
           <tr><td class="stats-label">Feedback form</td><td>${feedbackStatusLabel(r)}</td></tr>
