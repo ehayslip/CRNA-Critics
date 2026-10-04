@@ -208,3 +208,39 @@ remain on the Site under the license in Section 4.</p>
 <p>Eric Hayslip, CRNA &mdash; CRNA Critics &mdash; <a href="mailto:erichayslip@gmail.com">erichayslip@gmail.com</a></p>
 `,
 };
+
+// Student (SRNA) access agreement. Shorter than the member agreement because students are read-only.
+window.CRNA_SRNA_TERMS = {
+  version: "srna-1.0",
+  html: `
+<p class="terms-meta">Student Access Agreement &middot; Version srna-1.0</p>
+<p>CRNA Critics ("the Site") is owned and operated by Eric Hayslip, CRNA ("Operator"). By checking the box you agree to the following. If you do not agree, do not request access.</p>
+<h3>1. Who may join</h3>
+<ul>
+  <li>You are at least 18 and currently enrolled as a student registered nurse anesthetist (SRNA) in a nurse anesthesia program.</li>
+  <li>The school, program, graduation year and program contact you give are accurate. We contact that person to confirm your enrollment and may refuse or remove access at any time.</li>
+  <li>One account per person. Keep your password private and do not share, sell or transfer your access.</li>
+</ul>
+<h3>2. Read-only access, ends at graduation</h3>
+<ul>
+  <li><strong>Your student access ends automatically at the end of the expected graduation month and year you enter when you sign up.</strong> After that you can no longer sign in. We will email you how to join as a CRNA using your NBCRNA credentials.</li>
+  <li>Student accounts can search and read reviews. They cannot post reviews, ratings or comments and cannot send messages.</li>
+  <li>Reviews are the personal opinions of individual CRNAs, are not verified or endorsed by the Operator, and are not legal, financial, employment or clinical advice. Do your own diligence.</li>
+</ul>
+<h3>3. What you may not do</h3>
+<ul>
+  <li>No scraping, bulk copying, automated access, security probing, or attempts to identify anonymous reviewers.</li>
+  <li>Do not copy, repost or share review content outside the Site, and do not use anything you learn here to harass, retaliate against or interfere with any CRNA.</li>
+  <li>Do not give your login to anyone, including recruiters, agencies or anyone acting for them.</li>
+</ul>
+<h3>4. Contact and privacy</h3>
+<ul>
+  <li>We do not sell or rent your personal information. We will email you about your account and may email you about the Site. You can unsubscribe from mailings at any time.</li>
+  <li>We may share your name, school and program with the program contact you listed, only to verify you.</li>
+</ul>
+<h3>5. Other terms</h3>
+<ul>
+  <li>Sections 8 through 15 of the Terms of Use &amp; Member Agreement (release, indemnification, no warranties, limitation of liability, termination, Tennessee law, arbitration, class and jury waiver, one-year claim limit) apply to you in the same way. The full text is linked in the footer.</li>
+  <li>Checking the box is your electronic signature. We record the version, date, time and IP address.</li>
+</ul>`,
+};
