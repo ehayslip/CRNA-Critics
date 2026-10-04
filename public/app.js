@@ -548,6 +548,7 @@ function render() {
   if (state.view === "admin") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body" id="admin-root"></div>` + footerHtml(); attachFooterHandlers(); renderAdmin(); return; }
   if (state.view === "terms") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${termsPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachTermsPageHandlers(); return; }
   if (state.view === "guidelines") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${guidelinesPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachGuidelinesPageHandlers(); return; }
+  if (state.view === "deleteprofile") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${deleteProfilePageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachDeleteProfileHandlers(); return; }
   root.innerHTML = headerHtml() + toastHtml() + navHtml() + studentBannerHtml() + sideBarHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
   attachFooterHandlers();
   attachNavHandlers();
@@ -579,6 +580,7 @@ function footerHtml() {
         <button type="button" class="inline-link" id="terms-link-btn">Terms of Use &amp; Member Agreement</button>
         <span class="footer-sep">&middot;</span>
         <button type="button" class="inline-link" id="guidelines-link-btn">Review Guidelines</button>
+        ${state.user ? `<span class="footer-sep">&middot;</span><button type="button" class="inline-link danger-link" id="delete-profile-link-btn">Delete my profile</button>` : ""}
       </div>
       <button type="button" class="admin-link" id="admin-link-btn">Site admin</button>
     </div>`;
@@ -592,6 +594,76 @@ function attachFooterHandlers() {
   if (termsBtn) termsBtn.onclick = () => { openTerms(); };
   const guideBtn = document.getElementById("guidelines-link-btn");
   if (guideBtn) guideBtn.onclick = () => { openGuidelines(); };
+  const delBtn = document.getElementById("delete-profile-link-btn");
+  if (delBtn) delBtn.onclick = () => { openDeleteProfile(); };
+}
+
+// ---------- delete my profile (every signed-in user) ----------
+
+function openDeleteProfile() {
+  state.deleteDraft = { confirm: "", deleteReviews: false, error: "", busy: false };
+  state.view = "deleteprofile";
+  render();
+  window.scrollTo(0, 0);
+}
+function deleteProfilePageHtml() {
+  const d = state.deleteDraft || { confirm: "", deleteReviews: false, error: "", busy: false };
+  const n = isStudent() ? 0 : myReviews().length;
+  const ready = d.confirm.trim().toUpperCase() === "DELETE" && !d.busy;
+  return `
+    <button class="back-btn" id="delprof-back-btn" style="margin-bottom:10px">&larr; Back</button>
+    <div class="card danger-card">
+      <div class="section-label" style="color:#8C3A32">DELETE MY PROFILE</div>
+      <p style="margin:0 0 8px;font-size:14px">This permanently removes <strong>${esc(state.user.name)}</strong> (${esc(state.user.email)}) from CRNA Critics. It cannot be undone.</p>
+      <ul class="delete-list">
+        <li>You are signed out right away, and your sign-in links stop working.</li>
+        <li>Your private messages and any site-feedback answers are erased.</li>
+        <li>You can apply again later, but you would be verified again from scratch.</li>
+      </ul>
+      ${n > 0 ? `
+      <div class="delete-choice">
+        <label class="check-row"><input type="checkbox" id="delprof-reviews" ${d.deleteReviews ? "checked" : ""}> <span>Also delete my ${n} review${n === 1 ? "" : "s"}</span></label>
+        <div class="hint-text">${d.deleteReviews
+          ? "Your reviews will be removed from the site and the scores they feed will change."
+          : "Leave this unchecked and your reviews stay up, still anonymous, but are disconnected from you: you will no longer be able to edit or delete them, and nothing on the site or in our records will point back to this account."}</div>
+      </div>` : ""}
+      <label class="field-label" for="delprof-confirm" style="margin-top:12px;display:block">Type <strong>DELETE</strong> to confirm</label>
+      <input id="delprof-confirm" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${esc(d.confirm)}" placeholder="DELETE" style="max-width:260px">
+      ${d.error ? `<p style="color:#8C3A32;font-size:13px;margin:8px 0 0">${esc(d.error)}</p>` : ""}
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="danger-btn" id="delprof-go" ${ready ? "" : "disabled"}>${d.busy ? "Deleting…" : "Permanently delete my profile"}</button>
+        <button class="tiny-btn" id="delprof-cancel">Cancel</button>
+      </div>
+    </div>`;
+}
+function attachDeleteProfileHandlers() {
+  const d = state.deleteDraft;
+  const back = () => { state.deleteDraft = null; state.view = "app"; render(); window.scrollTo(0, 0); };
+  document.getElementById("delprof-back-btn").onclick = back;
+  document.getElementById("delprof-cancel").onclick = back;
+  const input = document.getElementById("delprof-confirm");
+  const go = document.getElementById("delprof-go");
+  input.oninput = () => {
+    d.confirm = input.value;
+    go.disabled = d.busy || input.value.trim().toUpperCase() !== "DELETE";
+  };
+  const box = document.getElementById("delprof-reviews");
+  if (box) box.onchange = () => { d.deleteReviews = box.checked; render(); };
+  go.onclick = async () => {
+    if (d.busy || d.confirm.trim().toUpperCase() !== "DELETE") return;
+    d.busy = true; d.error = ""; go.disabled = true; go.textContent = "Deleting…";
+    try {
+      await api("/api/me", { method: "DELETE", body: { confirm: "DELETE", deleteReviews: !!d.deleteReviews } });
+      state.user = null; state.view = "home"; state.tab = "search"; state.detail = null; state.deleteDraft = null;
+      state.side = null; saveSide(null); state.filters = null;
+      window.scrollTo(0, 0);
+      flash("Your profile has been deleted.");
+    } catch (e) {
+      d.busy = false;
+      d.error = e.status === 401 ? "You're already signed out, so there is nothing left to delete here." : "Something went wrong and nothing was deleted. Please try again.";
+      render();
+    }
+  };
 }
 
 // ---------- terms ----------
@@ -953,6 +1025,7 @@ function signinFormHtml() {
       <div id="gate-error" class="error-text"></div>
       <button class="primary-btn" id="signin-submit" style="margin-top:10px">Sign in</button>
       <button type="button" class="link-btn" id="gate-forgot">Forgot your password? Email me a one-time sign-in link</button>
+      <p class="hint-text" style="margin:12px 0 0">Want your profile deleted? Sign in, then tap <strong>Delete my profile</strong> at the bottom of any page.</p>
     </div>`;
 }
 function linkFormHtml() {
@@ -2068,6 +2141,7 @@ function mineHtml() {
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="tiny-btn" id="change-employment-btn">Switch to ${esc(SIDES[otherSide()].label)}</button>
         <button class="tiny-btn" id="change-pw-btn">Change password</button>
+        <button class="tiny-btn danger-outline" id="delete-profile-btn">Delete profile</button>
       </div>
     </div>`;
   if (mine.length === 0) {
@@ -2144,6 +2218,7 @@ function reviewBodyHtml(r) {
 function attachMineHandlers() {
   attachDeleteHandlers();
   document.getElementById("change-pw-btn").onclick = () => { state.view = "setpw"; render(); };
+  document.getElementById("delete-profile-btn").onclick = () => { openDeleteProfile(); };
   document.getElementById("change-employment-btn").onclick = () => { setSide(otherSide()); };
 }
 
