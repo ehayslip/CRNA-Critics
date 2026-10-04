@@ -6,7 +6,7 @@ const path = require("path");
 
 const db = require("./db");
 const { sign, verify, hashPassword, verifyPassword } = require("./auth");
-const { sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, firstNameOf, TOKENS } = require("./email");
+const { sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, firstNameOf, TOKENS, plainMailHtml } = require("./email");
 const { EMAIL_LOGO_PNG_BASE64, emailHeaderHtml } = require("./brand");
 const { SITE_ICONS } = require("./icons");
 const { scanReview, SEVERITY_RANK, RULES } = require("./guard");
@@ -41,10 +41,50 @@ const cookieOpts = (maxAgeSeconds) => ({
 function requireSession(req, res, next) {
   const payload = verify(req.cookies.session);
   if (!payload || !payload.email) return res.status(401).json({ error: "not_signed_in" });
-  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(payload.email);
-  if (!row || row.status !== "approved") return res.status(401).json({ error: "not_approved" });
-  req.user = { email: row.email, name: row.name, credentials: "CRNA", hasPassword: !!row.password_hash, employmentType: row.employment_type || null };
+  const row = lapseIfExpired(db.prepare("SELECT * FROM access_requests WHERE email = ?").get(payload.email));
+  if (!row || row.status !== "approved") return res.status(401).json({ error: row && row.status === "expired" ? "access_expired" : "not_approved" });
+  req.user = { email: row.email, name: row.name, credentials: row.role === "srna" ? "SRNA" : "CRNA", role: row.role === "srna" ? "srna" : "crna", hasPassword: !!row.password_hash, employmentType: row.employment_type || null, accessThrough: row.role === "srna" ? monthYearLabel(row) : undefined };
   next();
+}
+
+// A student's access ends at the end of their expected graduation month. The moment it passes the
+// account flips to 'expired' (so every route, sign-in and emailed link stops working); the
+// "your access expired" email is sent by runSrnaExpiry() during the day.
+function lapseIfExpired(row) {
+  if (row && row.role === "srna" && row.status === "approved" && row.srna_expires_at && Date.parse(row.srna_expires_at) <= Date.now()) {
+    db.prepare("UPDATE access_requests SET status='expired' WHERE id=? AND status='approved'").run(row.id);
+    return { ...row, status: "expired" };
+  }
+  return row;
+}
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function monthYearLabel(row) {
+  const m = Number(row.srna_grad_month);
+  return m >= 1 && m <= 12 ? `${MONTH_NAMES[m - 1]} ${row.srna_grad_year}` : String(row.srna_grad_year || "");
+}
+// First instant of the month AFTER the graduation month (05:00 UTC = midnight Eastern standard time).
+function srnaExpiresAtFor(month, year) {
+  return new Date(Date.UTC(Number(year), Number(month), 1, 5, 0, 0)).toISOString();
+}
+function runSrnaExpiry() {
+  db.prepare("SELECT * FROM access_requests WHERE role='srna' AND status='approved' AND srna_expires_at IS NOT NULL").all().forEach(lapseIfExpired);
+  const hour = easternHour();
+  if (hour < 9 || hour >= 18) return; // the email goes out during the day, Eastern
+  const due = db.prepare("SELECT * FROM access_requests WHERE role='srna' AND status='expired' AND srna_expired_emailed_at IS NULL").all();
+  for (const row of due) {
+    // Stamp first: never send it twice.
+    db.prepare("UPDATE access_requests SET srna_expired_emailed_at=? WHERE id=?").run(new Date().toISOString(), row.id);
+    sendSrnaTemplate("expired", { to: row.email, row, ctx: srnaCtx(row), replyTo: REPLY_TO })
+      .catch((e) => console.error("SRNA expiry email failed:", e.message));
+  }
+}
+
+// Student (SRNA) accounts are read-only: they can search and read, never post or message.
+function requireCrna(req, res, next) {
+  requireSession(req, res, () => {
+    if (req.user.role === "srna") return res.status(403).json({ error: "student_read_only" });
+    next();
+  });
 }
 
 function requireAdmin(req, res, next) {
@@ -77,7 +117,7 @@ app.post("/api/request-access", async (req, res) => {
   const existing = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
   if (existing) {
     db.prepare(
-      "UPDATE access_requests SET name=?, nbcrna_number=?, phone=?, status='pending', requested_at=?, decided_at=NULL, terms_version=?, terms_accepted_at=?, terms_ip=?, terms_user_agent=?, sms_consent=? WHERE email=?"
+      "UPDATE access_requests SET role='crna', srna_school=NULL, srna_program=NULL, srna_grad_year=NULL, srna_grad_month=NULL, srna_expires_at=NULL, instructor_name=NULL, instructor_email=NULL, name=?, nbcrna_number=?, phone=?, status='pending', requested_at=?, decided_at=NULL, terms_version=?, terms_accepted_at=?, terms_ip=?, terms_user_agent=?, sms_consent=? WHERE email=?"
     ).run(name, nbcrnaNumber, phone, now, termsV, now, termsIp, termsUa, sms, email);
   } else {
     db.prepare(
@@ -91,6 +131,274 @@ app.post("/api/request-access", async (req, res) => {
   // Eric chose (Sep 19, 2026): check NBCRNA in the background and approve a clean
   // match on the spot; anything else goes to his inbox with Approve / Reject.
   handleNewRequest(row, { wasRejected: existing?.status === "rejected" }).catch((e) => console.error("New-request handling failed:", e.message));
+});
+
+
+// ---------- SRNA (student) access requests ----------
+// Students have no NBCRNA number. They give their school, program, expected graduation year and
+// a program contact (instructor / director / coordinator). The contact is emailed a pre-made
+// template with "Yes, verify" / "I can't verify" links; "verify" approves the student on the spot,
+// sends the student a sign-in + create-password link and thanks the contact. SRNAs are read-only.
+
+// Only these two addresses may be used without a .edu ending (testing the SRNA flow). Override with SRNA_TEST_EMAILS (comma list).
+const SRNA_TEST_EMAILS = (process.env.SRNA_TEST_EMAILS || "erichayslip@gmail.com,ehayslip1@gmail.com").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean);
+
+const SRNA_TEMPLATES = {
+  ask: {
+    name: "SRNA — program contact verification",
+    subject: "Can you verify {{student_name}} as a student in your program?",
+    body: `Hi {{instructor_name}},
+
+{{student_name}} has asked for student access to CRNA Critics, a review site where practicing CRNAs rate the agencies, recruiters, hospitals and anesthesia groups they have worked with. Students get read-only access: they can read reviews, but they can never post.
+
+They listed you as their contact at {{school}}:
+
+Student: {{student_name}}
+Program: {{program}}
+Expected graduation: {{grad_month_year}}
+
+Can you confirm that this person is currently enrolled? It takes one tap, no account or login is needed.
+
+{{verify_link}}
+
+{{cant_verify_link}}
+
+If you don't recognize this student, or you'd rather not say, tap the second button. Nothing is shared with them beyond "could not be verified", and nothing is shared about you.
+
+Thank you for your time.
+
+— Eric Hayslip, CRNA, CRNA Critics`,
+  },
+  welcome: {
+    name: "SRNA — approved, sign in",
+    subject: "You're approved for student access to CRNA Critics",
+    body: `Hi {{first_name}},
+
+Good news: your program contact confirmed you, and your student (SRNA) account at CRNA Critics is approved.
+
+You can search and read every review on the site. Posting reviews and messaging are for practicing CRNAs, so your account is read-only.
+
+Your student access runs through {{grad_month_year}}, the expected graduation date you gave us. After that month it ends automatically, and we'll email you how to join as a CRNA with your NBCRNA credentials.
+
+Use the button below to sign in for the first time and create your password. After that you'll sign in with your email and password.
+
+{{login_link}}
+
+This link expires in 48 hours. If it expires, use "Forgot your password?" on the sign-in screen for a new one.
+
+— Eric, CRNA Critics`,
+  },
+  expired: {
+    name: "SRNA — access expired",
+    subject: "Your CRNA Critics student access has expired",
+    body: `Hi {{first_name}},
+
+Your student (SRNA) access to CRNA Critics at https://www.crnacritics.com ran through {{grad_month_year}}, the expected graduation date you gave us, and it has now expired. You can no longer sign in with your student account.
+
+If you've finished your program and earned your NBCRNA certification, we'd love to have you back as a CRNA. CRNAs can read every review and post their own, anonymously.
+
+To join as a CRNA:
+
+1. Go to https://www.crnacritics.com and tap "First time here? Get verified".
+2. Enter your first and last name and your NBCRNA certification number exactly as they appear on your NBCRNA record.
+3. Accept the Terms and submit. We check your credential against NBCRNA, and if it matches you're approved right away and get a sign-in link by email.
+
+{{cta}}
+
+Congratulations on finishing, and thank you for using CRNA Critics as a student.
+
+— Eric Hayslip, CRNA, CRNA Critics`,
+  },
+  thanks: {
+    name: "SRNA — thank you to program contact",
+    subject: "Thank you for verifying {{student_name}}",
+    body: `Hi {{instructor_name}},
+
+Thank you for taking the time to verify {{student_name}}. Your confirmation let us approve their student access right away.
+
+I know how full a program director's or instructor's inbox is, and I appreciate it. If you ever have a question about CRNA Critics, just reply to this email.
+
+— Eric Hayslip, CRNA, CRNA Critics`,
+  },
+};
+function ensureSrnaTemplates() {
+  const now = new Date().toISOString();
+  for (const t of Object.values(SRNA_TEMPLATES)) {
+    if (db.prepare("SELECT 1 FROM email_templates WHERE name = ?").get(t.name)) continue;
+    db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), t.name, "SRNA", t.subject, t.body, now, now);
+  }
+}
+ensureSrnaTemplates();
+
+function srnaCtx(row, extra = {}) {
+  return {
+    name: row.name, email: row.email, reviewCount: 0, baseUrl: BASE_URL,
+    studentName: row.name, school: row.srna_school || "", program: row.srna_program || "", gradYear: row.srna_grad_year || "", gradMonthYear: monthYearLabel(row),
+    instructorName: row.instructor_name || "there",
+    ...extra,
+  };
+}
+// Sends one of the three SRNA templates (editable under Email → Templates), falling back to the built-in text.
+function sendSrnaTemplate(key, { to, row, ctx, replyTo }) {
+  const def = SRNA_TEMPLATES[key];
+  const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(def.name) || def;
+  return sendEmail({ to, replyTo, subject: fillTokens(tpl.subject, ctx), html: plainMailHtml({ body: tpl.body, ctx }) });
+}
+function instructorTokenUrl(row, d) {
+  const t = sign({ id: row.id, purpose: "srna_instructor" }, 60 * 60 * 24 * 60);
+  return `${BASE_URL}/srna/verify?t=${encodeURIComponent(t)}&d=${d}`;
+}
+async function sendInstructorRequest(row) {
+  const ctx = srnaCtx(row, { name: row.instructor_name, verifyUrl: instructorTokenUrl(row, "verify"), cantVerifyUrl: instructorTokenUrl(row, "cant") });
+  await sendSrnaTemplate("ask", { to: row.instructor_email, row, ctx, replyTo: REPLY_TO });
+  db.prepare("UPDATE access_requests SET instructor_asked_at=? WHERE id=?").run(new Date().toISOString(), row.id);
+}
+function sendSrnaWelcome(row) {
+  const loginToken = sign({ email: row.email, purpose: "login" }, LINK_SECONDS);
+  const ctx = srnaCtx(row, { loginUrl: `${BASE_URL}/api/auth/verify?token=${loginToken}` });
+  return sendSrnaTemplate("welcome", { to: row.email, row, ctx, replyTo: REPLY_TO });
+}
+function notifyAdminSrna(subject, lines) {
+  if (!process.env.ADMIN_EMAIL) return;
+  sendEmail({
+    to: process.env.ADMIN_EMAIL,
+    subject,
+    html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">${emailHeaderHtml(BASE_URL, 480)}${lines.map((l) => `<p>${l}</p>`).join("")}<p style="color:#888;font-size:12px;">Manage SRNAs under Site admin → SRNAs.</p></div>`,
+  }).catch((e) => console.error("SRNA admin notice failed:", e.message));
+}
+
+app.post("/api/request-access-srna", async (req, res) => {
+  const { phone, acceptedTerms, termsVersion } = req.body || {};
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const instructorEmail = String(req.body?.instructorEmail || "").trim().toLowerCase();
+  const clean = (v, n = 60) => String(v || "").trim().replace(/\s+/g, " ").slice(0, n);
+  const firstName = clean(req.body?.firstName);
+  const lastName = clean(req.body?.lastName);
+  const school = clean(req.body?.school, 120);
+  const program = clean(req.body?.program, 120);
+  const gradYear = clean(req.body?.gradYear, 4);
+  const gradMonth = parseInt(req.body?.gradMonth, 10);
+  const instructorName = clean(req.body?.instructorName, 80);
+  // School addresses only: both the student's and the program contact's email must end in .edu.
+  // Eric's two test inboxes are exempt so he can try the student flow end to end.
+  const emailOk = (e) => /^[^\s@]+@[^\s@]+\.edu$/i.test(e) || SRNA_TEST_EMAILS.includes(String(e).toLowerCase());
+  if (!firstName || !lastName) return res.status(400).json({ error: "first_last_required" });
+  if (email && !emailOk(email)) return res.status(400).json({ error: "student_email_not_edu" });
+  if (instructorEmail && !emailOk(instructorEmail)) return res.status(400).json({ error: "instructor_email_not_edu" });
+  if (!school || !program || !/^20\d\d$/.test(gradYear) || !(gradMonth >= 1 && gradMonth <= 12) || !phone || !emailOk(email) || !instructorName || !emailOk(instructorEmail)) {
+    return res.status(400).json({ error: "missing_fields" });
+  }
+  // Access runs through the end of the graduation month they enter, so it has to be in the future.
+  const expiresAt = srnaExpiresAtFor(gradMonth, gradYear);
+  if (Date.parse(expiresAt) <= Date.now()) return res.status(400).json({ error: "grad_in_past" });
+  if (Number(gradYear) > new Date().getFullYear() + 6) return res.status(400).json({ error: "grad_too_far" });
+  if (instructorEmail === email) return res.status(400).json({ error: "instructor_same_as_student" });
+  if (!acceptedTerms) return res.status(400).json({ error: "terms_not_accepted" });
+  const now = new Date().toISOString();
+  const termsIp = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim().slice(0, 64);
+  const termsUa = String(req.headers["user-agent"] || "").slice(0, 300);
+  const termsV = String(termsVersion || "srna-unknown").slice(0, 32);
+  const name = `${firstName} ${lastName}`;
+  const existing = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
+  // Never touch an approved account (a CRNA, or an SRNA already in) from this form.
+  if (existing && existing.status === "approved") return res.status(409).json({ error: "already_member" });
+  if (existing) {
+    db.prepare(
+      "UPDATE access_requests SET name=?, nbcrna_number='SRNA', phone=?, status='pending', role='srna', srna_school=?, srna_program=?, srna_grad_year=?, srna_grad_month=?, srna_expires_at=?, srna_expired_emailed_at=NULL, instructor_name=?, instructor_email=?, instructor_asked_at=NULL, instructor_decision=NULL, instructor_decided_at=NULL, requested_at=?, decided_at=NULL, terms_version=?, terms_accepted_at=?, terms_ip=?, terms_user_agent=?, sms_consent=0 WHERE email=?"
+    ).run(name, String(phone).slice(0, 40), school, program, gradYear, gradMonth, expiresAt, instructorName, instructorEmail, now, termsV, now, termsIp, termsUa, email);
+  } else {
+    db.prepare(
+      "INSERT INTO access_requests (id, name, nbcrna_number, email, phone, status, requested_at, terms_version, terms_accepted_at, terms_ip, terms_user_agent, sms_consent, role, srna_school, srna_program, srna_grad_year, srna_grad_month, srna_expires_at, instructor_name, instructor_email) VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,0,'srna',?,?,?,?,?,?,?)"
+    ).run(crypto.randomUUID(), name, "SRNA", email, String(phone).slice(0, 40), now, termsV, now, termsIp, termsUa, school, program, gradYear, gradMonth, expiresAt, instructorName, instructorEmail);
+  }
+  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
+  res.json({ ok: true });
+  try {
+    await sendInstructorRequest(row);
+    notifyAdminSrna(`CRNA Critics — SRNA application: ${escapeHtml(row.name)}`, [
+      `<strong>${escapeHtml(row.name)}</strong> applied for student access (${escapeHtml(row.srna_school)} · ${escapeHtml(row.srna_program)} · ${escapeHtml(monthYearLabel(row))}).`,
+      `Verification email sent to ${escapeHtml(row.instructor_name)} &lt;${escapeHtml(row.instructor_email)}&gt;. They'll be approved automatically when the contact taps "verify".`,
+    ]);
+  } catch (e) {
+    console.error("Instructor email failed:", e.message);
+    notifyAdminSrna(`CRNA Critics — SRNA application: ${escapeHtml(row.name)} (instructor email FAILED)`, [
+      `<strong>${escapeHtml(row.name)}</strong> applied, but the email to ${escapeHtml(row.instructor_email)} failed: ${escapeHtml(e.message)}. Use "Resend" on the SRNAs tab.`,
+    ]);
+  }
+});
+
+// The program contact's page. GET only shows a confirm button (so a mail scanner that pre-opens
+// links can't decide anything); POST records the answer.
+const srnaPage = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head>
+  <body style="font-family:Arial,sans-serif;max-width:480px;margin:50px auto;padding:0 16px;color:#14231F;">
+  <div style="background:#0B1526;border-bottom:8px solid #13A15A;color:#fff;text-align:center;padding:14px;font-weight:bold;letter-spacing:1px;">CRNA CRITICS</div>${body}</body></html>`;
+function srnaRowFromToken(t) {
+  const payload = verify(String(t || ""));
+  if (!payload || payload.purpose !== "srna_instructor" || !payload.id) return null;
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ? AND role = 'srna'").get(payload.id);
+  return row || null;
+}
+app.get("/srna/verify", (req, res) => {
+  const row = srnaRowFromToken(req.query.t);
+  if (!row) return res.status(400).send(srnaPage("Link expired", `<h2>Link expired or invalid</h2><p>Please reply to the original email and we'll send a new one.</p>`));
+  const d = req.query.d === "cant" ? "cant" : "verify";
+  if (row.instructor_decision) {
+    return res.send(srnaPage("Already answered", `<h2>Already answered</h2><p>Your answer for ${escapeHtml(row.name)} was recorded. Thank you.</p>`));
+  }
+  const yes = d === "verify";
+  res.send(srnaPage("Confirm", `
+    <h2 style="color:${yes ? "#13A15A" : "#8C3A32"};">${yes ? "Verify this student?" : "You can't verify this student?"}</h2>
+    <p><strong>${escapeHtml(row.name)}</strong><br>${escapeHtml(row.srna_school || "")}<br>${escapeHtml(row.srna_program || "")} · expected graduation ${escapeHtml(monthYearLabel(row))}</p>
+    <p style="color:#555;">${yes ? "This confirms they are currently enrolled in your program. They'll get student (read-only) access." : "They will not be given access automatically."}</p>
+    <form method="post" action="/srna/verify"><input type="hidden" name="t" value="${escapeHtml(String(req.query.t))}"><input type="hidden" name="d" value="${d}">
+      <button type="submit" style="background:${yes ? "#13A15A" : "#8C3A32"};color:#fff;border:0;padding:13px 22px;border-radius:4px;font-weight:bold;font-size:16px;">${yes ? "Yes, verify" : "Confirm: can't verify"}</button></form>`));
+});
+app.post("/srna/verify", express.urlencoded({ extended: false }), async (req, res) => {
+  const row = srnaRowFromToken(req.body?.t);
+  if (!row) return res.status(400).send(srnaPage("Link expired", `<h2>Link expired or invalid</h2>`));
+  if (row.instructor_decision) return res.send(srnaPage("Already answered", `<h2>Already answered</h2><p>Your answer for ${escapeHtml(row.name)} was already recorded. Thank you.</p>`));
+  const yes = req.body.d !== "cant";
+  const now = new Date().toISOString();
+  if (yes && row.srna_expires_at && Date.parse(row.srna_expires_at) <= Date.now()) {
+    return res.send(srnaPage("Too late", `<h2>This student's graduation month has already passed.</h2><p>They can apply again as a CRNA with their NBCRNA credentials. Thank you.</p>`));
+  }
+  db.prepare("UPDATE access_requests SET instructor_decision=?, instructor_decided_at=? WHERE id=?").run(yes ? "verified" : "cant_verify", now, row.id);
+  if (yes) {
+    // Approve only if still pending: never override a decision Eric already made.
+    const r = db.prepare("UPDATE access_requests SET status='approved', decided_at=? WHERE id=? AND status='pending'").run(now, row.id);
+    if (r.changes === 1) {
+      const fresh = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(row.id);
+      sendSrnaWelcome(fresh).catch((e) => console.error("SRNA welcome failed:", e.message));
+      sendSrnaTemplate("thanks", { to: row.instructor_email, row, ctx: srnaCtx(row, { name: row.instructor_name }), replyTo: REPLY_TO })
+        .catch((e) => console.error("Instructor thank-you failed:", e.message));
+      notifyAdminSrna(`CRNA Critics — SRNA verified: ${escapeHtml(row.name)}`, [`${escapeHtml(row.instructor_name)} verified <strong>${escapeHtml(row.name)}</strong>. Approved, sign-in link sent, instructor thanked.`]);
+    }
+    return res.send(srnaPage("Thank you", `<h2 style="color:#13A15A;">Verified. Thank you!</h2><p>${escapeHtml(row.name)} has been approved for student access. We'll send you a short thank-you email too.</p>`));
+  }
+  notifyAdminSrna(`CRNA Critics — SRNA could not be verified: ${escapeHtml(row.name)}`, [`${escapeHtml(row.instructor_name)} said they can't verify <strong>${escapeHtml(row.name)}</strong> (${escapeHtml(row.srna_school || "")}). They stay pending. Decide under Site admin → SRNAs.`]);
+  res.send(srnaPage("Thank you", `<h2>Thanks for letting us know.</h2><p>${escapeHtml(row.name)} will not be given access automatically.</p>`));
+});
+
+// Back office
+app.post("/api/admin/srna/:id/resend-instructor", requireAdmin, async (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ? AND role = 'srna'").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.status !== "pending") return res.status(400).json({ error: "not_pending" });
+  db.prepare("UPDATE access_requests SET instructor_decision=NULL, instructor_decided_at=NULL WHERE id=?").run(row.id);
+  try { await sendInstructorRequest(db.prepare("SELECT * FROM access_requests WHERE id = ?").get(row.id)); res.json({ ok: true, sentTo: row.instructor_email }); }
+  catch (e) { res.status(502).json({ error: "send_failed", message: e.message }); }
+});
+// Approve (without waiting on the contact) or reject a student by hand. Rejecting sends no email.
+app.post("/api/admin/srna/:id/decide", requireAdmin, async (req, res) => {
+  const decision = req.body?.decision;
+  if (!["approved", "rejected"].includes(decision)) return res.status(400).json({ error: "bad_decision" });
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ? AND role = 'srna'").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (decision === "approved" && row.srna_expires_at && Date.parse(row.srna_expires_at) <= Date.now()) return res.status(400).json({ error: "window_passed" });
+  db.prepare("UPDATE access_requests SET status=?, decided_at=? WHERE id=?").run(decision, new Date().toISOString(), row.id);
+  if (decision === "approved") sendSrnaWelcome(row).catch((e) => console.error("SRNA welcome failed:", e.message));
+  res.json({ ok: true });
 });
 
 async function handleNewRequest(row, { wasRejected = false } = {}) {
@@ -145,7 +453,9 @@ function autoApprovedEmailHtml(row, check) {
           ${emailHeaderHtml(BASE_URL, 480)}
           <h2 style="color:#123C3A;">New member approved automatically</h2>
           <p><strong>${escapeHtml(row.name)}</strong></p>
-          <p>NBCRNA #: ${escapeHtml(row.nbcrna_number)}<br/>
+          <p>${row.role === "srna"
+            ? `School: ${escapeHtml(row.srna_school || "")}<br/>Program: ${escapeHtml(row.srna_program || "")}<br/>Expected graduation: ${escapeHtml(monthYearLabel(row))}<br/>`
+            : `NBCRNA #: ${escapeHtml(row.nbcrna_number)}<br/>`}
              Email: ${escapeHtml(row.email)}<br/>
              Phone: ${escapeHtml(row.phone)}</p>
           <p style="background:#EEF6F1;border-left:4px solid #1F5C57;padding:10px 12px;">&#10003; ${escapeHtml(check.reason)}.<br/>${nbcrnaRecordLine(check)}</p>
@@ -170,7 +480,7 @@ function sendVerifyRequestEmail(row, check) {
       html: `
         <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
           ${emailHeaderHtml(BASE_URL, 480)}
-          <h2 style="color:#123C3A;">New CRNA verification request</h2>
+          <h2 style="color:#123C3A;">New ${row.role === "srna" ? "SRNA (student)" : "CRNA"} verification request</h2>
           <p><strong>${escapeHtml(row.name)}</strong></p>
           <p>NBCRNA #: ${escapeHtml(row.nbcrna_number)}<br/>
              Email: ${escapeHtml(row.email)}<br/>
@@ -391,18 +701,21 @@ app.post("/api/admin/reject/:id", adminPage, express.urlencoded({ extended: fals
 // Emailed links remain available as a "forgot password" fallback.
 
 function sendWelcomeEmail(row) {
+  if (row.role === "srna") return sendSrnaWelcome(row);
   const loginToken = sign({ email: row.email, purpose: "login" }, LINK_SECONDS);
   const loginUrl = `${BASE_URL}/api/auth/verify?token=${loginToken}`;
   return sendEmail({
     to: row.email,
     replyTo: REPLY_TO,
-    subject: "You're verified on CRNA Critics",
+    subject: row.role === "srna" ? "You're approved for student access on CRNA Critics" : "You're verified on CRNA Critics",
     html: `
       <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
         ${emailHeaderHtml(BASE_URL, 480)}
         <h2 style="color:#123C3A;">You're verified</h2>
-        <p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics.</p>
-        <p style="background:#EEF6F1;border-left:4px solid #1F5C57;padding:10px 12px;">&#128274; <strong>You're anonymous.</strong> Your name is never shown on the site — every review you post appears as "Anonymous CRNA," so no one will know who you are.</p>
+        ${row.role === "srna"
+          ? `<p>Hi ${escapeHtml(row.name)}, you're approved for student (SRNA) access to CRNA Critics. You can search and read every review. Posting and messaging are for practicing CRNAs, so your account is read-only until you're certified.</p>`
+          : `<p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics.</p>
+        <p style="background:#EEF6F1;border-left:4px solid #1F5C57;padding:10px 12px;">&#128274; <strong>You're anonymous.</strong> Your name is never shown on the site — every review you post appears as "Anonymous CRNA," so no one will know who you are.</p>`}
         <p>Use the button below to sign in for the first time and create your password. After that, you'll sign in with your email and password — no more links.</p>
         <p><a href="${loginUrl}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Sign in &amp; create password</a></p>
         <p style="color:#888;font-size:12px;">This link expires in 48 hours. If it expires, use "Forgot password" on the sign-in screen to get a new one.</p>
@@ -476,7 +789,7 @@ app.post("/api/auth/login", (req, res) => {
   if (!email || !password) return res.status(400).json({ error: "missing_fields" });
   if (loginLocked(email)) return res.status(429).json({ error: "locked" });
 
-  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
+  const row = lapseIfExpired(db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email));
   if (!row) return res.status(401).json({ error: "not_found" });
   if (row.status !== "approved") return res.status(401).json({ error: row.status });
   if (!row.password_hash) return res.status(401).json({ error: "no_password" });
@@ -508,7 +821,7 @@ app.post("/api/auth/employment", requireSession, (req, res) => {
 app.post("/api/auth/request-link", async (req, res) => {
   const email = String(req.body?.email || "").trim().toLowerCase();
   if (!email) return res.status(400).json({ error: "missing_email" });
-  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
+  const row = lapseIfExpired(db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email));
   if (!row) return res.json({ ok: false, reason: "not_found" });
   if (row.status !== "approved") return res.json({ ok: false, reason: row.status });
 
@@ -536,9 +849,9 @@ app.get("/api/auth/verify", (req, res) => {
   if (!payload || payload.purpose !== "login" || !payload.email) {
     return res.status(400).send("Link expired or invalid. Go back and request a new sign-in link.");
   }
-  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(payload.email);
+  const row = lapseIfExpired(db.prepare("SELECT * FROM access_requests WHERE email = ?").get(payload.email));
   if (!row || row.status !== "approved") {
-    return res.status(403).send("This account is not an approved CRNA.");
+    return res.status(403).send(row && row.status === "expired" ? "Your student access has expired. Sign up as a CRNA at crnacritics.com with your NBCRNA credentials." : "This account is not an approved CRNA.");
   }
   const session = sign({ email: row.email }, SESSION_SECONDS);
   res.cookie("session", session, cookieOpts(SESSION_SECONDS));
@@ -751,7 +1064,7 @@ app.delete("/api/admin/templates/:id", requireAdmin, (req, res) => {
 // Every decided member, with what the admin needs to pick from: whether they've
 // opted out of mailings, how many reviews they've posted, and when they last posted.
 app.get("/api/admin/email/recipients", requireAdmin, (req, res) => {
-  const rows = db.prepare("SELECT * FROM access_requests WHERE status = 'approved' ORDER BY name").all();
+  const rows = db.prepare("SELECT * FROM access_requests WHERE status = 'approved' AND COALESCE(role,'crna') <> 'srna' ORDER BY name").all();
   const recipients = rows.map((r) => {
     const last = db
       .prepare("SELECT date FROM reviews WHERE reviewer_email = ? ORDER BY date DESC LIMIT 1")
@@ -847,7 +1160,7 @@ app.post("/api/admin/email/send", requireAdmin, (req, res) => {
 
   const all = !!req.body?.all;
   const ids = Array.isArray(req.body?.recipientIds) ? req.body.recipientIds.map(String) : [];
-  const approved = db.prepare("SELECT * FROM access_requests WHERE status = 'approved'").all();
+  const approved = db.prepare("SELECT * FROM access_requests WHERE status = 'approved' AND COALESCE(role,'crna') <> 'srna'").all();
   const chosen = all ? approved : approved.filter((r) => ids.includes(r.id));
   const mailable = chosen.filter((r) => !r.bulk_unsubscribed);
   if (mailable.length === 0) return res.status(400).json({ error: "no_recipients" });
@@ -929,7 +1242,7 @@ function easternHour(date = new Date()) {
 }
 
 function nudgeDue(program, row, nowMs) {
-  if (row.status !== "approved" || row.bulk_unsubscribed) return false;
+  if (row.status !== "approved" || row.bulk_unsubscribed || row.role === "srna") return false;
   if ((row[program.countCol] || 0) >= NUDGE_MAX) return false;
   const anchor = program.anchor(row);
   const anchorMs = anchor ? Date.parse(anchor) : NaN;
@@ -1104,6 +1417,7 @@ function maybeRunDailyScan() {
 }
 
 function runReviewNudges() {
+  try { runSrnaExpiry(); } catch (e) { console.error("SRNA expiry check failed:", e.message); }
   maybeRunDailyScan();
   if (NUDGE_MAX <= 0) return;
   const [from, to] = NUDGE_HOURS.split("-").map(Number);
@@ -1455,7 +1769,7 @@ function rowToReview(r, viewerEmail) {
 
 // ---------- private messages ("Ask this reviewer") — see server/messages.js ----------
 const messaging = registerMessages(app, {
-  db, requireSession, requireAdmin, sendEmail, escapeHtml, emailHeaderHtml, BASE_URL, REPLY_TO, RULES, reviewSubjectLine,
+  db, requireSession: requireCrna, requireAdmin, sendEmail, escapeHtml, emailHeaderHtml, BASE_URL, REPLY_TO, RULES, reviewSubjectLine,
 });
 
 // Admin can force the unanswered-message reminder check (normally hourly, daytime Eastern).
@@ -1540,7 +1854,7 @@ function reviewColumns(b) {
   };
 }
 
-app.post("/api/reviews", requireSession, (req, res) => {
+app.post("/api/reviews", requireCrna, (req, res) => {
   const parsed = reviewColumns(req.body || {});
   if (parsed.error) return res.status(400).json({ error: parsed.error });
   const v = parsed.values;
@@ -1556,7 +1870,7 @@ app.post("/api/reviews", requireSession, (req, res) => {
 
 // Edit your own review. Every rated field can change; the original post date is kept
 // and edited_at records the change.
-app.put("/api/reviews/:id", requireSession, (req, res) => {
+app.put("/api/reviews/:id", requireCrna, (req, res) => {
   const row = db.prepare("SELECT * FROM reviews WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "not_found" });
   if (row.reviewer_email !== req.user.email) return res.status(403).json({ error: "not_yours" });
