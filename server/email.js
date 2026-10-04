@@ -49,6 +49,15 @@ const TOKENS = [
   { token: "{{feedback_link}}", what: "This member's personal link to the site's feedback form (no login needed). On its own line it becomes a \"Give feedback\" button." },
   { token: "{{review_subject}}", what: "Review-notice emails only: what the review was about, e.g. \"Mercy General / Envision\"" },
   { token: "{{flags}}", what: "Review-notice emails only: the flagged passage(s) with why it matters and a better way to say it" },
+  { token: "{{student_name}}", what: "SRNA emails only: the student's full name" },
+  { token: "{{school}}", what: "SRNA emails only: the student's school" },
+  { token: "{{program}}", what: "SRNA emails only: the student's program" },
+  { token: "{{grad_year}}", what: "SRNA emails only: expected graduation year" },
+  { token: "{{grad_month_year}}", what: "SRNA emails only: the month and year their student access runs through, e.g. \"May 2028\"" },
+  { token: "{{instructor_name}}", what: "SRNA emails only: the program contact's name" },
+  { token: "{{verify_link}}", what: "Instructor email only: on its own line it becomes a green \"Yes, verify this student\" button" },
+  { token: "{{cant_verify_link}}", what: "Instructor email only: on its own line it becomes an \"I can't verify this student\" button" },
+  { token: "{{login_link}}", what: "SRNA welcome only: one-time link to sign in and create a password (button on its own line)" },
   { token: "{{cta}}", what: "A big green \"Open CRNA Critics\" button" },
 ];
 
@@ -72,7 +81,16 @@ function fillTokens(text, ctx) {
     .replace(/\{\{\s*review_count\s*\}\}/gi, reviewCountLabel(ctx.reviewCount || 0))
     .replace(/\{\{\s*site_url\s*\}\}/gi, ctx.baseUrl || "")
     .replace(/\{\{\s*feedback_link\s*\}\}/gi, ctx.feedbackUrl || `${ctx.baseUrl || ""}/feedback`)
-    .replace(/\{\{\s*review_subject\s*\}\}/gi, ctx.reviewSubject || "your review");
+    .replace(/\{\{\s*review_subject\s*\}\}/gi, ctx.reviewSubject || "your review")
+    .replace(/\{\{\s*student_name\s*\}\}/gi, ctx.studentName || "")
+    .replace(/\{\{\s*school\s*\}\}/gi, ctx.school || "")
+    .replace(/\{\{\s*program\s*\}\}/gi, ctx.program || "")
+    .replace(/\{\{\s*grad_month_year\s*\}\}/gi, ctx.gradMonthYear || ctx.gradYear || "")
+    .replace(/\{\{\s*grad_year\s*\}\}/gi, ctx.gradYear || "")
+    .replace(/\{\{\s*instructor_name\s*\}\}/gi, ctx.instructorName || "")
+    .replace(/\{\{\s*verify_link\s*\}\}/gi, ctx.verifyUrl || "")
+    .replace(/\{\{\s*cant_verify_link\s*\}\}/gi, ctx.cantVerifyUrl || "")
+    .replace(/\{\{\s*login_link\s*\}\}/gi, ctx.loginUrl || "");
 }
 
 // Plain text -> HTML paragraphs. {{cta}} on its own becomes the button. Everything
@@ -86,7 +104,11 @@ function bodyToHtml(text, ctx) {
   // A {{feedback_link}} that is a paragraph of its own is marked before the tokens are
   // filled, so it can become the button instead of a bare URL.
   const marked = String(text == null ? "" : text)
-    .replace(/(^|\n{2,})[ \t]*\{\{\s*feedback_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{feedback_button}}");
+    .replace(/(^|\n{2,})[ \t]*\{\{\s*feedback_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{feedback_button}}")
+    .replace(/(^|\n{2,})[ \t]*\{\{\s*verify_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{verify_button}}")
+    .replace(/(^|\n{2,})[ \t]*\{\{\s*cant_verify_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{cant_button}}")
+    .replace(/(^|\n{2,})[ \t]*\{\{\s*login_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{login_button}}");
+  const btn = (url, bg, label) => `<p style="margin:14px 0;"><a href="${url}" style="background:${bg};color:#fff;padding:13px 22px;text-decoration:none;border-radius:4px;font-weight:bold;display:inline-block;">${label}</a></p>`;
   return fillTokens(marked, ctx)
     .split(/\n{2,}/)
     .map((block) => {
@@ -95,6 +117,9 @@ function bodyToHtml(text, ctx) {
       if (/^\{\{\s*cta\s*\}\}$/i.test(trimmed)) return ctaHtml;
       if (/^\{\{\s*feedback_button\s*\}\}$/i.test(trimmed)) return feedbackHtml;
       if (/^\{\{\s*flags\s*\}\}$/i.test(trimmed)) return ctx.flagsHtml || "";
+      if (/^\{\{\s*verify_button\s*\}\}$/i.test(trimmed)) return btn(ctx.verifyUrl, "#13A15A", "Yes, I can verify this student");
+      if (/^\{\{\s*cant_button\s*\}\}$/i.test(trimmed)) return btn(ctx.cantVerifyUrl, "#8C3A32", "I can't verify this student");
+      if (/^\{\{\s*login_button\s*\}\}$/i.test(trimmed)) return btn(ctx.loginUrl, "#123C3A", "Sign in &amp; create your password");
       const html = escapeHtml(trimmed)
         .replace(/\{\{\s*cta\s*\}\}/gi, "")
         // Trailing sentence punctuation stays outside the link.
@@ -119,4 +144,13 @@ function campaignHtml({ body, ctx, unsubscribeUrl }) {
     </div>`;
 }
 
-module.exports = { sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, bodyToHtml, firstNameOf, reviewCountLabel, TOKENS };
+// Shell for one-off SRNA / program-contact mail: same header, no member-mailing unsubscribe line.
+function plainMailHtml({ body, ctx }) {
+  return `
+    <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#14231F;">
+      ${emailHeaderHtml(ctx.baseUrl, 560)}
+      ${bodyToHtml(body, ctx)}
+    </div>`;
+}
+
+module.exports = { plainMailHtml, sendEmail, REPLY_TO, escapeHtml, campaignHtml, fillTokens, bodyToHtml, firstNameOf, reviewCountLabel, TOKENS };
