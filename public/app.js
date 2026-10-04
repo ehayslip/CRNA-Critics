@@ -470,7 +470,7 @@ async function init() {
     state.side = loadSide();
     state.view = cameFromLink || !state.user.hasPassword ? "setpw" : nextViewAfterAuth();
     await loadReviews();
-    startUnreadPolling();
+    if (!isStudent()) startUnreadPolling();
   } catch {
     state.view = "home";
   }
@@ -480,6 +480,7 @@ async function init() {
 // Members pick how they're working (locum vs. staff) once; it decides which review form they get.
 // Every sign-in starts by choosing a side (locum or full-time/part-time); after that the
 // switch bar at the top flips between them.
+function isStudent() { return !!(state.user && state.user.role === "srna"); }
 function nextViewAfterAuth() {
   return state.side ? "app" : "employment";
 }
@@ -547,7 +548,7 @@ function render() {
   if (state.view === "admin") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body" id="admin-root"></div>` + footerHtml(); attachFooterHandlers(); renderAdmin(); return; }
   if (state.view === "terms") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${termsPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachTermsPageHandlers(); return; }
   if (state.view === "guidelines") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${guidelinesPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachGuidelinesPageHandlers(); return; }
-  root.innerHTML = headerHtml() + toastHtml() + navHtml() + sideBarHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
+  root.innerHTML = headerHtml() + toastHtml() + navHtml() + studentBannerHtml() + sideBarHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
   attachFooterHandlers();
   attachNavHandlers();
   attachSideBarHandlers();
@@ -652,7 +653,9 @@ function attachGuidelinesPageHandlers() {
 }
 
 function navHtml() {
-  const items = [["search", "Search"], ["submit", "Post a review"], ["mine", "My reviews"], ["messages", "Messages"], ["signout", "Sign out"]];
+  const items = isStudent()
+    ? [["search", "Search"], ["signout", "Sign out"]]
+    : [["search", "Search"], ["submit", "Post a review"], ["mine", "My reviews"], ["messages", "Messages"], ["signout", "Sign out"]];
   return `<div class="nav">${items
     .map(([key, label]) => `<button class="nav-btn${state.tab === key ? " active" : ""}" data-tab="${key}">${label}${key === "messages" ? msgBadgeHtml() : ""}</button>`)
     .join("")}</div>`;
@@ -709,7 +712,13 @@ function attachSideBarHandlers() {
   if (btn) btn.onclick = () => { setSide(otherSide()); window.scrollTo(0, 0); };
 }
 
+function studentBannerHtml() {
+  if (!isStudent()) return "";
+  return `<div class="student-banner"><strong>STUDENT (SRNA) ACCESS &mdash; READ ONLY.</strong> You can search and read every review. Posting and messaging unlock for practicing CRNAs.${state.user.accessThrough ? ` Your student access runs through <strong>${esc(state.user.accessThrough)}</strong>.` : ""}</div>`;
+}
+
 function renderTab() {
+  if (isStudent() && state.tab !== "search") state.tab = "search";
   const el = document.getElementById("tab-root");
   if (state.tab === "search") {
     if (state.detail) {
@@ -905,6 +914,7 @@ function landingHtml() {
         <button class="btn btn-amber" data-go="request">First time here? Get verified</button>
         <button class="btn btn-ghost" data-go="signin">Already a member? Sign in</button>
       </div>
+      <p class="srna-cta"><button type="button" class="inline-link" data-go="srna">Student (SRNA)? Request read-only access</button></p>
     </section>
 
   </div>`;
@@ -913,7 +923,7 @@ function landingHtml() {
 function attachLandingHandlers() {
   document.querySelectorAll("[data-go]").forEach((btn) => {
     btn.onclick = () => {
-      state.gateMode = btn.dataset.go === "request" ? "request" : "signin";
+      state.gateMode = btn.dataset.go === "request" ? "request" : btn.dataset.go === "srna" ? "srna" : "signin";
       state.view = "gate";
       render();
       window.scrollTo(0, 0);
@@ -928,8 +938,9 @@ function gateHtml() {
     <div class="nav">
       <button class="nav-btn${state.gateMode !== "request" ? " active" : ""}" id="gate-signin-tab">Already a member</button>
       <button class="nav-btn${state.gateMode === "request" ? " active" : ""}" id="gate-request-tab">First time here</button>
+      <button class="nav-btn${state.gateMode === "srna" ? " active" : ""}" id="gate-srna-tab">Student (SRNA)</button>
     </div>`;
-  const body = state.gateMode === "request" ? requestFormHtml() : state.gateMode === "link" ? linkFormHtml() : signinFormHtml();
+  const body = state.gateMode === "request" ? requestFormHtml() : state.gateMode === "srna" ? srnaFormHtml() : state.gateMode === "link" ? linkFormHtml() : signinFormHtml();
   return tabs + `<div class="body"><button class="back-btn" id="gate-home-btn" style="margin-bottom:10px">&larr; Back to home</button><div id="gate-body">${body}</div></div>`;
 }
 function signinFormHtml() {
@@ -1051,10 +1062,86 @@ function requestFormHtml() {
       <button class="primary-btn" id="request-submit" style="margin-top:10px" disabled>Agree &amp; submit for verification</button>
     </div>`;
 }
+function srnaFormHtml() {
+  const t = window.CRNA_SRNA_TERMS || {};
+  const thisYear = new Date().getFullYear();
+  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].map((m, i) => `<option value="${i + 1}">${m}</option>`).join("");
+  const years = [0, 1, 2, 3, 4, 5].map((i) => thisYear + i).map((y) => `<option value="${y}">${y}</option>`).join("");
+  return `
+    <div class="card">
+      <div class="section-label">STUDENT (SRNA) ACCESS &mdash; READ ONLY</div>
+      <p class="hint-text" style="margin-top:0">Student registered nurse anesthetists can search and read every review. Posting and messaging are for practicing CRNAs. We confirm your enrollment with a contact at your program: we email them a one-tap &ldquo;verify&rdquo; link, and once they confirm you get your sign-in link by email.</p>
+      <div class="name-row">
+        <input id="srna-first" placeholder="First name" autocomplete="given-name" />
+        <input id="srna-last" placeholder="Last name" autocomplete="family-name" />
+      </div>
+      <input id="srna-email" style="margin-top:8px" type="email" placeholder="Your school email (must end in .edu)" autocomplete="email" />
+      <input id="srna-phone" style="margin-top:8px" type="tel" placeholder="Phone number" autocomplete="tel" />
+      <div class="section-label" style="margin-top:16px">YOUR SCHOOL</div>
+      <input id="srna-school" placeholder="School / university" />
+      <input id="srna-program" style="margin-top:8px" placeholder="Nurse anesthesia program (e.g. DNP Nurse Anesthesia)" />
+      <div class="name-row" style="margin-top:8px">
+        <select id="srna-month"><option value="">Expected graduation month</option>${months}</select>
+        <select id="srna-year"><option value="">Year</option>${years}</select>
+      </div>
+      <p class="hint-text" style="margin:6px 0 0">Your student access runs <strong>through the end of this month</strong> and then ends automatically. We'll email you how to join as a CRNA with your NBCRNA credentials.</p>
+      <div class="section-label" style="margin-top:16px">PROGRAM CONTACT WHO CAN CONFIRM YOU</div>
+      <p class="hint-text" style="margin-top:0">An instructor, program director or coordinator at your school. We email them once to confirm you're enrolled. Their email must be a school address ending in .edu.</p>
+      <input id="srna-inst-name" placeholder="Contact's full name" />
+      <input id="srna-inst-email" style="margin-top:8px" type="email" placeholder="Contact's school email (must end in .edu)" />
+      <div class="section-label" style="margin-top:18px">STUDENT ACCESS AGREEMENT (${esc(t.version || "")})</div>
+      <div class="terms-box terms-doc">${t.html || "<p>The agreement could not be loaded. Refresh the page.</p>"}</div>
+      <label class="checkbox-row"><input type="checkbox" id="srna-attest" />
+        <span>I am currently enrolled as an SRNA, and the information above is accurate. I'm not a recruiter, agency employee or anyone acting for one.</span></label>
+      <label class="checkbox-row"><input type="checkbox" id="srna-terms" />
+        <span><strong>I have read and agree to the Student Access Agreement</strong>, and I agree that CRNA Critics may contact my program contact to verify my enrollment.</span></label>
+      <div id="gate-error" class="error-text"></div>
+      <button class="primary-btn" id="srna-submit" style="margin-top:10px" disabled>Agree &amp; request student access</button>
+    </div>`;
+}
+function attachSrnaFormHandlers() {
+  const attest = document.getElementById("srna-attest");
+  const terms = document.getElementById("srna-terms");
+  const btn = document.getElementById("srna-submit");
+  const sync = () => { btn.disabled = !(attest.checked && terms.checked); };
+  attest.onchange = sync; terms.onchange = sync; sync();
+  btn.onclick = async () => {
+    const v = (id) => document.getElementById(id).value.trim().replace(/\s+/g, " ");
+    const body = {
+      firstName: v("srna-first"), lastName: v("srna-last"), email: v("srna-email"), phone: v("srna-phone"),
+      school: v("srna-school"), program: v("srna-program"), gradYear: v("srna-year"), gradMonth: v("srna-month"),
+      instructorName: v("srna-inst-name"), instructorEmail: v("srna-inst-email"),
+      acceptedTerms: terms.checked, termsVersion: (window.CRNA_SRNA_TERMS || {}).version || "",
+    };
+    const errEl = document.getElementById("gate-error");
+    if (!body.firstName || !body.lastName || !body.email || !body.phone) { errEl.textContent = "Fill in your name, email and phone."; return; }
+    if (!body.school || !body.program || !body.gradYear || !body.gradMonth) { errEl.textContent = "Fill in your school, program and expected graduation month and year."; return; }
+    if (new Date(Number(body.gradYear), Number(body.gradMonth), 1).getTime() <= Date.now()) { errEl.textContent = "That graduation month has already passed. Student access is for students who haven't graduated yet. If you're certified, use the CRNA sign-up."; return; }
+    if (!body.instructorName || !body.instructorEmail) { errEl.textContent = "Add a program contact who can confirm you're enrolled."; return; }
+    const eduOk = (e) => /^[^\s@]+@[^\s@]+\.edu$/i.test(e) || ["erichayslip@gmail.com", "ehayslip1@gmail.com"].includes(e.toLowerCase());
+    if (!eduOk(body.email)) { errEl.textContent = "Your email has to be a school address ending in .edu."; return; }
+    if (!eduOk(body.instructorEmail)) { errEl.textContent = "Your program contact's email has to be a school address ending in .edu."; return; }
+    if (body.instructorEmail.toLowerCase() === body.email.toLowerCase()) { errEl.textContent = "The program contact has to be someone other than you."; return; }
+    errEl.textContent = "";
+    try {
+      await api("/api/request-access-srna", { method: "POST", body });
+      document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Submitted.</p><p class="hint-text">We emailed ${esc(body.instructorName)} at ${esc(body.instructorEmail)} to confirm you're enrolled. As soon as they confirm, we'll email your sign-in link to ${esc(body.email)}.</p></div>`;
+    } catch (e) {
+      const code = e.data && e.data.error;
+      errEl.textContent = code === "grad_in_past" ? "That graduation month has already passed."
+        : code === "student_email_not_edu" ? "Your email has to be a school address ending in .edu."
+        : code === "instructor_email_not_edu" ? "Your program contact's email has to be a school address ending in .edu."
+        : code === "already_member" ? "That email already has an account. Use 'Already a member' to sign in."
+        : code === "missing_fields" ? "Check every field, including a valid email for you and your program contact."
+        : "Something went wrong saving your request. Try again.";
+    }
+  };
+}
 function attachGateHandlers() {
   document.getElementById("gate-home-btn").onclick = () => { state.view = "home"; render(); };
   document.getElementById("gate-signin-tab").onclick = () => { state.gateMode = "signin"; render(); };
   document.getElementById("gate-request-tab").onclick = () => { state.gateMode = "request"; render(); };
+  document.getElementById("gate-srna-tab").onclick = () => { state.gateMode = "srna"; render(); };
 
   if (state.gateMode === "signin") {
     document.getElementById("gate-forgot").onclick = () => { state.gateMode = "link"; render(); };
@@ -1074,6 +1161,7 @@ function attachGateHandlers() {
         if (code === "no_password") errEl.textContent = "This account doesn't have a password yet. Use the one-time link option below to sign in and create one.";
         else if (code === "pending") errEl.textContent = "Your verification is still pending review.";
         else if (code === "rejected") errEl.textContent = "This account wasn't approved. Contact the admin if you think that's a mistake.";
+        else if (code === "expired") errEl.textContent = "Your student access has expired. If you're certified, use the 'First time here' tab to join as a CRNA with your NBCRNA credentials.";
         else if (code === "not_found") errEl.textContent = "No account found with that email. Use the 'First time here' tab to get verified.";
         else if (code === "locked") errEl.textContent = "Too many attempts. Wait 15 minutes, or use the one-time link option below.";
         else errEl.textContent = "Email or password didn't match.";
@@ -1095,6 +1183,8 @@ function attachGateHandlers() {
           errEl.textContent = "Your verification is still pending review.";
         } else if (data.reason === "rejected") {
           errEl.textContent = "This account wasn't approved. Contact the admin if you think that's a mistake.";
+        } else if (data.reason === "expired") {
+          errEl.textContent = "Your student access has expired. If you're certified, use the 'First time here' tab to join as a CRNA with your NBCRNA credentials.";
         } else {
           errEl.textContent = "No account found with that email. Use the 'First time here' tab to get verified.";
         }
@@ -1102,6 +1192,8 @@ function attachGateHandlers() {
         errEl.textContent = "Something went wrong. Try again.";
       }
     };
+  } else if (state.gateMode === "srna") {
+    attachSrnaFormHandlers();
   } else {
     const attestBox = document.getElementById("req-attest");
     const termsBox = document.getElementById("req-terms");
@@ -1469,7 +1561,7 @@ function detailHtml() {
         ${comment ? `<p style="margin:6px 0">${esc(comment)}</p>` : ""}
         <div style="display:flex;justify-content:space-between;align-items:center">
           <p style="margin:0;font-size:12px;color:#6B756F">— Anonymous CRNA${isMine ? ` (you)` : ""}, ${esc(r.reviewer.credentials)}${roleLabel ? ` · ${roleLabel}` : ""} · <span title="Every review is posted anonymously by a verified CRNA">🔒 anonymous</span></p>
-          ${isMine ? `<span style="display:flex;gap:6px"><button class="tiny-btn" data-edit="${r.id}">Edit</button><span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span></span>` : r.acceptsQuestions ? `<button class="tiny-btn ask-btn" data-ask="${r.id}" title="Send this reviewer a private question — you both stay anonymous">&#9993; Ask this reviewer</button>` : ""}
+          ${isMine ? `<span style="display:flex;gap:6px"><button class="tiny-btn" data-edit="${r.id}">Edit</button><span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span></span>` : r.acceptsQuestions && !isStudent() ? `<button class="tiny-btn ask-btn" data-ask="${r.id}" title="Send this reviewer a private question — you both stay anonymous">&#9993; Ask this reviewer</button>` : ""}
         </div>
       </div>`;
   }).join("");
@@ -2778,17 +2870,89 @@ async function loadAdminFlags(force) {
 
 // Draws the dashboard from what's already in state — no fetch — so filtering and
 // opening a row stay instant and don't disturb the filter box.
+
+// ---------- SRNAs back office (students are kept apart from CRNA members) ----------
+function srnaStatusLabel(r) {
+  if (r.status === "expired") return `<span class="srna-pill no">EXPIRED</span>`;
+  if (r.status === "approved") return `<span class="srna-pill ok">APPROVED</span>`;
+  if (r.status === "rejected") return `<span class="srna-pill no">REJECTED</span>`;
+  if (r.instructor_decision === "cant_verify") return `<span class="srna-pill no">CONTACT CAN'T VERIFY</span>`;
+  return `<span class="srna-pill wait">${r.instructor_asked_at ? "WAITING ON CONTACT" : "CONTACT NOT EMAILED"}</span>`;
+}
+function srnaGradLabel(r) {
+  const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const m = Number(r.srna_grad_month);
+  return m >= 1 && m <= 12 ? `${names[m - 1]} ${r.srna_grad_year}` : String(r.srna_grad_year || "?");
+}
+function srnaCardHtml(r) {
+  const when = (t) => (t ? new Date(t).toLocaleString() : "");
+  return `
+    <div class="card srna-card">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap">
+        <div style="font-weight:700">${esc(r.name)}</div>${srnaStatusLabel(r)}
+      </div>
+      <div style="font-size:13px;color:#14231F;margin-top:2px">${esc(r.srna_school || "")} &middot; ${esc(r.srna_program || "")} &middot; grad ${esc(srnaGradLabel(r))}</div>
+      ${r.srna_expires_at ? `<div style="font-size:12px;color:#6B756F">${r.status === "expired" ? "Access ended" : "Access through the end of"} ${esc(srnaGradLabel(r))}${r.srna_expired_emailed_at ? ` &middot; expiry email sent ${esc(when(r.srna_expired_emailed_at))}` : ""}</div>` : ""}
+      <div style="font-size:12px;color:#6B756F">${esc(r.email)} &middot; ${esc(r.phone || "")}</div>
+      <div style="font-size:12px;color:#6B756F;margin-top:4px">Program contact: ${esc(r.instructor_name || "?")} &lt;${esc(r.instructor_email || "?")}&gt;
+        ${r.instructor_asked_at ? `<br>Emailed ${esc(when(r.instructor_asked_at))}` : ""}
+        ${r.instructor_decided_at ? `<br>Answered ${esc(when(r.instructor_decided_at))}: ${r.instructor_decision === "verified" ? "verified" : "can't verify"}` : ""}</div>
+      <div style="font-size:11px;color:#8A948E;margin-top:4px">${r.terms_accepted_at ? `Student agreement ${esc(r.terms_version || "?")} accepted ${esc(when(r.terms_accepted_at))} &middot; IP ${esc(r.terms_ip || "unknown")}` : ""}</div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        ${r.status === "pending" ? `<button class="tiny-btn approve" data-srna-decide="${r.id}::approved">Approve anyway</button><button class="tiny-btn reject" data-srna-decide="${r.id}::rejected">Reject</button><button class="tiny-btn" data-srna-resend="${r.id}">${r.instructor_asked_at ? "Resend" : "Send"} email to contact</button>` : ""}
+        ${r.status === "approved" ? `<button class="tiny-btn" data-srna-link="${r.id}">Resend sign-in link</button><button class="tiny-btn reject" data-srna-decide="${r.id}::rejected">Remove access</button>` : ""}
+        ${r.status === "rejected" ? `<button class="tiny-btn approve" data-srna-decide="${r.id}::approved">Approve</button>` : ""}
+      </div>
+      <div class="srna-note" id="srna-note-${r.id}"></div>
+    </div>`;
+}
+function srnaSection(rows) {
+  const order = { pending: 0, approved: 1, expired: 2, rejected: 3 };
+  const sorted = rows.slice().sort((a, b) => (order[a.status] - order[b.status]) || String(b.requested_at).localeCompare(String(a.requested_at)));
+  return `
+    <p class="hint-text" style="margin-top:8px">Students are read-only: they can search and read, never post or message. A student is approved automatically when their program contact taps &ldquo;verify&rdquo; in the email; the templates are under Email &rarr; Templates (category SRNA).</p>
+    <div class="section-label" style="margin:10px 0">SRNAs (${rows.length})</div>
+    ${rows.length === 0 ? `<p class="hint-text">No student applications yet.</p>` : sorted.map(srnaCardHtml).join("")}`;
+}
+function attachSrnaAdminHandlers() {
+  document.querySelectorAll("[data-srna-link]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.srnaLink;
+      const note = document.getElementById(`srna-note-${id}`);
+      try { const d = await api(`/api/admin/requests/${id}/send-link`, { method: "POST", body: { kind: "welcome" } }); note.textContent = `Sign-in link sent to ${d.sentTo || "the student"}.`; }
+      catch { note.textContent = "Could not send. Try again."; }
+    };
+  });
+  document.querySelectorAll("[data-srna-decide]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [id, decision] = btn.dataset.srnaDecide.split("::");
+      await api(`/api/admin/srna/${id}/decide`, { method: "POST", body: { decision } });
+      renderAdmin();
+    };
+  });
+  document.querySelectorAll("[data-srna-resend]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.srnaResend;
+      const note = document.getElementById(`srna-note-${id}`);
+      try { const d = await api(`/api/admin/srna/${id}/resend-instructor`, { method: "POST" }); note.textContent = `Sent to ${d.sentTo}.`; }
+      catch (e) { note.textContent = "Could not send: " + ((e.data && e.data.message) || "try again"); }
+    };
+  });
+}
+
 function paintAdmin() {
   const el = document.getElementById("admin-root");
   if (!el) return;
-  const pending = state.adminRequests.filter((r) => r.status === "pending");
+  const pending = state.adminRequests.filter((r) => r.status === "pending" && r.role !== "srna");
+  const srnaRows = state.adminRequests.filter((r) => r.role === "srna");
+  const srnaPending = srnaRows.filter((r) => r.status === "pending").length;
   const q = state.adminFilter.trim().toLowerCase();
   const members = state.adminRequests
-    .filter((r) => r.status !== "pending")
+    .filter((r) => r.status !== "pending" && r.role !== "srna")
     .filter((r) => !q || `${r.name} ${r.email} ${r.phone || ""} ${r.nbcrna_number || ""}`.toLowerCase().includes(q))
     .sort(byLastName);
 
-  const tab = ["members", "reviews", "email", "names", "alerts"].includes(state.adminTab) ? state.adminTab : "members";
+  const tab = ["members", "srnas", "reviews", "email", "names", "alerts"].includes(state.adminTab) ? state.adminTab : "members";
   const openFlags = (state.adminFlags || []).filter((f) => f.status === "open").length + msgAlertConvIds().length;
   const dupeCount = state.adminNames ? duplicateCandidates().length : 0;
   const membersSection = `
@@ -2823,12 +2987,13 @@ function paintAdmin() {
     </div>
     <div class="nav admin-tabs">
       <button class="nav-btn${tab === "members" ? " active" : ""}" data-admin-tab="members">Members${pending.length ? ` <span class="tab-badge">${pending.length}</span>` : ""}</button>
+      <button class="nav-btn${tab === "srnas" ? " active" : ""}" data-admin-tab="srnas">SRNAs${srnaPending ? ` <span class="tab-badge">${srnaPending}</span>` : ""}</button>
       <button class="nav-btn${tab === "reviews" ? " active" : ""}" data-admin-tab="reviews">Reviews${state.adminReviews ? ` <span class="tab-badge">${state.adminReviews.length}</span>` : ""}</button>
       <button class="nav-btn${tab === "email" ? " active" : ""}" data-admin-tab="email">Email</button>
       <button class="nav-btn${tab === "names" ? " active" : ""}" data-admin-tab="names">Names${dupeCount ? ` <span class="tab-badge">${dupeCount}</span>` : ""}</button>
       <button class="nav-btn${tab === "alerts" ? " active" : ""}" data-admin-tab="alerts">Alerts${openFlags ? ` <span class="tab-badge alert-badge">${openFlags}</span>` : ""}</button>
     </div>
-    ${tab === "members" ? membersSection : tab === "reviews" ? adminReviewsSection() : tab === "email" ? emailSection() : tab === "alerts" ? alertsSection() : namesSection}`;
+    ${tab === "members" ? membersSection : tab === "srnas" ? srnaSection(srnaRows) : tab === "reviews" ? adminReviewsSection() : tab === "email" ? emailSection() : tab === "alerts" ? alertsSection() : namesSection}`;
 
   document.querySelectorAll("[data-admin-tab]").forEach((btn) => {
     btn.onclick = () => {
@@ -2851,6 +3016,7 @@ function paintAdmin() {
   };
   attachDuplicateHandlers();
   attachDirectoryHandlers();
+  attachSrnaAdminHandlers();
   document.querySelectorAll("[data-decide]").forEach((btn) => {
     btn.onclick = async () => {
       const [id, decision] = btn.dataset.decide.split("::");
