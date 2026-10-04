@@ -868,6 +868,54 @@ app.get("/api/me", requireSession, (req, res) => {
   res.json({ user: req.user });
 });
 
+// Self-service profile deletion, open to every member type (CRNA and SRNA student).
+// The member must send {confirm:"DELETE"}. Their private messages, feedback answers and mailing
+// log rows are always erased. Reviews follow their choice: {deleteReviews:true} removes them;
+// otherwise they stay up (already anonymous) but are cut loose from the account — the stored
+// email/name become a placeholder, so nothing on the site or in the admin points at the person.
+app.delete("/api/me", requireSession, (req, res) => {
+  if (String(req.body?.confirm || "").trim().toUpperCase() !== "DELETE") {
+    return res.status(400).json({ error: "confirmation_required" });
+  }
+  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(req.user.email);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const email = row.email;
+  const alsoReviews = req.body?.deleteReviews === true;
+  const out = db.transaction(() => {
+    const convIds = db.prepare("SELECT id FROM conversations WHERE asker_email = ? OR reviewer_email = ?").all(email, email).map((c) => c.id);
+    for (const id of convIds) {
+      db.prepare("DELETE FROM message_flags WHERE conversation_id = ?").run(id);
+      db.prepare("DELETE FROM messages WHERE conversation_id = ?").run(id);
+      db.prepare("DELETE FROM conversations WHERE id = ?").run(id);
+    }
+    let deletedReviews = 0;
+    let keptReviews = 0;
+    if (alsoReviews) {
+      db.prepare("DELETE FROM review_flags WHERE reviewer_email = ?").run(email);
+      deletedReviews = db.prepare("DELETE FROM reviews WHERE reviewer_email = ?").run(email).changes;
+    } else {
+      const placeholder = `deleted-${row.id}@deleted.invalid`;
+      keptReviews = db.prepare("UPDATE reviews SET reviewer_email = ?, reviewer_name = 'Deleted member' WHERE reviewer_email = ?").run(placeholder, email).changes;
+      db.prepare("UPDATE review_flags SET reviewer_email = ? WHERE reviewer_email = ?").run(placeholder, email);
+    }
+    db.prepare("DELETE FROM beta_feedback WHERE request_id = ?").run(row.id);
+    db.prepare("DELETE FROM email_campaign_recipients WHERE lower(email) = lower(?)").run(email);
+    db.prepare("DELETE FROM access_requests WHERE id = ?").run(row.id);
+    return { deletedReviews, keptReviews };
+  })();
+  res.clearCookie("session", { path: "/" });
+  if (process.env.ADMIN_EMAIL) {
+    const who = row.role === "srna" ? "student (SRNA)" : "CRNA";
+    const reviewsLine = row.role === "srna" ? "" : alsoReviews ? `<p>Their ${out.deletedReviews} review(s) were deleted with the profile.</p>` : `<p>Their ${out.keptReviews} review(s) were kept and disconnected from the account.</p>`;
+    sendEmail({
+      to: process.env.ADMIN_EMAIL,
+      subject: `CRNA Critics — ${row.name} deleted their profile`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">${emailHeaderHtml(BASE_URL, 480)}<p><strong>${escapeHtml(row.name)}</strong> (${who}) deleted their own profile.</p>${reviewsLine}<p style="color:#888;font-size:12px;">No action needed. They can apply again at any time.</p></div>`,
+    }).catch((e) => console.error("Profile-deleted notice failed:", e.message));
+  }
+  res.json({ ok: true, ...out });
+});
+
 // ---------- admin dashboard (passcode) ----------
 
 app.post("/api/admin/login", (req, res) => {
