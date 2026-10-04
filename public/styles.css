@@ -28,7 +28,7 @@ body {
 .nav { justify-content: center; }
 .nav .nav-btn { flex: 0 1 180px; }
 
-input, textarea {
+input, textarea, #srna-year, #srna-month {
   width: 100%; box-sizing: border-box; padding: 9px 10px; font-size: 14px;
   border: 1px solid #C9D2C6; background: #fff; outline: none; font-family: Inter, sans-serif;
 }
@@ -605,3 +605,12 @@ a.tiny-btn { text-decoration: none; }
   .nav .nav-btn { font-size: 12px; padding: 12px 3px; }
 }
 .msg-anon-banner { background: #123C3A; color: #fff; padding: 9px 12px; font-size: 13px; line-height: 1.45; margin: 8px 0 4px; }
+
+/* ---- SRNA (student) access ---- */
+.student-banner { background: #FFF4E5; border-left: 4px solid #B87F1E; color: #5A3D0A; padding: 10px 14px; margin: 0; font-size: 13px; line-height: 1.45; }
+.srna-cta { text-align: center; margin: 12px 0 0; }
+.srna-pill { font-size: 10px; font-weight: 700; letter-spacing: .06em; padding: 3px 8px; border-radius: 10px; }
+.srna-pill.ok { background: #E3F4EA; color: #0E6B3A; }
+.srna-pill.no { background: #F6E3E0; color: #8C3A32; }
+.srna-pill.wait { background: #FFF4E5; color: #8A5A0A; }
+.srna-note { font-size: 12px; color: #1F5C57; margin-top: 6px; }
