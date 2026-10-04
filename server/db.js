@@ -75,6 +75,19 @@ addColumnIfMissing("access_requests", "terms_accepted_at", "TEXT");
 addColumnIfMissing("access_requests", "terms_ip", "TEXT");
 addColumnIfMissing("access_requests", "terms_user_agent", "TEXT");
 addColumnIfMissing("access_requests", "sms_consent", "INTEGER NOT NULL DEFAULT 0");
+// SRNA (student) accounts: read-only members verified by school email + manual approval.
+addColumnIfMissing("access_requests", "role", "TEXT NOT NULL DEFAULT 'crna'"); // 'crna' | 'srna'
+addColumnIfMissing("access_requests", "srna_school", "TEXT");
+addColumnIfMissing("access_requests", "srna_program", "TEXT");
+addColumnIfMissing("access_requests", "srna_grad_year", "TEXT");
+addColumnIfMissing("access_requests", "srna_grad_month", "INTEGER");      // 1-12; access runs through the end of this month
+addColumnIfMissing("access_requests", "srna_expires_at", "TEXT");         // ISO instant access ends (start of the next month)
+addColumnIfMissing("access_requests", "srna_expired_emailed_at", "TEXT"); // when the "your access expired" email went out
+addColumnIfMissing("access_requests", "instructor_name", "TEXT");        // program contact who vouches for the student
+addColumnIfMissing("access_requests", "instructor_email", "TEXT");
+addColumnIfMissing("access_requests", "instructor_asked_at", "TEXT");    // when the verification email went out
+addColumnIfMissing("access_requests", "instructor_decision", "TEXT");    // 'verified' | 'cant_verify' | null
+addColumnIfMissing("access_requests", "instructor_decided_at", "TEXT");
 // Pay is recorded as a bracket (e.g. "$201–220"), not a number or a score.
 addColumnIfMissing("reviews", "pay_range", "TEXT NOT NULL DEFAULT ''");
 // Where the hospital actually is — two CRNAs comparing offers need the city, not just the name.
