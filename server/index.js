@@ -36,6 +36,23 @@ const cookieOpts = (maxAgeSeconds) => ({
   path: "/",
 });
 
+// ---------- who writes, who only reads ----------
+//
+// Every member is a verified CRNA (or an SRNA). But a CRNA who sits on the staffing side of
+// the table — chief, recruiter, group owner — has a stake in the ratings, so Eric's rule
+// (Oct 5, 2026) is: they can read everything, and never post a review or message anyone.
+// What the applicant picked on the sign-up form is kept in access_requests.declared_role;
+// the tier it maps to is the account's role, and the admin can move anyone between tiers.
+const DECLARED_ROLES = {
+  practicing: { label: "Practicing CRNA", readOnly: false },
+  chief: { label: "Chief CRNA / department lead", readOnly: true },
+  recruiter: { label: "CRNA who recruits or works for a staffing agency", readOnly: true },
+  owner: { label: "Owns or manages an anesthesia group", readOnly: true },
+};
+const READ_ONLY_ROLES = new Set(["srna", "crna_readonly"]);
+function isReadOnlyRole(role) { return READ_ONLY_ROLES.has(role); }
+function declaredRoleLabel(row) { return (DECLARED_ROLES[row.declared_role] || {}).label || ""; }
+
 // ---------- auth middleware ----------
 
 function requireSession(req, res, next) {
@@ -43,7 +60,13 @@ function requireSession(req, res, next) {
   if (!payload || !payload.email) return res.status(401).json({ error: "not_signed_in" });
   const row = lapseIfExpired(db.prepare("SELECT * FROM access_requests WHERE email = ?").get(payload.email));
   if (!row || row.status !== "approved") return res.status(401).json({ error: row && row.status === "expired" ? "access_expired" : "not_approved" });
-  req.user = { email: row.email, name: row.name, credentials: row.role === "srna" ? "SRNA" : "CRNA", role: row.role === "srna" ? "srna" : "crna", hasPassword: !!row.password_hash, employmentType: row.employment_type || null, accessThrough: row.role === "srna" ? monthYearLabel(row) : undefined };
+  const role = row.role === "srna" ? "srna" : row.role === "crna_readonly" ? "crna_readonly" : "crna";
+  req.user = {
+    email: row.email, name: row.name, credentials: role === "srna" ? "SRNA" : "CRNA", role,
+    readOnly: isReadOnlyRole(role), declaredRole: declaredRoleLabel(row),
+    hasPassword: !!row.password_hash, employmentType: row.employment_type || null,
+    accessThrough: role === "srna" ? monthYearLabel(row) : undefined,
+  };
   next();
 }
 
@@ -79,10 +102,11 @@ function runSrnaExpiry() {
   }
 }
 
-// Student (SRNA) accounts are read-only: they can search and read, never post or message.
+// Read-only accounts — students (SRNA) and staffing-side CRNAs — can search and read, never post or message.
 function requireCrna(req, res, next) {
   requireSession(req, res, () => {
     if (req.user.role === "srna") return res.status(403).json({ error: "student_read_only" });
+    if (req.user.readOnly) return res.status(403).json({ error: "read_only" });
     next();
   });
 }
@@ -98,6 +122,10 @@ function requireAdmin(req, res, next) {
 app.post("/api/request-access", async (req, res) => {
   const { nbcrnaNumber, phone, acceptedTerms, termsVersion, smsConsent } = req.body || {};
   const email = String(req.body?.email || "").trim().toLowerCase();
+  // Who they say they are decides the tier. No declaration, no request — the box is not optional.
+  const declaredRole = String(req.body?.declaredRole || "");
+  if (!DECLARED_ROLES[declaredRole]) return res.status(400).json({ error: "role_required" });
+  const role = DECLARED_ROLES[declaredRole].readOnly ? "crna_readonly" : "crna";
   // First and last name are separate required fields and must match the NBCRNA credential.
   const clean = (v) => String(v || "").trim().replace(/\s+/g, " ").slice(0, 60);
   const firstName = clean(req.body?.firstName);
@@ -117,12 +145,12 @@ app.post("/api/request-access", async (req, res) => {
   const existing = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
   if (existing) {
     db.prepare(
-      "UPDATE access_requests SET role='crna', srna_school=NULL, srna_program=NULL, srna_grad_year=NULL, srna_grad_month=NULL, srna_expires_at=NULL, instructor_name=NULL, instructor_email=NULL, name=?, nbcrna_number=?, phone=?, status='pending', requested_at=?, decided_at=NULL, terms_version=?, terms_accepted_at=?, terms_ip=?, terms_user_agent=?, sms_consent=? WHERE email=?"
-    ).run(name, nbcrnaNumber, phone, now, termsV, now, termsIp, termsUa, sms, email);
+      "UPDATE access_requests SET role=?, declared_role=?, attested_at=?, srna_school=NULL, srna_program=NULL, srna_grad_year=NULL, srna_grad_month=NULL, srna_expires_at=NULL, instructor_name=NULL, instructor_email=NULL, name=?, nbcrna_number=?, phone=?, status='pending', requested_at=?, decided_at=NULL, terms_version=?, terms_accepted_at=?, terms_ip=?, terms_user_agent=?, sms_consent=? WHERE email=?"
+    ).run(role, declaredRole, now, name, nbcrnaNumber, phone, now, termsV, now, termsIp, termsUa, sms, email);
   } else {
     db.prepare(
-      "INSERT INTO access_requests (id, name, nbcrna_number, email, phone, status, requested_at, terms_version, terms_accepted_at, terms_ip, terms_user_agent, sms_consent) VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,?)"
-    ).run(crypto.randomUUID(), name, nbcrnaNumber, email, phone, now, termsV, now, termsIp, termsUa, sms);
+      "INSERT INTO access_requests (id, name, nbcrna_number, email, phone, status, requested_at, terms_version, terms_accepted_at, terms_ip, terms_user_agent, sms_consent, role, declared_role, attested_at) VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,?,?,?,?)"
+    ).run(crypto.randomUUID(), name, nbcrnaNumber, email, phone, now, termsV, now, termsIp, termsUa, sms, role, declaredRole, now);
   }
   const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
 
@@ -457,6 +485,7 @@ function sendVerifyRequestEmail(row, check) {
           ${emailHeaderHtml(BASE_URL, 480)}
           <h2 style="color:#123C3A;">New ${row.role === "srna" ? "SRNA (student)" : "CRNA"} verification request</h2>
           <p><strong>${escapeHtml(row.name)}</strong></p>
+          ${declaredRoleLabel(row) ? `<p>Says they are: <strong>${escapeHtml(declaredRoleLabel(row))}</strong>${isReadOnlyRole(row.role) ? ` &mdash; <span style="color:#8A5A0A;">will be read-only</span> (no reviews, no messages)` : ""}</p>` : ""}
           <p>NBCRNA #: ${escapeHtml(row.nbcrna_number)}<br/>
              Email: ${escapeHtml(row.email)}<br/>
              Phone: ${escapeHtml(row.phone)}</p>
@@ -689,6 +718,9 @@ function sendWelcomeEmail(row) {
         <h2 style="color:#123C3A;">You're verified</h2>
         ${row.role === "srna"
           ? `<p>Hi ${escapeHtml(row.name)}, you're approved for student (SRNA) access to CRNA Critics. You can search and read every review. Posting and messaging are for practicing CRNAs, so your account is read-only until you're certified.</p>`
+          : row.role === "crna_readonly"
+          ? `<p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics with <strong>read-only access</strong>.</p>
+        <p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;">You told us you're a ${escapeHtml(declaredRoleLabel(row).toLowerCase() || "CRNA on the staffing side")}. As agreed on the sign-up form and in Section 1 of the Terms, members who hire, schedule, recruit, or own a group can search and read every review but can't post reviews or message reviewers &mdash; the ratings have to come from CRNAs with nothing at stake in them. If your situation changes, reply to this email and we'll update your account.</p>`
           : `<p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics.</p>
         <p style="background:#EEF6F1;border-left:4px solid #1F5C57;padding:10px 12px;">&#128274; <strong>You're anonymous.</strong> Your name is never shown on the site — every review you post appears as "Anonymous CRNA," so no one will know who you are.</p>`}
         <p>Use the button below to sign in for the first time and create your password. After that, you'll sign in with your email and password — no more links.</p>
@@ -943,6 +975,51 @@ app.post("/api/admin/requests/:id/decide", requireAdmin, async (req, res) => {
   }
   res.json({ ok: true });
 });
+
+// Move a CRNA between full membership and read-only. Used when Eric learns a member is a
+// recruiter / chief / owner (or has stopped being one). Students are not touched by this.
+// Going read-only can also pull the member's reviews — the right call for someone who
+// misrepresented themselves on the form. The member is emailed either way so the change
+// never looks like a bug.
+app.post("/api/admin/requests/:id/tier", requireAdmin, async (req, res) => {
+  const tier = req.body?.tier === "readonly" ? "readonly" : req.body?.tier === "full" ? "full" : null;
+  if (!tier) return res.status(400).json({ error: "bad_tier" });
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.role === "srna") return res.status(400).json({ error: "student" });
+  const newRole = tier === "readonly" ? "crna_readonly" : "crna";
+  let pulledReviews = 0;
+  if (tier === "readonly" && req.body?.pullReviews) {
+    pulledReviews = db.prepare("DELETE FROM reviews WHERE reviewer_email = ?").run(row.email).changes;
+  }
+  db.prepare("UPDATE access_requests SET role=? WHERE id=?").run(newRole, row.id);
+  if (row.status === "approved" && req.body?.notify !== false) {
+    sendTierChangeEmail({ ...row, role: newRole }, { pulledReviews }).catch((e) => console.error("Tier-change email failed:", e.message));
+  }
+  res.json({ ok: true, role: newRole, pulledReviews });
+});
+
+function sendTierChangeEmail(row, { pulledReviews = 0 } = {}) {
+  const readOnly = row.role === "crna_readonly";
+  return sendEmail({
+    to: row.email,
+    replyTo: REPLY_TO,
+    subject: readOnly ? "Your CRNA Critics account is now read-only" : "Your CRNA Critics account now has full access",
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+        ${emailHeaderHtml(BASE_URL, 480)}
+        <h2 style="color:#123C3A;">${readOnly ? "Your account is now read-only" : "You now have full access"}</h2>
+        <p>Hi ${escapeHtml(row.name)},</p>
+        ${readOnly
+          ? `<p>Your CRNA Critics account has been changed to <strong>read-only</strong>. You can still sign in, search, and read every review, but you can no longer post reviews or message reviewers.</p>
+             <p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;">Under Section 1 of the Terms, members who hire, schedule, recruit, or own an anesthesia group read the site but don't write on it, so the ratings come only from CRNAs with nothing at stake in them.${pulledReviews ? ` The ${pulledReviews} review${pulledReviews === 1 ? "" : "s"} posted from this account ${pulledReviews === 1 ? "has" : "have"} been removed from the site.` : ""}</p>
+             <p>If you think this is a mistake, or your situation has changed, reply to this email.</p>`
+          : `<p>Your CRNA Critics account now has <strong>full membership</strong>: you can post reviews and use "Ask this reviewer" like any other practicing CRNA. The Terms you accepted still apply &mdash; first-hand experiences only, and nothing posted to help or harm an employer, agency, or group you have a stake in.</p>`}
+        <p><a href="${BASE_URL}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Open CRNA Critics</a></p>
+      </div>
+    `,
+  });
+}
 
 // Resend the welcome/sign-in link, or send a password reset, for one member.
 app.post("/api/admin/requests/:id/send-link", requireAdmin, async (req, res) => {
@@ -1265,7 +1342,7 @@ function easternHour(date = new Date()) {
 }
 
 function nudgeDue(program, row, nowMs) {
-  if (row.status !== "approved" || row.bulk_unsubscribed || row.role === "srna") return false;
+  if (row.status !== "approved" || row.bulk_unsubscribed || isReadOnlyRole(row.role)) return false;
   if ((row[program.countCol] || 0) >= NUDGE_MAX) return false;
   const anchor = program.anchor(row);
   const anchorMs = anchor ? Date.parse(anchor) : NaN;
@@ -1412,7 +1489,7 @@ async function runReviewScan({ all = false, notify = true } = {}) {
     const hits = scanReview(row);
     const open = selOpen.all(row.id);
     // Flags whose rule no longer matches were fixed by an edit.
-    open.forEach((f) => { if (!hits.find((h) => h.rule === f.rule)) resolve.run(startedAt, f.id); });
+    open.forEach((f) => { if (f.rule !== "member_report" && !hits.find((h) => h.rule === f.rule)) resolve.run(startedAt, f.id); });
     for (const h of hits) {
       const existing = open.find((f) => f.rule === h.rule);
       if (existing) { updateExcerpt.run(h.where, h.excerpt, existing.id); continue; }
@@ -1905,6 +1982,39 @@ app.put("/api/reviews/:id", requireCrna, (req, res) => {
     .run(...cols.map((c) => v[c]), new Date().toISOString(), row.id);
   const updated = db.prepare("SELECT * FROM reviews WHERE id = ?").get(row.id);
   res.json({ review: rowToReview(updated, req.user.email) });
+});
+
+// A full member can report a review they believe came from a recruiter, employer, or someone
+// with a stake in the rating (or that otherwise breaks the guidelines). It lands in Admin →
+// Alerts like a scanner hit; nothing happens to the review until Eric decides.
+app.post("/api/reviews/:id/report", requireCrna, (req, res) => {
+  const review = db.prepare("SELECT * FROM reviews WHERE id = ?").get(req.params.id);
+  if (!review) return res.status(404).json({ error: "not_found" });
+  if (review.reviewer_email === req.user.email) return res.status(400).json({ error: "own_review" });
+  const reason = String(req.body?.reason || "").trim().replace(/\s+/g, " ").slice(0, 600);
+  if (reason.length < 10) return res.status(400).json({ error: "reason_required" });
+  const dup = db.prepare("SELECT id FROM review_flags WHERE review_id = ? AND rule = 'member_report' AND reporter_email = ? AND status = 'open'").get(review.id, req.user.email);
+  if (dup) return res.json({ ok: true, already: true });
+  db.prepare("INSERT INTO review_flags (id, review_id, reviewer_email, rule, severity, label, where_found, excerpt, issue, suggestion, status, created_at, reporter_email) VALUES (?,?,?,?,?,?,?,?,?,?,'open',?,?)").run(
+    crypto.randomUUID(), review.id, review.reviewer_email, "member_report", "medium", "Reported by a member",
+    "review", reason,
+    "A member believes this review was written by a recruiter, employer, group owner, or someone else with a stake in the rating — or that it otherwise breaks the guidelines. Their words are quoted above.",
+    "Open the member to see what they declared on sign-up and what else they've posted. Then ignore, email them, delete the review, or make the account read-only from their member row.",
+    new Date().toISOString(), req.user.email
+  );
+  res.json({ ok: true });
+  // One short note to Eric — a report is something only he can act on.
+  if (process.env.ADMIN_EMAIL) {
+    sendEmail({
+      to: process.env.ADMIN_EMAIL,
+      subject: `CRNA Critics — a member reported a review of ${escapeHtml(reviewSubjectLine(review))}`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">${emailHeaderHtml(BASE_URL, 480)}
+        <h2 style="color:#123C3A;">A review was reported</h2>
+        <p>A member reported a review of <strong>${escapeHtml(reviewSubjectLine(review))}</strong>:</p>
+        <blockquote style="border-left:4px solid #B87F1E;background:#FFF4E5;margin:0;padding:10px 12px;">${escapeHtml(reason)}</blockquote>
+        <p>It's waiting under <a href="${BASE_URL}">Site admin &rarr; Alerts</a>. Nothing happens to the review until you decide.</p></div>`,
+    }).catch((e) => console.error("Report notice failed:", e.message));
+  }
 });
 
 app.delete("/api/reviews/:id", requireSession, (req, res) => {
