@@ -343,6 +343,10 @@ const state = {
   adminShowClosedFlags: false,
   adminDeleteArmed: null,    // review id whose Delete button is waiting for its second tap
   adminTierArmed: null,      // member id whose "pull reviews" button is waiting for its second tap
+  adminDeclare: null,        // role-check overview from /api/admin/declare
+  adminDeclareNote: "",
+  adminDeclareArmed: false,
+  declareBusy: false,        // the in-app "which best describes you?" card
   adminNameType: "hospital", // which directory tab is open
   adminNameFilter: "",
   adminPicked: [],    // names ticked in the directory, for a multi-way merge
@@ -552,9 +556,10 @@ function render() {
   if (state.view === "terms") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${termsPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachTermsPageHandlers(); return; }
   if (state.view === "guidelines") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${guidelinesPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachGuidelinesPageHandlers(); return; }
   if (state.view === "deleteprofile") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${deleteProfilePageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachDeleteProfileHandlers(); return; }
-  root.innerHTML = headerHtml() + toastHtml() + navHtml() + studentBannerHtml() + sideBarHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
+  root.innerHTML = headerHtml() + toastHtml() + navHtml() + studentBannerHtml() + declareCardHtml() + sideBarHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
   attachFooterHandlers();
   attachNavHandlers();
+  attachDeclareHandlers();
   attachSideBarHandlers();
   renderTab();
 }
@@ -785,6 +790,52 @@ function setSide(side) {
 function attachSideBarHandlers() {
   const btn = document.getElementById("side-switch");
   if (btn) btn.onclick = () => { setSide(otherSide()); window.scrollTo(0, 0); };
+}
+
+// Members who joined before the sign-up question answer it here, once. Posting stays blocked
+// for anyone the deadline moved to read-only until they do.
+function declareCardHtml() {
+  if (!state.user || !state.user.needsDeclaration) return "";
+  const paused = state.user.pastDeadline;
+  return `
+    <div class="body" style="padding-bottom:0">
+      <div class="card declare-card">
+        <div class="section-label">ONE QUICK QUESTION &mdash; WHICH BEST DESCRIBES YOU?</div>
+        <p class="hint-text" style="margin-top:0">${paused
+          ? `<strong>Your account is read-only until you answer.</strong> We asked by email and didn't hear back. Answering restores full access on the spot if you're a practicing CRNA.`
+          : `Membership now has two levels. CRNAs who hire, schedule, recruit, or own a group are welcome to read everything, but they don't rate &mdash; the ratings have to come from CRNAs with nothing at stake in them. Misstating your role is grounds for removal (Terms v1.1, Section 1).`}</p>
+        <div class="role-picker">
+          ${ROLE_OPTIONS.filter((o) => o.tier !== "none").map((o) => `
+          <label class="role-option">
+            <input type="radio" name="declare-role" value="${o.value}" />
+            <span><strong>${o.label}</strong> <span class="role-tier ${o.tier === "full" ? "full" : "ro"}">${o.tier === "full" ? "full membership" : "read-only"}</span><br/><span class="hint-text" style="display:inline">${o.hint}</span></span>
+          </label>`).join("")}
+        </div>
+        <p class="hint-text" style="font-size:11px">Your answer is recorded with the date, time and IP address, like your acceptance of the Terms.</p>
+        <div id="declare-error" class="error-text"></div>
+        <button class="primary-btn" id="declare-save" style="margin-top:8px" disabled>Save my answer</button>
+      </div>
+    </div>`;
+}
+function attachDeclareHandlers() {
+  const btn = document.getElementById("declare-save");
+  if (!btn) return;
+  const boxes = [...document.querySelectorAll('input[name="declare-role"]')];
+  const picked = () => (boxes.find((b) => b.checked) || {}).value || "";
+  boxes.forEach((b) => { b.onchange = () => { btn.disabled = !picked(); }; });
+  btn.onclick = async () => {
+    const err = document.getElementById("declare-error");
+    if (!picked()) { err.textContent = "Pick the option that best describes you."; return; }
+    btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      const out = await api("/api/me/declare", { method: "POST", body: { declaredRole: picked() } });
+      await init();
+      flash(out.readOnly ? "Recorded. Your account is read-only — you can read everything, but not post or message." : "Recorded — thank you. You keep full membership.");
+    } catch (e) {
+      err.textContent = e.data && e.data.error === "already_declared" ? "You've already answered this." : "Couldn't save that. Try again.";
+      btn.disabled = false; btn.textContent = "Save my answer";
+    }
+  };
 }
 
 function studentBannerHtml() {
@@ -2673,7 +2724,9 @@ function memberCardHtml(r) {
           <tr><td class="stats-label">Email</td><td><a href="mailto:${esc(r.email)}">${esc(r.email)}</a></td></tr>
           <tr><td class="stats-label">Phone</td><td>${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : "—"}</td></tr>
           <tr><td class="stats-label">NBCRNA #</td><td>${esc(r.nbcrna_number)}</td></tr>
-          ${r.role === "srna" ? "" : `<tr><td class="stats-label">Says they are</td><td>${declaredLabel(r) ? `${esc(declaredLabel(r))} <span style="color:#8A948E">(declared ${adminDate(r.attested_at)})</span>` : "<em>joined before the role question (treated as practicing)</em>"}</td></tr>
+          ${r.role === "srna" ? "" : `<tr><td class="stats-label">Says they are</td><td>${declaredLabel(r)
+            ? `${esc(declaredLabel(r))} <span style="color:#8A948E">(declared ${adminDate(r.attested_at)})</span>`
+            : `<em>not answered yet</em> <span style="color:#8A948E">${r.declare_deadline_at ? `— read-only since ${adminDate(r.declare_deadline_at)} until they answer` : r.declare_asked_at ? `— asked ${adminDate(r.declare_asked_at)}` : "— joined before the role question"}</span>${r.status === "approved" ? ` <button class="tiny-btn" data-declare-send="${r.id}" style="margin-left:6px">${r.declare_asked_at ? "Resend" : "Send"} the question</button>` : ""}`}</td></tr>
           <tr><td class="stats-label">Access</td><td>${r.role === "crna_readonly" ? `<strong style="color:#8A5A0A">Read-only</strong> — can search and read, can't post or message` : "<strong>Full</strong> — can post reviews and message"}</td></tr>`}
           <tr><td class="stats-label">Work type</td><td>${r.employment_type ? esc(r.employment_type === "staff" ? "Staff (W-2 / 1099)" : "Locum") : "not chosen yet"}</td></tr>
           <tr><td class="stats-label">Password</td><td>${r.hasPassword ? "set by member" : "<em>not set yet</em>"}</td></tr>
@@ -3018,6 +3071,7 @@ async function renderAdmin() {
   paintAdmin();
   loadAdminNames(); // second pass — the member list shouldn't wait on the name scan
   loadAdminFlags(); // so the Alerts badge is right from the start
+  loadAdminDeclare(true); // role-check counts at the top of Members
 }
 
 async function loadAdminFlags(force) {
@@ -3105,6 +3159,77 @@ function attachSrnaAdminHandlers() {
   });
 }
 
+// The role check: members from before the sign-up question, and where each stands.
+function roleCheckHtml() {
+  const d = state.adminDeclare;
+  if (!d) return `<div class="card role-check"><div class="section-label">ROLE CHECK</div><p class="hint-text" style="margin:0">Loading…</p></div>`;
+  const names = (list) => list.map((x) => esc(x.name)).join(", ");
+  const openCount = d.unasked.length + d.waiting.length + d.overdue.length + d.paused.length;
+  return `
+    <div class="card role-check">
+      <div class="section-label">ROLE CHECK &middot; ${d.declared} OF ${d.total} MEMBERS HAVE ANSWERED</div>
+      <p class="hint-text" style="margin-top:0">Members who joined before Oct 5, 2026 never said whether they're practicing or on the staffing side. Send them the question (the "Role check" templates under Email &rarr; Templates); each gets a personal link, no sign-in needed, and sees the same question as a card when they sign in. Nothing moves on its own: after ${d.deadlineDays} days, <em>you</em> click to move the ones who haven't answered to read-only until they do.</p>
+      ${openCount === 0 ? `<p class="hint-text" style="color:#1F5C57;font-weight:700;margin:0">Everyone has answered.</p>` : `
+      <table class="stats-table">
+        <tr><td class="stats-label">Not asked yet</td><td>${d.unasked.length}${d.unasked.length ? ` <span class="hint-text" style="display:inline">— ${names(d.unasked)}</span>` : ""}</td></tr>
+        <tr><td class="stats-label">Asked, waiting</td><td>${d.waiting.length}${d.waiting.length ? ` <span class="hint-text" style="display:inline">— ${names(d.waiting)}</span>` : ""}</td></tr>
+        <tr><td class="stats-label">Past ${d.deadlineDays} days, no answer</td><td>${d.overdue.length}${d.overdue.length ? ` <span class="hint-text" style="display:inline">— ${names(d.overdue)}</span>` : ""}</td></tr>
+        <tr><td class="stats-label">Read-only until they answer</td><td>${d.paused.length}${d.paused.length ? ` <span class="hint-text" style="display:inline">— ${names(d.paused)}</span>` : ""}</td></tr>
+      </table>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
+        ${d.unasked.length ? `<button class="tiny-btn approve" id="declare-send-all">Send the question to ${d.unasked.length} not yet asked</button>` : ""}
+        ${d.overdue.length ? `<button class="tiny-btn reject" id="declare-apply-deadline">${state.adminDeclareArmed ? `Yes — move ${d.overdue.length} to read-only and email them` : `Move ${d.overdue.length} unanswered to read-only…`}</button>` : ""}
+        ${state.adminDeclareArmed ? `<button class="tiny-btn" id="declare-apply-cancel">Cancel</button>` : ""}
+      </div>`}
+      ${state.adminDeclareNote ? `<p class="hint-text" style="color:#1F5C57;font-weight:600;margin:8px 0 0">${esc(state.adminDeclareNote)}</p>` : ""}
+    </div>`;
+}
+async function loadAdminDeclare(force) {
+  if (state.adminDeclare && !force) return;
+  try { state.adminDeclare = await api("/api/admin/declare"); } catch { state.adminDeclare = { total: 0, declared: 0, unasked: [], waiting: [], overdue: [], paused: [], deadlineDays: 30 }; }
+  paintAdmin();
+}
+function attachRoleCheckHandlers() {
+  const sendAll = document.getElementById("declare-send-all");
+  if (sendAll) sendAll.onclick = async () => {
+    sendAll.disabled = true; sendAll.textContent = "Sending…";
+    try {
+      const out = await api("/api/admin/declare/send", { method: "POST", body: {} });
+      state.adminDeclare = out.overview;
+      state.adminDeclareNote = `Question sent to ${out.sent} member${out.sent === 1 ? "" : "s"}${out.failed ? `; ${out.failed} failed` : ""}.`;
+    } catch (e) { state.adminDeclareNote = `Couldn't send (${e.message}).`; }
+    renderAdmin();
+  };
+  const apply = document.getElementById("declare-apply-deadline");
+  if (apply) apply.onclick = async () => {
+    if (!state.adminDeclareArmed) { state.adminDeclareArmed = true; paintAdmin(); return; }
+    state.adminDeclareArmed = false;
+    apply.disabled = true; apply.textContent = "Working…";
+    try {
+      const out = await api("/api/admin/declare/apply-deadline", { method: "POST", body: {} });
+      state.adminDeclare = out.overview;
+      state.adminDeclareNote = `${out.moved} member${out.moved === 1 ? "" : "s"} moved to read-only and emailed. Each flips back to full the moment they answer "practicing CRNA".`;
+    } catch (e) { state.adminDeclareNote = `Couldn't do that (${e.message}).`; }
+    renderAdmin();
+  };
+  const cancel = document.getElementById("declare-apply-cancel");
+  if (cancel) cancel.onclick = () => { state.adminDeclareArmed = false; paintAdmin(); };
+  document.querySelectorAll("[data-declare-send]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.declareSend;
+      btn.disabled = true; btn.textContent = "Sending…";
+      try {
+        const out = await api("/api/admin/declare/send", { method: "POST", body: { id } });
+        state.adminDeclare = out.overview;
+        const row = state.adminRequests.find((x) => x.id === id);
+        if (row && !row.declare_asked_at) row.declare_asked_at = new Date().toISOString();
+        state.adminNotes[id] = "Role question sent.";
+      } catch (e) { state.adminNotes[id] = `Couldn't send (${e.message}).`; }
+      paintAdmin();
+    };
+  });
+}
+
 function paintAdmin() {
   const el = document.getElementById("admin-root");
   if (!el) return;
@@ -3121,6 +3246,7 @@ function paintAdmin() {
   const openFlags = (state.adminFlags || []).filter((f) => f.status === "open").length + msgAlertConvIds().length;
   const dupeCount = state.adminNames ? duplicateCandidates().length : 0;
   const membersSection = `
+    ${roleCheckHtml()}
     <div class="section-label" style="margin:10px 0">PENDING VERIFICATION (${pending.length})</div>
     ${pending.length === 0 ? `<p class="hint-text">Nothing waiting.</p>` : ""}
     ${pending.map((r) => `
@@ -3182,6 +3308,7 @@ function paintAdmin() {
   attachDuplicateHandlers();
   attachDirectoryHandlers();
   attachSrnaAdminHandlers();
+  attachRoleCheckHandlers();
   document.querySelectorAll("[data-decide]").forEach((btn) => {
     btn.onclick = async () => {
       const [id, decision] = btn.dataset.decide.split("::");
