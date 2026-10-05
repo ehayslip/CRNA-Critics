@@ -58,6 +58,8 @@ const TOKENS = [
   { token: "{{verify_link}}", what: "Instructor email only: on its own line it becomes a green \"Yes, verify this student\" button" },
   { token: "{{cant_verify_link}}", what: "Instructor email only: on its own line it becomes an \"I can't verify this student\" button" },
   { token: "{{login_link}}", what: "SRNA welcome only: one-time link to sign in and create a password (button on its own line)" },
+  { token: "{{declare_link}}", what: "This member's personal link to answer \"which best describes you?\" (no login needed). On its own line it becomes an \"Answer the question\" button. Sending it stamps the member as asked." },
+  { token: "{{declare_days}}", what: "Role-declaration emails: how many days they have to answer before the account goes read-only" },
   { token: "{{cta}}", what: "A big green \"Open CRNA Critics\" button" },
 ];
 
@@ -90,7 +92,9 @@ function fillTokens(text, ctx) {
     .replace(/\{\{\s*instructor_name\s*\}\}/gi, ctx.instructorName || "")
     .replace(/\{\{\s*verify_link\s*\}\}/gi, ctx.verifyUrl || "")
     .replace(/\{\{\s*cant_verify_link\s*\}\}/gi, ctx.cantVerifyUrl || "")
-    .replace(/\{\{\s*login_link\s*\}\}/gi, ctx.loginUrl || "");
+    .replace(/\{\{\s*login_link\s*\}\}/gi, ctx.loginUrl || "")
+    .replace(/\{\{\s*declare_link\s*\}\}/gi, ctx.declareUrl || "")
+    .replace(/\{\{\s*declare_days\s*\}\}/gi, String(ctx.declareDays || ""));
 }
 
 // Plain text -> HTML paragraphs. {{cta}} on its own becomes the button. Everything
@@ -107,7 +111,8 @@ function bodyToHtml(text, ctx) {
     .replace(/(^|\n{2,})[ \t]*\{\{\s*feedback_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{feedback_button}}")
     .replace(/(^|\n{2,})[ \t]*\{\{\s*verify_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{verify_button}}")
     .replace(/(^|\n{2,})[ \t]*\{\{\s*cant_verify_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{cant_button}}")
-    .replace(/(^|\n{2,})[ \t]*\{\{\s*login_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{login_button}}");
+    .replace(/(^|\n{2,})[ \t]*\{\{\s*login_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{login_button}}")
+    .replace(/(^|\n{2,})[ \t]*\{\{\s*declare_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{declare_button}}");
   const btn = (url, bg, label) => `<p style="margin:14px 0;"><a href="${url}" style="background:${bg};color:#fff;padding:13px 22px;text-decoration:none;border-radius:4px;font-weight:bold;display:inline-block;">${label}</a></p>`;
   return fillTokens(marked, ctx)
     .split(/\n{2,}/)
@@ -120,6 +125,7 @@ function bodyToHtml(text, ctx) {
       if (/^\{\{\s*verify_button\s*\}\}$/i.test(trimmed)) return btn(ctx.verifyUrl, "#13A15A", "Yes, I can verify this student");
       if (/^\{\{\s*cant_button\s*\}\}$/i.test(trimmed)) return btn(ctx.cantVerifyUrl, "#8C3A32", "I can't verify this student");
       if (/^\{\{\s*login_button\s*\}\}$/i.test(trimmed)) return btn(ctx.loginUrl, "#123C3A", "Sign in &amp; create your password");
+      if (/^\{\{\s*declare_button\s*\}\}$/i.test(trimmed)) return btn(ctx.declareUrl, "#13A15A", "Answer the question");
       const html = escapeHtml(trimmed)
         .replace(/\{\{\s*cta\s*\}\}/gi, "")
         // Trailing sentence punctuation stays outside the link.
