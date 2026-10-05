@@ -280,6 +280,8 @@ a.tiny-btn { text-decoration: none; }
   letter-spacing: 1.2px; line-height: 1.35;
 }
 @media (min-width: 760px) { .hero-warning { font-size: 17px; } }
+.hero-readonly { margin: 6px auto 0; max-width: 540px; font-size: 13px; line-height: 1.45; color: #B8CBC4; }
+.hero-readonly strong { color: #F5B301; }
 
 /* search results, grouped by what's being rated */
 /* ---------- search: one kind at a time ---------- */
@@ -392,6 +394,7 @@ a.tiny-btn { text-decoration: none; }
   .landing .hero-sub { margin-left: 0; }
   .landing .hero .cta-row { justify-content: flex-start; }
   .landing .hero-warning { margin-left: 0; }
+  .landing .hero-readonly { margin-left: 0; }
   .landing .hero-anon { margin-left: 0; }
   .lp-h { font-size: 24px; }
   .feature-grid { grid-template-columns: repeat(2, 1fr); }
