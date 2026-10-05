@@ -66,6 +66,7 @@ function requireSession(req, res, next) {
     readOnly: isReadOnlyRole(role), declaredRole: declaredRoleLabel(row),
     hasPassword: !!row.password_hash, employmentType: row.employment_type || null,
     accessThrough: role === "srna" ? monthYearLabel(row) : undefined,
+    needsDeclaration: needsDeclaration(row), pastDeadline: !row.declared_role && !!row.declare_deadline_at,
   };
   next();
 }
@@ -258,6 +259,236 @@ function ensureSrnaTemplates() {
   }
 }
 ensureSrnaTemplates();
+
+// ---------- "which best describes you?" for members who joined before the question ----------
+//
+// New sign-ups declare their role on the form. Members from before Oct 5, 2026 never did, so
+// Eric emails them the same question. Each gets a personal link (no login) to a page with the
+// four options; answering records declared_role / attested_at exactly like a new sign-up and
+// moves staffing-side CRNAs to read-only. A member who is signed in sees the same question as
+// a card in the app. Nothing here runs on its own: sending the question, and moving members
+// who never answered to read-only after the deadline, are both buttons Eric clicks in Admin.
+const DECLARE_DEADLINE_DAYS = Math.max(1, Number(process.env.DECLARE_DEADLINE_DAYS || 30));
+const DECLARE_LINK_SECONDS = 60 * 60 * 24 * 90;
+
+const DECLARE_TEMPLATES = {
+  ask: {
+    name: "Role check — which best describes you?",
+    subject: "One quick question about your CRNA Critics membership",
+    body: `Hi {{first_name}},
+
+Since you joined, CRNA Critics has added one question to membership, and I need your answer to keep your account as it is.
+
+The site now has two levels. Practicing CRNAs keep full membership: read, post reviews, message reviewers. CRNAs on the staffing side of the table — Chief CRNAs and department leads, CRNAs who recruit or work for a staffing agency, and owners or managers of an anesthesia group — are welcome to read everything but are read-only: no reviews, no messages. The ratings have to come from CRNAs with nothing at stake in them, and the people being rated can't be the ones rating.
+
+Which best describes you? Tap below and pick one. It takes ten seconds and you don't need to sign in.
+
+{{declare_link}}
+
+Under the updated Terms (v1.1, Section 1), an account that hasn't answered within {{declare_days}} days moves to read-only until it does. That isn't a judgment — it's the only fair way to apply the same rule to everyone. Misstating your role is grounds for removal.
+
+Thank you for being straight with me, and for being part of this.
+
+— Eric Hayslip, CRNA, CRNA Critics`,
+  },
+  deadline: {
+    name: "Role check — access paused until you answer",
+    subject: "Your CRNA Critics account is read-only until you answer one question",
+    body: `Hi {{first_name}},
+
+{{declare_days}} days ago I asked which best describes you — practicing CRNA, or Chief / recruiter / group owner — and I haven't heard back. As the Terms say (v1.1, Section 1), your account is now read-only: you can still sign in, search and read every review, but posting and messaging are paused.
+
+Answering takes ten seconds and restores full access on the spot if you're a practicing CRNA. No sign-in needed:
+
+{{declare_link}}
+
+If you'd rather, just sign in and the question is the first thing you'll see.
+
+— Eric Hayslip, CRNA, CRNA Critics`,
+  },
+};
+function ensureDeclareTemplates() {
+  const now = new Date().toISOString();
+  for (const t of Object.values(DECLARE_TEMPLATES)) {
+    if (db.prepare("SELECT 1 FROM email_templates WHERE name = ?").get(t.name)) continue;
+    db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), t.name, "Members", t.subject, t.body, now, now);
+  }
+}
+ensureDeclareTemplates();
+
+function declareUrlFor(row) {
+  return `${BASE_URL}/declare?t=${encodeURIComponent(sign({ id: row.id, purpose: "declare" }, DECLARE_LINK_SECONDS))}`;
+}
+// A CRNA member (not a student) who has never said what they are.
+function needsDeclaration(row) {
+  return !!row && row.status === "approved" && row.role !== "srna" && !row.declared_role;
+}
+function declareCtx(row) {
+  return { name: row.name, email: row.email, reviewCount: reviewCountFor(row.email), baseUrl: BASE_URL, declareUrl: declareUrlFor(row), declareDays: DECLARE_DEADLINE_DAYS };
+}
+// Account mail, not a mailing: goes out even to members who unsubscribed from campaigns.
+async function sendDeclareTemplate(key, row) {
+  const def = DECLARE_TEMPLATES[key];
+  const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(def.name) || def;
+  const ctx = declareCtx(row);
+  await sendEmail({ to: row.email, replyTo: REPLY_TO, subject: fillTokens(tpl.subject, ctx), html: plainMailHtml({ body: tpl.body, ctx }) });
+}
+async function askForDeclaration(row) {
+  await sendDeclareTemplate("ask", row);
+  db.prepare("UPDATE access_requests SET declare_asked_at = COALESCE(declare_asked_at, ?) WHERE id = ?").run(new Date().toISOString(), row.id);
+}
+
+// Records an answer. Returns what changed so the caller can word the page / response.
+// The tier only moves when Eric hasn't set it by hand — his decision always wins.
+function recordDeclaration(row, declaredRole) {
+  const def = DECLARED_ROLES[declaredRole];
+  if (!def) return { error: "bad_role" };
+  const now = new Date().toISOString();
+  const wantedRole = def.readOnly ? "crna_readonly" : "crna";
+  const adminLocked = !!row.role_set_by_admin_at;
+  const newRole = adminLocked ? row.role : wantedRole;
+  db.prepare("UPDATE access_requests SET declared_role=?, attested_at=?, role=?, declare_deadline_at=NULL WHERE id=?").run(declaredRole, now, newRole, row.id);
+  const fresh = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(row.id);
+  const becameReadOnly = row.role !== "crna_readonly" && newRole === "crna_readonly";
+  const restoredFull = row.role === "crna_readonly" && newRole === "crna";
+  if (becameReadOnly) sendTierChangeEmail(fresh, { declared: true }).catch((e) => console.error("Declared read-only email failed:", e.message));
+  // Eric only hears about the answers that need a decision: a staffing-side CRNA who already has
+  // reviews up (keep or pull?), or an answer that disagrees with a tier he set by hand.
+  const reviews = reviewCountFor(row.email);
+  if (process.env.ADMIN_EMAIL && ((def.readOnly && reviews > 0) || (adminLocked && wantedRole !== row.role))) {
+    sendEmail({
+      to: process.env.ADMIN_EMAIL,
+      replyTo: row.email,
+      subject: `CRNA Critics — ${escapeHtml(row.name)} answered the role question: ${escapeHtml(def.label)}`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">${emailHeaderHtml(BASE_URL, 480)}
+        <h2 style="color:#123C3A;">A member answered the role question</h2>
+        <p><strong>${escapeHtml(row.name)}</strong> says they are <strong>${escapeHtml(def.label)}</strong>.</p>
+        ${adminLocked && wantedRole !== row.role
+          ? `<p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;">You set this account's access by hand (${row.role === "crna_readonly" ? "read-only" : "full"}), so their answer was recorded but nothing changed. Decide under Site admin &rarr; Members.</p>`
+          : `<p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;">They're now read-only. They have <strong>${reviews} review${reviews === 1 ? "" : "s"}</strong> on the site from before. Keep or pull them? Open their row under Site admin &rarr; Members.</p>`}
+      </div>`,
+    }).catch((e) => console.error("Declaration notice failed:", e.message));
+  }
+  return { ok: true, declaredRole, label: def.label, readOnly: newRole === "crna_readonly", becameReadOnly, restoredFull, adminLocked };
+}
+
+function declareRowFromToken(t) {
+  const payload = verify(String(t || ""));
+  if (!payload || payload.purpose !== "declare" || !payload.id) return null;
+  return db.prepare("SELECT * FROM access_requests WHERE id = ? AND role <> 'srna'").get(payload.id) || null;
+}
+function declarePage(title, inner) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>${escapeHtml(title)} · CRNA Critics</title></head>
+    <body style="font-family:Arial,sans-serif;max-width:560px;margin:32px auto;padding:0 16px;color:#14231F;">
+    ${emailHeaderHtml(BASE_URL, 560)}${inner}</body></html>`;
+}
+const DECLARE_HINTS = {
+  practicing: "You take cases and you don't hire, schedule, recruit, or own the group.",
+  chief: "You run or help run a CRNA department and have a say in staffing.",
+  recruiter: "You're a CRNA, and you also place or recruit CRNAs.",
+  owner: "Owner, partner, or manager of a group that employs or contracts CRNAs.",
+};
+app.get("/declare", (req, res) => {
+  const row = declareRowFromToken(req.query.t);
+  if (!row) return res.status(400).send(declarePage("Link expired", `<h2>Link expired or invalid</h2><p>Sign in at <a href="${BASE_URL}">crnacritics.com</a> — the question is the first thing you'll see — or reply to the email and we'll send a new link.</p>`));
+  if (row.status !== "approved") return res.send(declarePage("Account not active", `<h2>This account isn't active.</h2><p>If you think that's a mistake, reply to the email.</p>`));
+  if (row.declared_role) {
+    return res.send(declarePage("Already answered", `<h2 style="color:#13A15A;">Already answered — thank you.</h2><p>You told us: <strong>${escapeHtml(declaredRoleLabel(row))}</strong>. If that's changed, email <a href="mailto:erichayslip@gmail.com">erichayslip@gmail.com</a>.</p>`));
+  }
+  const options = Object.entries(DECLARED_ROLES).map(([key, r]) => `
+      <label style="display:block;border:1px solid #D8DDD9;border-radius:6px;padding:12px 14px;margin:8px 0;cursor:pointer;">
+        <input type="radio" name="role" value="${key}" required style="margin-right:8px;">
+        <strong>${escapeHtml(r.label)}</strong>
+        <span style="font-size:11px;font-weight:bold;letter-spacing:.04em;padding:1px 6px;border-radius:3px;margin-left:6px;background:${r.readOnly ? "#FFF4E5" : "#E3F3EA"};color:${r.readOnly ? "#8A5A0A" : "#1F5C57"};">${r.readOnly ? "READ-ONLY" : "FULL MEMBERSHIP"}</span>
+        <div style="font-size:12px;color:#6B756F;margin:4px 0 0 24px;">${escapeHtml(DECLARE_HINTS[key] || "")}</div>
+      </label>`).join("");
+  res.send(declarePage("Which best describes you?", `
+    <h2 style="margin-bottom:4px;">Hi ${escapeHtml(firstNameOf(row.name))} — which best describes you?</h2>
+    <p style="color:#555;margin-top:0;">CRNAs who hire, schedule, recruit, or own a group are welcome to read everything, but they don't rate — the ratings have to come from CRNAs with nothing at stake in them. Misstating your role is grounds for removal (Terms v1.1, Section 1).</p>
+    <form method="post" action="/declare"><input type="hidden" name="t" value="${escapeHtml(String(req.query.t))}">
+      ${options}
+      <p style="font-size:12px;color:#6B756F;">We record your answer with the date, time and IP address, the same as your acceptance of the Terms.</p>
+      <button type="submit" style="background:#13A15A;color:#fff;border:0;padding:13px 22px;border-radius:4px;font-weight:bold;font-size:16px;">Save my answer</button>
+    </form>`));
+});
+app.post("/declare", express.urlencoded({ extended: false }), (req, res) => {
+  const row = declareRowFromToken(req.body?.t);
+  if (!row) return res.status(400).send(declarePage("Link expired", `<h2>Link expired or invalid</h2>`));
+  if (row.status !== "approved") return res.send(declarePage("Account not active", `<h2>This account isn't active.</h2>`));
+  if (row.declared_role) return res.send(declarePage("Already answered", `<h2 style="color:#13A15A;">Already answered — thank you.</h2>`));
+  const out = recordDeclaration(row, String(req.body?.role || ""));
+  if (out.error) return res.status(400).send(declarePage("Pick one", `<h2>Please pick one of the options.</h2><p><a href="/declare?t=${encodeURIComponent(String(req.body.t))}">Go back</a></p>`));
+  res.send(declarePage("Thank you", `
+    <h2 style="color:#13A15A;">Thank you — recorded.</h2>
+    <p>You told us: <strong>${escapeHtml(out.label)}</strong>.</p>
+    ${out.readOnly
+      ? `<p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;">Your account is <strong>read-only</strong>: you can search and read every review, but can't post reviews or message reviewers. If your role changes, email <a href="mailto:erichayslip@gmail.com">erichayslip@gmail.com</a>.</p>`
+      : `<p>You keep <strong>full membership</strong>${out.restoredFull ? " — posting and messaging are back on" : ""}. Nothing else to do.</p>`}
+    <p><a href="${BASE_URL}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;display:inline-block;">Open CRNA Critics</a></p>`));
+});
+
+// The same question, answered from inside the app by a signed-in member.
+app.post("/api/me/declare", requireSession, (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(req.user.email);
+  if (!row || row.role === "srna") return res.status(400).json({ error: "not_applicable" });
+  if (row.declared_role) return res.status(400).json({ error: "already_declared", label: declaredRoleLabel(row) });
+  const out = recordDeclaration(row, String(req.body?.declaredRole || ""));
+  if (out.error) return res.status(400).json({ error: out.error });
+  res.json(out);
+});
+
+// Admin: how the role check is going, and the buttons.
+function declareOverview() {
+  const rows = db.prepare("SELECT id, name, email, declared_role, declare_asked_at, declare_deadline_at, role, role_set_by_admin_at FROM access_requests WHERE status='approved' AND COALESCE(role,'crna') <> 'srna'").all();
+  const cutoff = Date.now() - DECLARE_DEADLINE_DAYS * 24 * 60 * 60 * 1000;
+  const open = rows.filter((r) => !r.declared_role);
+  return {
+    deadlineDays: DECLARE_DEADLINE_DAYS,
+    total: rows.length,
+    declared: rows.length - open.length,
+    unasked: open.filter((r) => !r.declare_asked_at).map((r) => ({ id: r.id, name: r.name })),
+    waiting: open.filter((r) => r.declare_asked_at && !r.declare_deadline_at && Date.parse(r.declare_asked_at) >= cutoff).map((r) => ({ id: r.id, name: r.name, askedAt: r.declare_asked_at })),
+    // Asked more than the deadline ago, never answered, still full — ready for Eric's click.
+    overdue: open.filter((r) => r.declare_asked_at && !r.declare_deadline_at && Date.parse(r.declare_asked_at) < cutoff && r.role === "crna" && !r.role_set_by_admin_at).map((r) => ({ id: r.id, name: r.name, askedAt: r.declare_asked_at })),
+    paused: open.filter((r) => r.declare_deadline_at).map((r) => ({ id: r.id, name: r.name, since: r.declare_deadline_at })),
+  };
+}
+app.get("/api/admin/declare", requireAdmin, (req, res) => res.json(declareOverview()));
+// Send the question to everyone who has never been asked, or to one member (body.id) — resend included.
+app.post("/api/admin/declare/send", requireAdmin, async (req, res) => {
+  const id = req.body?.id ? String(req.body.id) : null;
+  let rows;
+  if (id) {
+    const r = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(id);
+    if (!r) return res.status(404).json({ error: "not_found" });
+    if (!needsDeclaration(r)) return res.status(400).json({ error: "not_applicable" });
+    rows = [r];
+  } else {
+    rows = db.prepare("SELECT * FROM access_requests WHERE status='approved' AND COALESCE(role,'crna') <> 'srna' AND declared_role IS NULL AND declare_asked_at IS NULL").all();
+  }
+  let sent = 0, failed = 0;
+  for (const r of rows) {
+    try { await askForDeclaration(r); sent += 1; } catch (e) { failed += 1; console.error("Role check send failed:", r.email, e.message); }
+    if (rows.length > 1) await new Promise((resolve) => setTimeout(resolve, CAMPAIGN_DELAY_MS));
+  }
+  res.json({ ok: true, sent, failed, overview: declareOverview() });
+});
+// Eric's click: everyone overdue goes read-only until they answer, and gets the "paused" email.
+app.post("/api/admin/declare/apply-deadline", requireAdmin, async (req, res) => {
+  const { overdue } = declareOverview();
+  let moved = 0;
+  for (const o of overdue) {
+    const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(o.id);
+    if (!row) continue;
+    db.prepare("UPDATE access_requests SET role='crna_readonly', declare_deadline_at=? WHERE id=?").run(new Date().toISOString(), row.id);
+    moved += 1;
+    sendDeclareTemplate("deadline", row).catch((e) => console.error("Declare deadline email failed:", e.message));
+    await new Promise((resolve) => setTimeout(resolve, CAMPAIGN_DELAY_MS));
+  }
+  res.json({ ok: true, moved, overview: declareOverview() });
+});
 
 function srnaCtx(row, extra = {}) {
   return {
@@ -992,14 +1223,14 @@ app.post("/api/admin/requests/:id/tier", requireAdmin, async (req, res) => {
   if (tier === "readonly" && req.body?.pullReviews) {
     pulledReviews = db.prepare("DELETE FROM reviews WHERE reviewer_email = ?").run(row.email).changes;
   }
-  db.prepare("UPDATE access_requests SET role=? WHERE id=?").run(newRole, row.id);
+  db.prepare("UPDATE access_requests SET role=?, role_set_by_admin_at=?, declare_deadline_at=NULL WHERE id=?").run(newRole, new Date().toISOString(), row.id);
   if (row.status === "approved" && req.body?.notify !== false) {
     sendTierChangeEmail({ ...row, role: newRole }, { pulledReviews }).catch((e) => console.error("Tier-change email failed:", e.message));
   }
   res.json({ ok: true, role: newRole, pulledReviews });
 });
 
-function sendTierChangeEmail(row, { pulledReviews = 0 } = {}) {
+function sendTierChangeEmail(row, { pulledReviews = 0, declared = false } = {}) {
   const readOnly = row.role === "crna_readonly";
   return sendEmail({
     to: row.email,
@@ -1011,7 +1242,7 @@ function sendTierChangeEmail(row, { pulledReviews = 0 } = {}) {
         <h2 style="color:#123C3A;">${readOnly ? "Your account is now read-only" : "You now have full access"}</h2>
         <p>Hi ${escapeHtml(row.name)},</p>
         ${readOnly
-          ? `<p>Your CRNA Critics account has been changed to <strong>read-only</strong>. You can still sign in, search, and read every review, but you can no longer post reviews or message reviewers.</p>
+          ? `<p>${declared ? `Based on your answer (<strong>${escapeHtml(declaredRoleLabel(row))}</strong>), your` : "Your"} CRNA Critics account ${declared ? "is now" : "has been changed to"} <strong>read-only</strong>. You can still sign in, search, and read every review, but you can no longer post reviews or message reviewers.</p>
              <p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;">Under Section 1 of the Terms, members who hire, schedule, recruit, or own an anesthesia group read the site but don't write on it, so the ratings come only from CRNAs with nothing at stake in them.${pulledReviews ? ` The ${pulledReviews} review${pulledReviews === 1 ? "" : "s"} posted from this account ${pulledReviews === 1 ? "has" : "have"} been removed from the site.` : ""}</p>
              <p>If you think this is a mistake, or your situation has changed, reply to this email.</p>`
           : `<p>Your CRNA Critics account now has <strong>full membership</strong>: you can post reviews and use "Ask this reviewer" like any other practicing CRNA. The Terms you accepted still apply &mdash; first-hand experiences only, and nothing posted to help or harm an employer, agency, or group you have a stake in.</p>`}
@@ -1191,8 +1422,8 @@ app.post("/api/admin/email/preview", requireAdmin, (req, res) => {
     ? db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.body.memberId)
     : db.prepare("SELECT * FROM access_requests WHERE status = 'approved' ORDER BY requested_at DESC LIMIT 1").get();
   const ctx = row
-    ? { name: row.name, email: row.email, reviewCount: reviewCountFor(row.email), baseUrl: BASE_URL, feedbackUrl: feedbackUrlFor(row) }
-    : { name: "Jane Doe, CRNA", email: "jane@example.com", reviewCount: 2, baseUrl: BASE_URL, feedbackUrl: `${BASE_URL}/feedback` };
+    ? { name: row.name, email: row.email, reviewCount: reviewCountFor(row.email), baseUrl: BASE_URL, feedbackUrl: feedbackUrlFor(row), declareUrl: declareUrlFor(row), declareDays: DECLARE_DEADLINE_DAYS }
+    : { name: "Jane Doe, CRNA", email: "jane@example.com", reviewCount: 2, baseUrl: BASE_URL, feedbackUrl: `${BASE_URL}/feedback`, declareUrl: `${BASE_URL}/declare?t=preview`, declareDays: DECLARE_DEADLINE_DAYS };
   res.json({
     to: ctx.email,
     subject: fillTokens(subject, ctx),
@@ -1222,7 +1453,7 @@ async function runCampaign(campaignId, subject, body) {
       skipped += 1;
       markRecipient.run("skipped", "unsubscribed from mailings", new Date().toISOString(), r.id);
     } else {
-      const ctx = { name: member.name, email: member.email, reviewCount: reviewCountFor(member.email), baseUrl: BASE_URL, feedbackUrl: feedbackUrlFor(member) };
+      const ctx = { name: member.name, email: member.email, reviewCount: reviewCountFor(member.email), baseUrl: BASE_URL, feedbackUrl: feedbackUrlFor(member), declareUrl: declareUrlFor(member), declareDays: DECLARE_DEADLINE_DAYS };
       try {
         await sendEmail({
           to: member.email,
@@ -1234,6 +1465,9 @@ async function runCampaign(campaignId, subject, body) {
         // A campaign that carried their feedback link counts as "feedback form sent" on their member row.
         if (usesFeedbackLink(body)) {
           db.prepare("UPDATE access_requests SET feedback_sent_at = ? WHERE id = ?").run(new Date().toISOString(), member.id);
+        }
+        if (/\{\{\s*declare_link\s*\}\}/i.test(body)) {
+          db.prepare("UPDATE access_requests SET declare_asked_at = COALESCE(declare_asked_at, ?) WHERE id = ?").run(new Date().toISOString(), member.id);
         }
         markRecipient.run("sent", "", new Date().toISOString(), r.id);
       } catch (e) {
