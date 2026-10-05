@@ -427,14 +427,7 @@ async function handleNewRequest(row, { wasRejected = false } = {}) {
       .run(new Date().toISOString(), row.id);
     if (r.changes === 1) {
       sendWelcomeEmail(row).catch((e) => console.error("Failed to send welcome email:", e.message));
-      if (process.env.ADMIN_EMAIL) {
-        sendEmail({
-          to: process.env.ADMIN_EMAIL,
-          replyTo: row.email,
-          subject: `CRNA Critics — ${escapeHtml(row.name)} approved automatically ✓`,
-          html: autoApprovedEmailHtml(row, check),
-        }).catch((e) => console.error("Failed to send auto-approve notice:", e.message));
-      }
+      // No admin notice on auto-approval (Eric turned it off Oct 5, 2026).
       return;
     }
   }
@@ -445,24 +438,6 @@ function nbcrnaRecordLine(check) {
   const rec = check && check.record;
   if (!rec) return "";
   return `NBCRNA shows: ${escapeHtml(rec.name)} · #${escapeHtml(rec.certNumber || rec.id)} · ${escapeHtml(rec.status)} · ${escapeHtml(rec.period)}${rec.residence ? " · " + escapeHtml(rec.residence) : ""}`;
-}
-
-function autoApprovedEmailHtml(row, check) {
-  return `
-        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
-          ${emailHeaderHtml(BASE_URL, 480)}
-          <h2 style="color:#123C3A;">New member approved automatically</h2>
-          <p><strong>${escapeHtml(row.name)}</strong></p>
-          <p>${row.role === "srna"
-            ? `School: ${escapeHtml(row.srna_school || "")}<br/>Program: ${escapeHtml(row.srna_program || "")}<br/>Expected graduation: ${escapeHtml(monthYearLabel(row))}<br/>`
-            : `NBCRNA #: ${escapeHtml(row.nbcrna_number)}<br/>`}
-             Email: ${escapeHtml(row.email)}<br/>
-             Phone: ${escapeHtml(row.phone)}</p>
-          <p style="background:#EEF6F1;border-left:4px solid #1F5C57;padding:10px 12px;">&#10003; ${escapeHtml(check.reason)}.<br/>${nbcrnaRecordLine(check)}</p>
-          <p style="color:#555;font-size:12px;">Terms v${escapeHtml(String(row.terms_version || "?"))} accepted ${escapeHtml(String(row.terms_accepted_at || ""))} from ${escapeHtml(String(row.terms_ip || "unknown IP"))}${row.sms_consent ? " &middot; opted in to automated calls/texts" : ""}</p>
-          <p style="color:#555;">Their welcome email has gone out. Nothing for you to do &mdash; if something looks off, remove them from Admin &rarr; Members.</p>
-        </div>
-      `;
 }
 
 function sendVerifyRequestEmail(row, check) {
