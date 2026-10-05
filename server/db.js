@@ -79,6 +79,9 @@ addColumnIfMissing("access_requests", "sms_consent", "INTEGER NOT NULL DEFAULT 0
 addColumnIfMissing("access_requests", "role", "TEXT NOT NULL DEFAULT 'crna'"); // 'crna' | 'crna_readonly' | 'srna'
 addColumnIfMissing("access_requests", "declared_role", "TEXT"); // what they said they are on the form: practicing | chief | recruiter | owner
 addColumnIfMissing("access_requests", "attested_at", "TEXT");   // when they made that declaration (recorded with the Terms acceptance)
+addColumnIfMissing("access_requests", "declare_asked_at", "TEXT");       // when the "which best describes you?" question was emailed to a pre-existing member
+addColumnIfMissing("access_requests", "declare_deadline_at", "TEXT");    // when the unanswered question moved them to read-only (null = not applied)
+addColumnIfMissing("access_requests", "role_set_by_admin_at", "TEXT");   // Eric changed their tier by hand; a self-declaration then records but never flips the tier
 addColumnIfMissing("access_requests", "srna_school", "TEXT");
 addColumnIfMissing("access_requests", "srna_program", "TEXT");
 addColumnIfMissing("access_requests", "srna_grad_year", "TEXT");
