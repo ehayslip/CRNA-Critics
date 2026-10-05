@@ -76,7 +76,9 @@ addColumnIfMissing("access_requests", "terms_ip", "TEXT");
 addColumnIfMissing("access_requests", "terms_user_agent", "TEXT");
 addColumnIfMissing("access_requests", "sms_consent", "INTEGER NOT NULL DEFAULT 0");
 // SRNA (student) accounts: read-only members verified by school email + manual approval.
-addColumnIfMissing("access_requests", "role", "TEXT NOT NULL DEFAULT 'crna'"); // 'crna' | 'srna'
+addColumnIfMissing("access_requests", "role", "TEXT NOT NULL DEFAULT 'crna'"); // 'crna' | 'crna_readonly' | 'srna'
+addColumnIfMissing("access_requests", "declared_role", "TEXT"); // what they said they are on the form: practicing | chief | recruiter | owner
+addColumnIfMissing("access_requests", "attested_at", "TEXT");   // when they made that declaration (recorded with the Terms acceptance)
 addColumnIfMissing("access_requests", "srna_school", "TEXT");
 addColumnIfMissing("access_requests", "srna_program", "TEXT");
 addColumnIfMissing("access_requests", "srna_grad_year", "TEXT");
@@ -315,6 +317,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_review_flags_review ON review_flags (review_id);
   CREATE INDEX IF NOT EXISTS idx_review_flags_status ON review_flags (status);
 
+
   -- Small key/value store for job bookkeeping (last scan time, etc).
   CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
@@ -377,5 +380,7 @@ db.exec(`
 // One reminder email per unanswered message: when each side was last reminded.
 addColumnIfMissing("conversations", "asker_reminded_at", "TEXT");
 addColumnIfMissing("conversations", "reviewer_reminded_at", "TEXT");
+
+addColumnIfMissing("review_flags", "reporter_email", "TEXT"); // set when a member reported the review (rule = member_report)
 
 module.exports = db;
