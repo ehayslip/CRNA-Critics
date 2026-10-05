@@ -2131,8 +2131,15 @@ app.get("/feedback", (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "feedback.html"));
 });
 
-app.use(express.static(path.join(__dirname, "..", "public")));
+// Code and styles: browsers must re-check on every load (ETag makes that a cheap 304), so a
+// deploy shows up on the next visit instead of whenever Safari feels like it. Images keep a week.
+app.use(express.static(path.join(__dirname, "..", "public"), {
+  setHeaders(res, filePath) {
+    if (/\.(js|css|html)$/.test(filePath)) res.set("Cache-Control", "no-cache");
+  },
+}));
 app.get("*", (req, res) => {
+  res.set("Cache-Control", "no-cache");
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
