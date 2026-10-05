@@ -629,3 +629,25 @@ a.tiny-btn { text-decoration: none; }
 .danger-btn:disabled { opacity: 0.45; cursor: default; }
 .tiny-btn.danger-outline { color: #8C3A32; border-color: #8C3A32; }
 .inline-link.danger-link { color: #8C3A32; }
+
+/* Sign-up: "which best describes you" — decides full vs read-only (Oct 2026). */
+.role-picker { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.role-option { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border: 1px solid #DCE3DE; border-radius: 6px; cursor: pointer; font-size: 13px; color: #14231F; background: #fff; }
+.role-option:has(input:checked) { border-color: #1F5C57; background: #F3F8F5; }
+.role-option input { width: auto; margin-top: 3px; flex-shrink: 0; }
+.role-tier { display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; padding: 1px 6px; border-radius: 3px; margin-left: 4px; vertical-align: 1px; }
+.role-tier.full { background: #E3F3EA; color: #1F5C57; }
+.role-tier.ro { background: #FFF4E5; color: #8A5A0A; }
+.role-tier.no { background: #F6E3E0; color: #8C3A32; }
+.role-note { margin-top: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.45; border-left: 4px solid; border-radius: 0 4px 4px 0; }
+.role-note.ro { background: #FFF4E5; border-color: #B87F1E; color: #5A3D0A; }
+.role-note.no { background: #F6E3E0; border-color: #8C3A32; color: #5A1F18; }
+
+/* Admin: read-only members and the access-level switch. */
+.member-ro { background: #FFF4E5; color: #8A5A0A; border: 1px solid #B87F1E; }
+.tier-box { margin-top: 12px; padding: 10px 12px; background: #FAFBF9; border: 1px dashed #CBD5CF; border-radius: 6px; }
+
+/* Members can report a review to the admin. */
+.report-link { color: #6B756F; font-weight: 600; text-decoration: none; }
+.report-link:hover { text-decoration: underline; color: #8C3A32; }
+.report-box textarea { margin-top: 4px; }
