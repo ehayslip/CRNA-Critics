@@ -1739,7 +1739,10 @@ app.post("/api/admin/aliases", requireAdmin, (req, res) => {
   const run = db.transaction(() => {
     list.forEach((raw) => {
       const norm = normalizeName(raw);
-      if (!norm || norm === normalizeName(canonical)) return;
+      if (!norm) return;
+      // "AYA" vs "Aya" normalize to the same key. That is still a real merge — a spelling
+      // preference — so it is stored like any other alias: this key displays as `canonical`.
+      // (Skipping it here is why the merge used to look like it did nothing.)
       insert.run(crypto.randomUUID(), norm, String(raw).trim(), canonical, now);
       repoint.run(canonical, String(raw).trim()); // anything filed under the old name follows
     });
