@@ -342,6 +342,7 @@ const state = {
   adminFlagNote: "",
   adminShowClosedFlags: false,
   adminDeleteArmed: null,    // review id whose Delete button is waiting for its second tap
+  adminTierArmed: null,      // member id whose "pull reviews" button is waiting for its second tap
   adminNameType: "hospital", // which directory tab is open
   adminNameFilter: "",
   adminPicked: [],    // names ticked in the directory, for a multi-way merge
@@ -470,7 +471,7 @@ async function init() {
     state.side = loadSide();
     state.view = cameFromLink || !state.user.hasPassword ? "setpw" : nextViewAfterAuth();
     await loadReviews();
-    if (!isStudent()) startUnreadPolling();
+    if (!isReadOnly()) startUnreadPolling();
   } catch {
     state.view = "home";
   }
@@ -481,6 +482,8 @@ async function init() {
 // Every sign-in starts by choosing a side (locum or full-time/part-time); after that the
 // switch bar at the top flips between them.
 function isStudent() { return !!(state.user && state.user.role === "srna"); }
+// Students and staffing-side CRNAs (chief / recruiter / group owner) read but never write.
+function isReadOnly() { return !!(state.user && (state.user.readOnly || state.user.role === "srna")); }
 function nextViewAfterAuth() {
   return state.side ? "app" : "employment";
 }
@@ -608,7 +611,7 @@ function openDeleteProfile() {
 }
 function deleteProfilePageHtml() {
   const d = state.deleteDraft || { confirm: "", deleteReviews: false, error: "", busy: false };
-  const n = isStudent() ? 0 : myReviews().length;
+  const n = isReadOnly() ? 0 : myReviews().length;
   const ready = d.confirm.trim().toUpperCase() === "DELETE" && !d.busy;
   return `
     <button class="back-btn" id="delprof-back-btn" style="margin-bottom:10px">&larr; Back</button>
@@ -725,7 +728,7 @@ function attachGuidelinesPageHandlers() {
 }
 
 function navHtml() {
-  const items = isStudent()
+  const items = isReadOnly()
     ? [["search", "Search"], ["signout", "Sign out"]]
     : [["search", "Search"], ["submit", "Post a review"], ["mine", "My reviews"], ["messages", "Messages"], ["signout", "Sign out"]];
   return `<div class="nav">${items
@@ -785,12 +788,17 @@ function attachSideBarHandlers() {
 }
 
 function studentBannerHtml() {
-  if (!isStudent()) return "";
-  return `<div class="student-banner"><strong>STUDENT (SRNA) ACCESS &mdash; READ ONLY.</strong> You can search and read every review. Posting and messaging unlock for practicing CRNAs.${state.user.accessThrough ? ` Your student access runs through <strong>${esc(state.user.accessThrough)}</strong>.` : ""}</div>`;
+  if (isStudent()) {
+    return `<div class="student-banner"><strong>STUDENT (SRNA) ACCESS &mdash; READ ONLY.</strong> You can search and read every review. Posting and messaging unlock for practicing CRNAs.${state.user.accessThrough ? ` Your student access runs through <strong>${esc(state.user.accessThrough)}</strong>.` : ""}</div>`;
+  }
+  if (isReadOnly()) {
+    return `<div class="student-banner"><strong>READ-ONLY ACCESS.</strong> You joined as ${state.user.declaredRole ? `<em>${esc(state.user.declaredRole)}</em>` : "a CRNA on the staffing side"}, so you can search and read every review but can't post reviews or message reviewers &mdash; ratings come only from CRNAs with nothing at stake in them. Role changed? <a href="mailto:erichayslip@gmail.com?subject=CRNA%20Critics%20%E2%80%94%20update%20my%20account">Email us</a>.</div>`;
+  }
+  return "";
 }
 
 function renderTab() {
-  if (isStudent() && state.tab !== "search") state.tab = "search";
+  if (isReadOnly() && state.tab !== "search") state.tab = "search";
   const el = document.getElementById("tab-root");
   if (state.tab === "search") {
     if (state.detail) {
@@ -1098,11 +1106,23 @@ function attachEmploymentHandlers() {
     btn.onclick = () => { state.tab = "search"; setSide(btn.dataset.employment); };
   });
 }
+// Mirrors DECLARED_ROLES on the server. The tier decides what the account can do:
+// full = post and message; readonly = search and read only; none = turned away.
+const ROLE_OPTIONS = [
+  { value: "practicing", tier: "full", label: "Practicing CRNA (locum, W-2, or 1099)", hint: "You take cases and you don't hire, schedule, recruit, or own the group." },
+  { value: "chief", tier: "readonly", label: "Chief CRNA / department lead", hint: "You run or help run a CRNA department and have a say in staffing." },
+  { value: "recruiter", tier: "readonly", label: "CRNA who recruits or works for a staffing agency", hint: "You're a CRNA, and you also place or recruit CRNAs." },
+  { value: "owner", tier: "readonly", label: "I own or manage an anesthesia group", hint: "Owner, partner, or manager of a group that employs or contracts CRNAs." },
+  { value: "notcrna", tier: "none", label: "I'm not a CRNA", hint: "Anesthesiologist, AA, non-CRNA recruiter, administrator, or anyone else." },
+];
+const READ_ONLY_NOTE = `<strong>You'll be read-only.</strong> You can search and read every review, but you won't be able to post reviews or message reviewers. That's not personal &mdash; it's how we keep the ratings free of employer and agency influence, and it's part of the Terms you accept below (Section 1). If your role changes later, email us and we'll update your account.`;
+const NOT_CRNA_NOTE = `<strong>CRNA Critics is for CRNAs only.</strong> We don't offer accounts to anesthesiologists, AAs, non-CRNA recruiters, or administrators &mdash; in any form, including read-only. Thanks for understanding.`;
+
 function requestFormHtml() {
   return `
     <div class="card">
       <div class="section-label">FIRST TIME HERE — CRNA VERIFICATION</div>
-      <p class="hint-text" style="margin-top:0">CRNA Critics is for practicing CRNAs only — not agencies, recruiters, or anesthesiologists. Submit your info below; an admin reviews it before you get access to reviews.</p>
+      <p class="hint-text" style="margin-top:0">CRNA Critics is for CRNAs only — not anesthesiologists, AAs, or anyone who isn't a certified CRNA. Submit your info below; we check it against the NBCRNA record before you get access.</p>
       <div class="anon-notice" style="margin:0 0 10px">&#128274; <strong>You will be anonymous.</strong> Your name and NBCRNA number are used only to verify you're a real CRNA. They are never shown on the site — every review appears as "Anonymous CRNA," so no one will know who you are.</div>
       <div class="name-match-note">
         <strong>Your name must match your NBCRNA credential exactly.</strong>
@@ -1115,9 +1135,17 @@ function requestFormHtml() {
       <input id="req-nbcrna" style="margin-top:8px" placeholder="NBCRNA #" />
       <input id="req-email" style="margin-top:8px" type="email" placeholder="Email" />
       <input id="req-phone" style="margin-top:8px" type="tel" placeholder="Phone number" />
-      <label class="checkbox-row"><input type="checkbox" id="req-attest" />
-        <span>I attest that I am a currently practicing CRNA — not an anesthesiologist (MD/DO), recruiter, or agency employee.</span>
-      </label>
+
+      <div class="section-label" style="margin-top:18px">WHICH BEST DESCRIBES YOU? <span style="font-weight:500;letter-spacing:0;text-transform:none">(required)</span></div>
+      <p class="hint-text" style="margin-top:0">Be straight with us. CRNAs who hire, schedule, recruit, or own a group are welcome to read everything, but they don't rate &mdash; the ratings have to come from CRNAs with nothing at stake in them. Misrepresenting your role is grounds for removal and for pulling anything you posted.</p>
+      <div class="role-picker">
+        ${ROLE_OPTIONS.map((o) => `
+        <label class="role-option">
+          <input type="radio" name="req-role" value="${o.value}" />
+          <span><strong>${o.label}</strong>${o.tier ? ` <span class="role-tier ${o.tier === "full" ? "full" : o.tier === "readonly" ? "ro" : "no"}">${o.tier === "full" ? "full membership" : o.tier === "readonly" ? "read-only" : "not eligible"}</span>` : ""}<br/><span class="hint-text" style="display:inline">${o.hint}</span></span>
+        </label>`).join("")}
+      </div>
+      <div id="role-note" class="role-note" style="display:none"></div>
 
       <div class="section-label" style="margin-top:18px">TERMS OF USE &amp; MEMBER AGREEMENT (v${esc((window.CRNA_TERMS || {}).version || "1.0")})</div>
       <p class="hint-text" style="margin-top:0">You have to accept this before you can request access. Scroll to the bottom — it covers the release of liability, the rule against posting to harm a fellow CRNA, and how we may contact you.</p>
@@ -1125,7 +1153,7 @@ function requestFormHtml() {
       <button type="button" class="inline-link" id="terms-open-full" style="margin-top:6px">Open in a full page / print a copy</button>
 
       <label class="checkbox-row"><input type="checkbox" id="req-terms" />
-        <span><strong>I have read and agree to the Terms of Use &amp; Member Agreement</strong>, including the release of liability and covenant not to sue in Section 8, the indemnification in Section 9, the limitation of liability in Section 11, the arbitration and class-action waiver in Section 14, and the agreement in Section 3 not to post with the intention of harming a fellow CRNA. I agree that CRNA Critics and its affiliates may contact me at the email and phone number I gave above, and I understand my information will never be sold or rented.</span>
+        <span><strong>I have read and agree to the Terms of Use &amp; Member Agreement</strong>, including the release of liability and covenant not to sue in Section 8, the indemnification in Section 9, the limitation of liability in Section 11, the arbitration and class-action waiver in Section 14, the agreement in Section 3 not to post with the intention of harming a fellow CRNA, and the rule in Section 1 that staffing-side CRNAs are read-only and that misrepresenting my role can mean removal. I agree that CRNA Critics and its affiliates may contact me at the email and phone number I gave above, and I understand my information will never be sold or rented.</span>
       </label>
       <label class="checkbox-row"><input type="checkbox" id="req-sms" />
         <span>Optional: I also consent to automated calls and text messages at that number, including from an autodialer or prerecorded voice. Not required to join. Message and data rates may apply; reply STOP to stop.</span>
@@ -1268,11 +1296,21 @@ function attachGateHandlers() {
   } else if (state.gateMode === "srna") {
     attachSrnaFormHandlers();
   } else {
-    const attestBox = document.getElementById("req-attest");
+    const roleBoxes = [...document.querySelectorAll('input[name="req-role"]')];
     const termsBox = document.getElementById("req-terms");
     const submitBtn = document.getElementById("request-submit");
-    const syncSubmit = () => { submitBtn.disabled = !(attestBox.checked && termsBox.checked); };
-    attestBox.onchange = syncSubmit;
+    const roleNote = document.getElementById("role-note");
+    const pickedRole = () => (roleBoxes.find((b) => b.checked) || {}).value || "";
+    const pickedTier = () => (ROLE_OPTIONS.find((o) => o.value === pickedRole()) || {}).tier || "";
+    const syncSubmit = () => {
+      const tier = pickedTier();
+      roleNote.style.display = tier === "readonly" || tier === "none" ? "block" : "none";
+      roleNote.className = `role-note ${tier === "none" ? "no" : "ro"}`;
+      roleNote.innerHTML = tier === "none" ? NOT_CRNA_NOTE : tier === "readonly" ? READ_ONLY_NOTE : "";
+      submitBtn.disabled = !(tier && tier !== "none" && termsBox.checked);
+      submitBtn.textContent = tier === "readonly" ? "Agree & submit for read-only access" : "Agree & submit for verification";
+    };
+    roleBoxes.forEach((b) => { b.onchange = syncSubmit; });
     termsBox.onchange = syncSubmit;
     syncSubmit();
     document.getElementById("terms-open-full").onclick = () => { openTerms(); };
@@ -1283,7 +1321,7 @@ function attachGateHandlers() {
       const nbcrnaNumber = document.getElementById("req-nbcrna").value.trim();
       const email = document.getElementById("req-email").value.trim();
       const phone = document.getElementById("req-phone").value.trim();
-      const attest = attestBox.checked;
+      const declaredRole = pickedRole();
       const acceptedTerms = termsBox.checked;
       const smsConsent = document.getElementById("req-sms").checked;
       const termsVersion = (window.CRNA_TERMS || {}).version || "";
@@ -1291,12 +1329,13 @@ function attachGateHandlers() {
       if (!firstName || !lastName) { errEl.textContent = "Enter both your first and last name, exactly as they appear on your NBCRNA credential."; return; }
       if (firstName.replace(/[^A-Za-z]/g, "").length < 2 || lastName.replace(/[^A-Za-z]/g, "").length < 2) { errEl.textContent = "Spell out your full first and last name — no initials. It must match your NBCRNA credential or your request will be denied."; return; }
       if (!nbcrnaNumber || !email || !phone) { errEl.textContent = "Fill in every field — this is how we verify you're a practicing CRNA."; return; }
-      if (!attest) { errEl.textContent = "Please confirm the attestation above."; return; }
+      if (!declaredRole || pickedTier() === "none") { errEl.textContent = "Pick the option that best describes you."; return; }
       if (!acceptedTerms) { errEl.textContent = "You have to accept the Terms of Use & Member Agreement to request access."; return; }
       errEl.textContent = "";
       try {
-        await api("/api/request-access", { method: "POST", body: { firstName, lastName, nbcrnaNumber, email, phone, acceptedTerms, termsVersion, smsConsent } });
-        document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Submitted.</p><p class="hint-text">We check your first and last name and NBCRNA number against the NBCRNA credential record. You'll get an email once you're approved.</p></div>`;
+        await api("/api/request-access", { method: "POST", body: { firstName, lastName, nbcrnaNumber, email, phone, declaredRole, acceptedTerms, termsVersion, smsConsent } });
+        const ro = pickedTier() === "readonly";
+        document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Submitted.</p><p class="hint-text">We check your first and last name and NBCRNA number against the NBCRNA credential record. You'll get an email once you're approved${ro ? " &mdash; for read-only access, as you chose above" : ""}.</p></div>`;
       } catch (e) {
         errEl.textContent = "Something went wrong saving your request. Try again.";
       }
@@ -1634,8 +1673,11 @@ function detailHtml() {
         ${comment ? `<p style="margin:6px 0">${esc(comment)}</p>` : ""}
         <div style="display:flex;justify-content:space-between;align-items:center">
           <p style="margin:0;font-size:12px;color:#6B756F">— Anonymous CRNA${isMine ? ` (you)` : ""}, ${esc(r.reviewer.credentials)}${roleLabel ? ` · ${roleLabel}` : ""} · <span title="Every review is posted anonymously by a verified CRNA">🔒 anonymous</span></p>
-          ${isMine ? `<span style="display:flex;gap:6px"><button class="tiny-btn" data-edit="${r.id}">Edit</button><span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span></span>` : r.acceptsQuestions && !isStudent() ? `<button class="tiny-btn ask-btn" data-ask="${r.id}" title="Send this reviewer a private question — you both stay anonymous">&#9993; Ask this reviewer</button>` : ""}
+          ${isMine ? `<span style="display:flex;gap:6px"><button class="tiny-btn" data-edit="${r.id}">Edit</button><span data-delete="${r.id}"><button class="tiny-btn">Delete</button></span></span>`
+            : isReadOnly() ? ""
+            : `<span style="display:flex;gap:6px;align-items:center">${r.acceptsQuestions ? `<button class="tiny-btn ask-btn" data-ask="${r.id}" title="Send this reviewer a private question — you both stay anonymous">&#9993; Ask this reviewer</button>` : ""}<button type="button" class="inline-link report-link" data-report="${r.id}" title="Think this was written by a recruiter, employer, or someone with a stake in the rating? Tell the admin.">Report</button></span>`}
         </div>
+        <div class="report-box" id="report-${r.id}" style="display:none"></div>
       </div>`;
   }).join("");
 
@@ -2245,6 +2287,35 @@ function attachDeleteHandlers() {
   });
   document.getElementById("detail-back") && (document.getElementById("detail-back").onclick = () => { state.detail = null; renderTab(); });
   document.querySelectorAll("[data-ask]").forEach((btn) => { btn.onclick = () => askReviewer(btn.dataset.ask); });
+  document.querySelectorAll("[data-report]").forEach((btn) => { btn.onclick = () => openReportBox(btn.dataset.report); });
+}
+
+// Inline "Report this review" — a reason, Send, Cancel. Goes to Admin → Alerts; the reviewer is
+// never told who reported them, and nothing happens to the review until the admin decides.
+function openReportBox(reviewId) {
+  const box = document.getElementById(`report-${reviewId}`);
+  if (!box) return;
+  if (box.style.display !== "none") { box.style.display = "none"; box.innerHTML = ""; return; }
+  box.style.display = "block";
+  box.innerHTML = `
+    <div class="section-label" style="margin-top:8px">REPORT THIS REVIEW</div>
+    <p class="hint-text" style="margin-top:0">Use this if you believe the review was written by a recruiter, employer, group owner, or someone else with a stake in the rating &mdash; or that it breaks the review guidelines. Say why, in a sentence or two. Only the site admin sees this; the reviewer is never told who reported them.</p>
+    <textarea id="report-text-${reviewId}" rows="3" maxlength="600" placeholder="Why do you think this review shouldn't stand?"></textarea>
+    <div id="report-err-${reviewId}" class="error-text"></div>
+    <div style="display:flex;gap:8px;margin-top:6px"><button class="tiny-btn approve" id="report-send-${reviewId}">Send report</button><button class="tiny-btn" id="report-cancel-${reviewId}">Cancel</button></div>`;
+  document.getElementById(`report-cancel-${reviewId}`).onclick = () => { box.style.display = "none"; box.innerHTML = ""; };
+  document.getElementById(`report-send-${reviewId}`).onclick = async () => {
+    const reason = document.getElementById(`report-text-${reviewId}`).value.trim();
+    const err = document.getElementById(`report-err-${reviewId}`);
+    if (reason.length < 10) { err.textContent = "Give the admin a sentence to go on."; return; }
+    err.textContent = "";
+    try {
+      const data = await api(`/api/reviews/${reviewId}/report`, { method: "POST", body: { reason } });
+      box.innerHTML = `<p class="hint-text" style="color:#1F5C57;font-weight:600;margin:8px 0 0">${data.already ? "You already reported this review — it's with the admin." : "Reported. The admin will take a look."}</p>`;
+    } catch (e) {
+      err.textContent = e.data && e.data.error === "own_review" ? "That's your own review — edit or delete it instead." : "Couldn't send the report. Try again.";
+    }
+  };
 }
 
 // patch detail view to wire up back + delete buttons
@@ -2554,6 +2625,9 @@ function adminDate(v) {
   const d = new Date(v);
   return isNaN(d) ? esc(v) : esc(d.toLocaleDateString());
 }
+const DECLARED_LABELS = { practicing: "Practicing CRNA", chief: "Chief CRNA / department lead", recruiter: "CRNA who recruits / works for an agency", owner: "Owns or manages an anesthesia group" };
+function declaredLabel(r) { return DECLARED_LABELS[r.declared_role] || ""; }
+function isReadOnlyRow(r) { return r.role === "crna_readonly" || r.role === "srna"; }
 function termsLine(r) {
   return r.terms_accepted_at
     ? `Terms v${esc(r.terms_version || "?")} accepted ${esc(new Date(r.terms_accepted_at).toLocaleString())} · IP ${esc(r.terms_ip || "unknown")}${r.sms_consent ? " · SMS opt-in" : ""}`
@@ -2576,6 +2650,7 @@ function memberCardHtml(r) {
   const n = r.reviewCount || 0;
   const badges = r.status !== "approved" ? "" : `
     ${isNewMember(r) ? `<span class="member-badge member-new" title="Approved in the last ${NEW_MEMBER_DAYS} days">★ NEW</span>` : ""}
+    ${r.role === "crna_readonly" ? `<span class="member-badge member-ro" title="${esc(declaredLabel(r) || "Staffing-side CRNA")} — can read, can't post or message">👁 read-only</span>` : ""}
     <span class="member-badge member-posts${n ? " has-posts" : ""}" title="Reviews posted">${n} post${n === 1 ? "" : "s"}</span>
     ${r.feedbackSubmittedAt ? `<span class="member-badge member-fb" title="Reviewed the site (feedback form submitted ${adminDate(r.feedbackSubmittedAt)})">✓ site feedback</span>` : ""}
     ${r.openFlags ? `<span class="member-badge member-alert" title="Open review alerts — see the Alerts tab">⚠ ${r.openFlags} alert${r.openFlags === 1 ? "" : "s"}</span>` : ""}`;
@@ -2597,6 +2672,8 @@ function memberCardHtml(r) {
           <tr><td class="stats-label">Email</td><td><a href="mailto:${esc(r.email)}">${esc(r.email)}</a></td></tr>
           <tr><td class="stats-label">Phone</td><td>${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : "—"}</td></tr>
           <tr><td class="stats-label">NBCRNA #</td><td>${esc(r.nbcrna_number)}</td></tr>
+          ${r.role === "srna" ? "" : `<tr><td class="stats-label">Says they are</td><td>${declaredLabel(r) ? `${esc(declaredLabel(r))} <span style="color:#8A948E">(declared ${adminDate(r.attested_at)})</span>` : "<em>joined before the role question (treated as practicing)</em>"}</td></tr>
+          <tr><td class="stats-label">Access</td><td>${r.role === "crna_readonly" ? `<strong style="color:#8A5A0A">Read-only</strong> — can search and read, can't post or message` : "<strong>Full</strong> — can post reviews and message"}</td></tr>`}
           <tr><td class="stats-label">Work type</td><td>${r.employment_type ? esc(r.employment_type === "staff" ? "Staff (W-2 / 1099)" : "Locum") : "not chosen yet"}</td></tr>
           <tr><td class="stats-label">Password</td><td>${r.hasPassword ? "set by member" : "<em>not set yet</em>"}</td></tr>
           <tr><td class="stats-label">Reviews posted</td><td>${r.reviewCount}</td></tr>
@@ -2630,7 +2707,19 @@ function memberCardHtml(r) {
               ${r.feedbackSubmittedAt ? `<button class="tiny-btn${state.adminMemberFeedbackOpen === r.id ? " active-btn" : ""}" data-feedback-view="${r.id}">${state.adminMemberFeedbackOpen === r.id ? "Hide" : "View"} feedback</button>` : ""}
               <button class="tiny-btn" data-unsub="${r.id}::${r.bulk_unsubscribed ? 0 : 1}">${r.bulk_unsubscribed ? "Put back on mailings" : "Opt out of mailings"}</button>` : ""}
             <button class="tiny-btn reject" data-del-start="${r.id}">Delete</button>
-          </div>`}
+          </div>
+          ${r.role === "srna" ? "" : `
+          <div class="tier-box">
+            <div class="section-label" style="margin:0 0 4px">ACCESS LEVEL</div>
+            ${r.role === "crna_readonly"
+              ? `<p class="hint-text" style="margin:0 0 6px">Read-only now. Give full access if they've left the staffing side (or declared wrong by accident). They'll get an email either way.</p>
+                 <button class="tiny-btn approve" data-tier="${r.id}::full::0">Give full access</button>`
+              : `<p class="hint-text" style="margin:0 0 6px">Full member now. Make them read-only if you learn they're a recruiter, chief, or group owner. Pulling their reviews is the right call if they misrepresented themselves on the form. They'll get an email either way.</p>
+                 <div style="display:flex;flex-wrap:wrap;gap:8px">
+                   <button class="tiny-btn" data-tier="${r.id}::readonly::0">Make read-only, keep reviews</button>
+                   ${r.reviewCount ? `<button class="tiny-btn reject" data-tier="${r.id}::readonly::1">Make read-only + pull ${r.reviewCount} review${r.reviewCount === 1 ? "" : "s"}</button>` : ""}
+                 </div>`}
+          </div>`}`}
         ${memberReviewsHtml(r)}
         ${memberFeedbackHtml(r)}
       </div>`}
@@ -3174,6 +3263,31 @@ function attachMemberHandlers() {
       state.adminMemberFeedbackOpen = wasOpen ? null : id;
       paintAdmin();
       if (!wasOpen && !state.adminMemberFeedback[id]) loadMemberFeedback(id);
+    };
+  });
+  document.querySelectorAll("[data-tier]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [id, tier, pull] = btn.dataset.tier.split("::");
+      const row = state.adminRequests.find((x) => x.id === id);
+      if (pull === "1" && state.adminTierArmed !== id) {
+        state.adminTierArmed = id;
+        state.adminNotes[id] = `Click "pull reviews" once more to confirm — their ${row ? row.reviewCount : ""} review(s) will be deleted for good.`;
+        paintAdmin();
+        return;
+      }
+      state.adminTierArmed = null;
+      btn.disabled = true;
+      try {
+        const out = await api(`/api/admin/requests/${id}/tier`, { method: "POST", body: { tier, pullReviews: pull === "1" } });
+        if (row) { row.role = out.role; if (out.pulledReviews) row.reviewCount = 0; }
+        state.adminNotes[id] = tier === "readonly"
+          ? `Now read-only${out.pulledReviews ? `; ${out.pulledReviews} review(s) pulled` : ""}. ${row && row.status === "approved" ? "They've been emailed." : ""}`
+          : `Now a full member. ${row && row.status === "approved" ? "They've been emailed." : ""}`;
+        if (out.pulledReviews) { state.adminReviews = null; state.adminMemberReviews = {}; }
+      } catch (e) {
+        state.adminNotes[id] = `Couldn't change their access (${e.message}).`;
+      }
+      paintAdmin();
     };
   });
   document.querySelectorAll("[data-unsub]").forEach((btn) => {
