@@ -2,24 +2,47 @@
 // way members should have to re-accept; the accepted version is stored per member
 // on access_requests.terms_version.
 window.CRNA_TERMS = {
-  version: "1.0",
-  effective: "September 13, 2026",
+  version: "1.1",
+  effective: "October 5, 2026",
   title: "CRNA Critics — Terms of Use & Member Agreement",
   html: `
-<p class="terms-meta">Version 1.0 &middot; Effective September 13, 2026</p>
+<p class="terms-meta">Version 1.1 &middot; Effective October 5, 2026</p>
+<p class="terms-meta"><em>What changed in 1.1:</em> version 1.0 (September 13, 2026) barred recruiters, agency employees, chiefs and group owners entirely. Version 1.1 admits CRNAs in those roles with read-only membership (Section 1), adds the "no stake in the rating" rule (Section 3), and the in-site Report link (Section 12).</p>
 
 <p><strong>Read this before you create an account.</strong> CRNA Critics ("the Site") is owned and
 operated by Eric Hayslip, CRNA ("Operator," "we," "us"). By checking the acceptance box and submitting
 your verification request, you enter into a binding agreement with us. If you do not agree, do not
 request access and do not use the Site.</p>
 
-<h3>1. Who may join</h3>
+<h3>1. Who may join, and who may post</h3>
 <ul>
-  <li>You are at least 18 years old and a currently certified, practicing Certified Registered Nurse Anesthetist.</li>
-  <li>You are not an anesthesiologist (MD/DO), a recruiter, an agency employee or owner, a hospital or group
-      administrator, or anyone acting on their behalf, and you are not requesting access for them.</li>
+  <li>You are at least 18 years old and a currently certified Certified Registered Nurse Anesthetist. The Site is for
+      CRNAs only. Anesthesiologists (MD/DO), anesthesiologist assistants, recruiters and agency staff who are not CRNAs,
+      hospital or group administrators who are not CRNAs, and anyone acting on their behalf may not hold an account in
+      any form, and you may not request access for them or share your access with them.</li>
+  <li><strong>Two levels of membership.</strong> When you request access you must tell us which best describes you, and
+      you agree that your answer is truthful and complete:
+      <ul>
+        <li><strong>Full membership</strong> is for practicing CRNAs who take cases and do not hire, schedule, recruit,
+            or own or manage the group or agency. Full members may read, post reviews, and message reviewers.</li>
+        <li><strong>Read-only membership</strong> is for CRNAs on the staffing side of the table: Chief CRNAs and department
+            leads, CRNAs who recruit or work for a staffing agency, and owners, partners, or managers of an anesthesia
+            group. Read-only members may search and read every review but may not post reviews, ratings, or comments and
+            may not message reviewers. This is deliberate: the ratings on this Site must come only from CRNAs with nothing
+            at stake in them, and a party being rated must not be able to rate itself, its competitors, or contact the
+            people who rated it.</li>
+      </ul></li>
+  <li><strong>Tell us when your role changes.</strong> If a full member takes a chief, recruiting, ownership, or management
+      role, you agree to notify us so your account can be moved to read-only. If a read-only member leaves such a role,
+      you may ask us to restore full membership. We may move any account between levels at any time, at our sole
+      discretion, with or without notice.</li>
+  <li><strong>Misrepresenting your role is a material breach.</strong> If you obtain or keep full membership by misstating
+      your role, we may, without notice or liability: move your account to read-only, suspend or terminate it, and remove
+      every review, rating, comment, and message you posted. We record the role you declared, the date and time, and the IP
+      address used, together with your acceptance of these Terms.</li>
   <li>The name, NBCRNA number, email, and phone number you submit are your own and are accurate. We verify
-      credentials by hand and may refuse or revoke access for any reason, including a credential we cannot confirm.</li>
+      credentials against the NBCRNA record and may refuse or revoke access for any reason, including a credential we
+      cannot confirm.</li>
   <li>One account per person. You are responsible for everything done through your account and for keeping
       your password confidential. You may not sell, share, or transfer your account or your access.</li>
 </ul>
@@ -43,6 +66,9 @@ request access and do not use the Site.</p>
   <li><strong>First-hand only.</strong> Post only about assignments, agencies, agents, groups, and facilities you
       personally worked with or personally negotiated with. No rumors, no second-hand accounts, no reviews written
       for or at the request of someone else.</li>
+  <li><strong>No stake in the rating.</strong> Do not review an agency, agent, group, or facility that you, your employer,
+      or a business you own or manage has a financial or staffing interest in &mdash; including your own group, an agency
+      that pays you, or a competitor of either. If you have such an interest, you belong in read-only membership (Section 1).</li>
   <li><strong>Truthful.</strong> Do not post anything you know to be false or misleading. Label opinion as opinion.
       Do not exaggerate, invent, or inflate to punish or to reward.</li>
   <li><strong>No patient information.</strong> Never post protected health information or anything that could identify
@@ -162,9 +188,10 @@ apply regardless of the theory of liability and survive termination. Some jurisd
 limitations, so parts of this section may not apply to you.</p>
 
 <h3>12. Complaints about content</h3>
-<p>If you believe a review about you or your organization is false, violates these rules, infringes your copyright, or
-discloses protected information, email the Operator at the address below with the specific review and the specific
-problem. We review complaints in good faith and may remove content, allow a public response, or leave it in place.
+<p>Full members may report a review from the Site itself using the "Report" link beneath it; the reviewer is not told who
+reported them. If you believe a review about you or your organization is false, violates these rules, infringes your
+copyright, or discloses protected information, email the Operator at the address below with the specific review and the
+specific problem. We review complaints in good faith and may remove content, allow a public response, or leave it in place.
 Nothing in this paragraph creates an obligation to remove content or a right to have it removed, and we do not
 adjudicate disputes between members and the organizations they review.</p>
 
