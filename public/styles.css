@@ -654,3 +654,7 @@ a.tiny-btn { text-decoration: none; }
 .report-link { color: #6B756F; font-weight: 600; text-decoration: none; }
 .report-link:hover { text-decoration: underline; color: #8C3A32; }
 .report-box textarea { margin-top: 4px; }
+
+/* "Which best describes you?" — asked in-app of members who joined before the question. */
+.declare-card { border: 2px solid #B87F1E; background: #FFFBF3; }
+.role-check { background: #FAFBF9; border: 1px dashed #CBD5CF; }
