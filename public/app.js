@@ -909,6 +909,7 @@ function landingHtml() {
           <button class="btn btn-ghost" data-go="signin">Already a member? Sign in</button>
         </div>
         <p class="hero-warning">NO AGENTS, AGENCIES, MDAs, OR AAs ALLOWED.</p>
+        <p class="hero-readonly">CRNAs who recruit, run a department, or own a group may join <strong>read-only</strong> &mdash; they can read every review but never post one or message a reviewer.</p>
         <p class="hero-anon">&#128274; <strong>Every CRNA is anonymous.</strong> Your reviews show only as "Anonymous CRNA" — no one will know who you are.</p>
       </div>
       <img class="hero-art" src="image.jpg" alt="CRNA holding a locum contract full of red flags - CRNA Beware, know before you sign">
