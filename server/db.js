@@ -386,4 +386,56 @@ addColumnIfMissing("conversations", "reviewer_reminded_at", "TEXT");
 
 addColumnIfMissing("review_flags", "reporter_email", "TEXT"); // set when a member reported the review (rule = member_report)
 
+// ---------- personal texts (Admin → Texts) ----------
+//
+// The site doesn't send texts. Eric texts members from his own phone; the admin gives him
+// ready-made wording to copy (or open straight in Messages) and keeps a log of what he sent
+// to whom and when, so the same text doesn't go out twice.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS text_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    sort INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS text_log (
+    id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,       -- access_requests.id of the member texted
+    template_id TEXT,               -- null for a free-typed text
+    template_name TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL,             -- exactly what was copied / opened in Messages
+    sent_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_text_log_request ON text_log (request_id);
+`);
+
+// Wording Eric approved Oct 15, 2026; he edits or adds more himself in Admin → Texts.
+const STARTER_TEXTS = [
+  {
+    name: "Casual — please review",
+    body: "Hey {{first_name}}, this is Eric Hayslip, CRNA. Thanks for signing up for crnacritics.com! The site really needs reviews to work. A lot of CRNAs have signed up, and if every one of us left a review of our current site, good or bad, it would be a huge help with future assignment decisions. It only takes 3–5 minutes to leave a review. Imagine having thousands of useful reviews to help you make an informed decision about your next assignment. Reviews are anonymous. crnacritics.com",
+  },
+  {
+    name: "Short follow-up",
+    body: "Hi {{first_name}}, Eric Hayslip again from CRNA Critics. Do you have 5 minutes to rate your current assignment, good or bad? It's anonymous and helps the next CRNA headed there. crnacritics.com",
+  },
+  {
+    name: "Thank you for reviewing",
+    body: "{{first_name}}, thank you for leaving a review on CRNA Critics! That's exactly what makes the site work. If you know other CRNAs, please send them to crnacritics.com. – Eric",
+  },
+  {
+    name: "Share with colleagues",
+    body: "Hey {{first_name}}, Eric from CRNA Critics. If you work with other CRNAs who take locum or staff jobs, would you send them crnacritics.com? The more reviews we get, the better it gets for all of us.",
+  },
+];
+// Seed once (tracked in kv) so deleting every template doesn't bring the starters back.
+if (!db.prepare("SELECT 1 FROM kv WHERE key = 'text_templates_seeded'").get()) {
+  const now = new Date().toISOString();
+  const ins = db.prepare("INSERT INTO text_templates (id, name, body, sort, created_at, updated_at) VALUES (?,?,?,?,?,?)");
+  STARTER_TEXTS.forEach((t, i) => ins.run(require("crypto").randomUUID(), t.name, t.body, i, now, now));
+  db.prepare("INSERT INTO kv (key, value) VALUES ('text_templates_seeded', ?)").run(now);
+}
+
 module.exports = db;

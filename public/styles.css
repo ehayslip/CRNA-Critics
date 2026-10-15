@@ -663,3 +663,17 @@ a.tiny-btn { text-decoration: none; }
 /* "Which best describes you?" — asked in-app of members who joined before the question. */
 .declare-card { border: 2px solid #B87F1E; background: #FFFBF3; }
 .role-check { background: #FAFBF9; border: 1px dashed #CBD5CF; }
+
+/* ---------- personal texts (admin) ---------- */
+.member-texted { background: #E3F4EA; color: #1F5C57; }
+.text-box { margin-top: 12px; padding: 10px 12px; background: #F6FBF8; border: 1px solid #CFE6D8; border-radius: 6px; }
+.text-pick { width: 100%; padding: 8px; font-size: 13px; margin-top: 4px; }
+.text-body { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 8px; font-size: 14px; line-height: 1.4; font-family: Inter, sans-serif; resize: vertical; }
+.text-warn { margin-top: 6px; font-size: 12px; font-weight: 700; color: #8A5A0A; background: #FFF4DE; padding: 5px 8px; border-radius: 3px; }
+.text-history { margin-bottom: 8px; border: 1px solid #DDE7E1; background: #fff; border-radius: 4px; }
+.text-history-head { font-size: 11px; font-weight: 800; letter-spacing: 0.3px; color: #6B756F; padding: 6px 8px; border-bottom: 1px solid #EEF2EF; }
+.text-hist-row, .text-log-row { padding: 7px 8px; font-size: 12px; border-bottom: 1px solid #EEF2EF; }
+.text-hist-row:last-child, .text-log-row:last-child { border-bottom: none; }
+.text-hist-body { color: #5B6660; margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.link-inline { background: none; border: none; padding: 0; color: #0B1526; text-decoration: underline; cursor: pointer; font-size: inherit; font-family: inherit; }
+.text-hist-row .link-inline { color: #8A948E; font-size: 11px; margin-left: 4px; }

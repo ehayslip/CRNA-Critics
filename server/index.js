@@ -1138,7 +1138,7 @@ app.delete("/api/me", requireSession, (req, res) => {
     }
     db.prepare("DELETE FROM beta_feedback WHERE request_id = ?").run(row.id);
     db.prepare("DELETE FROM email_campaign_recipients WHERE lower(email) = lower(?)").run(email);
-    db.prepare("DELETE FROM access_requests WHERE id = ?").run(row.id);
+    db.prepare("DELETE FROM access_requests WHERE id = ?").run(row.id); db.prepare("DELETE FROM text_log WHERE request_id = ?").run(row.id);
     return { deletedReviews, keptReviews };
   })();
   res.clearCookie("session", { path: "/" });
@@ -1180,7 +1180,10 @@ function adminRow(r) {
     .prepare("SELECT submitted_at FROM beta_feedback WHERE request_id = ? ORDER BY submitted_at DESC LIMIT 1")
     .get(r.id);
   const flags = db.prepare("SELECT COUNT(*) AS n FROM review_flags WHERE reviewer_email = ? AND status = 'open'").get(r.email);
+  const texts = db.prepare("SELECT COUNT(*) AS n, MAX(sent_at) AS last FROM text_log WHERE request_id = ?").get(r.id);
   return {
+    textCount: texts ? texts.n : 0,
+    lastTextedAt: texts ? texts.last : null,
     ...rest,
     hasPassword: !!password_hash,
     reviewCount: counted ? counted.n : 0,
@@ -1310,7 +1313,7 @@ app.delete("/api/admin/requests/:id", requireAdmin, (req, res) => {
   if (alsoReviews) {
     deletedReviews = db.prepare("DELETE FROM reviews WHERE reviewer_email = ?").run(row.email).changes;
   }
-  db.prepare("DELETE FROM access_requests WHERE id = ?").run(row.id);
+  db.prepare("DELETE FROM access_requests WHERE id = ?").run(row.id); db.prepare("DELETE FROM text_log WHERE request_id = ?").run(row.id);
   res.json({ ok: true, deletedReviews, name: row.name });
 });
 
@@ -1342,6 +1345,73 @@ function reviewCountFor(email) {
   const row = db.prepare("SELECT COUNT(*) AS n FROM reviews WHERE reviewer_email = ?").get(email);
   return row ? row.n : 0;
 }
+
+// --- personal texts: ready-made wording + a log of what Eric sent ---
+
+app.get("/api/admin/texts", requireAdmin, (req, res) => {
+  res.json({
+    templates: db.prepare("SELECT * FROM text_templates ORDER BY sort, created_at").all(),
+    log: db.prepare(
+      `SELECT t.*, a.name AS member_name, a.phone AS member_phone
+         FROM text_log t LEFT JOIN access_requests a ON a.id = t.request_id
+        ORDER BY t.sent_at DESC LIMIT 500`
+    ).all(),
+  });
+});
+
+function textTemplateFields(b) {
+  const name = String(b?.name || "").trim().slice(0, 120);
+  const body = String(b?.body || "").trim().slice(0, 2000);
+  if (!name || !body) return { error: "missing_fields" };
+  return { name, body };
+}
+
+app.post("/api/admin/text-templates", requireAdmin, (req, res) => {
+  const f = textTemplateFields(req.body);
+  if (f.error) return res.status(400).json({ error: f.error });
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const sort = (db.prepare("SELECT MAX(sort) AS m FROM text_templates").get().m ?? -1) + 1;
+  db.prepare("INSERT INTO text_templates (id, name, body, sort, created_at, updated_at) VALUES (?,?,?,?,?,?)")
+    .run(id, f.name, f.body, sort, now, now);
+  res.json({ template: db.prepare("SELECT * FROM text_templates WHERE id = ?").get(id) });
+});
+
+app.put("/api/admin/text-templates/:id", requireAdmin, (req, res) => {
+  const f = textTemplateFields(req.body);
+  if (f.error) return res.status(400).json({ error: f.error });
+  const changed = db.prepare("UPDATE text_templates SET name=?, body=?, updated_at=? WHERE id=?")
+    .run(f.name, f.body, new Date().toISOString(), req.params.id).changes;
+  if (!changed) return res.status(404).json({ error: "not_found" });
+  res.json({ template: db.prepare("SELECT * FROM text_templates WHERE id = ?").get(req.params.id) });
+});
+
+app.delete("/api/admin/text-templates/:id", requireAdmin, (req, res) => {
+  const changed = db.prepare("DELETE FROM text_templates WHERE id = ?").run(req.params.id).changes;
+  if (!changed) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true });
+});
+
+// Record a text Eric sent (or is about to send) from his phone.
+app.post("/api/admin/texts", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const member = db.prepare("SELECT id FROM access_requests WHERE id = ?").get(String(b.requestId || ""));
+  if (!member) return res.status(404).json({ error: "member_not_found" });
+  const body = String(b.body || "").trim().slice(0, 2000);
+  if (!body) return res.status(400).json({ error: "empty_text" });
+  const tpl = b.templateId ? db.prepare("SELECT id, name FROM text_templates WHERE id = ?").get(String(b.templateId)) : null;
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO text_log (id, request_id, template_id, template_name, body, sent_at) VALUES (?,?,?,?,?,?)")
+    .run(id, member.id, tpl ? tpl.id : null, tpl ? tpl.name : (String(b.templateName || "").slice(0, 120) || "Typed by hand"), body, now);
+  res.json({ entry: db.prepare("SELECT * FROM text_log WHERE id = ?").get(id) });
+});
+
+app.delete("/api/admin/texts/:id", requireAdmin, (req, res) => {
+  const changed = db.prepare("DELETE FROM text_log WHERE id = ?").run(req.params.id).changes;
+  if (!changed) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true });
+});
 
 // --- templates (the CMS) ---
 

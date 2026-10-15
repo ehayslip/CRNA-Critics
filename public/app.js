@@ -318,6 +318,11 @@ async function api(path, opts = {}) {
 
 const state = {
   adminOpenId: null,   // which member row is expanded
+  adminTexts: null,    // { templates, log } for Admin → Texts and each member's text box
+  textPick: {},        // memberId -> chosen text template id ("" = type my own)
+  textDraft: {},       // memberId -> the wording in their text box (edited or filled)
+  textNote: {},        // memberId -> one-line confirmation under their text box
+  textTplArmed: null,  // template id waiting for a second "Delete" tap
   adminFilter: "",     // name/email filter in the member list
   adminConfirmId: null, // member row showing the delete confirmation
   adminNotes: {},      // id -> last action message shown on that row
@@ -2689,6 +2694,240 @@ function byLastName(a, b) {
   const c = lastNameOf(a.name).localeCompare(lastNameOf(b.name));
   return c !== 0 ? c : String(a.name || "").localeCompare(String(b.name || ""));
 }
+// ---------- personal texts ----------
+function shortDate(v) {
+  const d = new Date(v);
+  return isNaN(d) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function whenSent(v) {
+  const d = new Date(v);
+  return isNaN(d) ? "" : d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+function firstNameOf(r) {
+  return String((r && r.name) || "").trim().split(/\s+/)[0] || "there";
+}
+function fillText(body, r) {
+  return String(body || "").replace(/\{\{?\s*first_name\s*\}?\}/gi, firstNameOf(r));
+}
+// iPhone/iPad/Mac Messages expect "&body=", everything else "?body=".
+function smsHref(phone, body) {
+  const num = smsNumber(phone);
+  const sep = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) ? "&" : "?";
+  return `sms:${num}${body ? `${sep}body=${encodeURIComponent(body)}` : ""}`;
+}
+function textsFor(id) {
+  return ((state.adminTexts && state.adminTexts.log) || []).filter((t) => t.request_id === id);
+}
+async function loadAdminTexts(force) {
+  if (state.adminTexts && !force) return;
+  try { state.adminTexts = await api("/api/admin/texts"); }
+  catch { state.adminTexts = { templates: [], log: [], error: true }; }
+  paintAdmin();
+}
+// The wording currently in a member's box: what they typed, else the chosen template filled in.
+function textDraftFor(r) {
+  if (state.textDraft[r.id] != null) return state.textDraft[r.id];
+  const tpl = currentTextTemplate(r);
+  return tpl ? fillText(tpl.body, r) : "";
+}
+function currentTextTemplate(r) {
+  const tpls = (state.adminTexts && state.adminTexts.templates) || [];
+  const pick = state.textPick[r.id];
+  if (pick === "") return null;
+  if (pick) return tpls.find((t) => t.id === pick) || null;
+  // Default: the first template they haven't been sent yet.
+  const sentIds = new Set(textsFor(r.id).map((t) => t.template_id));
+  return tpls.find((t) => !sentIds.has(t.id)) || tpls[0] || null;
+}
+function memberTextBoxHtml(r) {
+  if (!smsNumber(r.phone)) return "";
+  if (!state.adminTexts) return `<div class="text-box"><div class="section-label" style="margin:0">TEXT THIS MEMBER</div><p class="hint-text">Loading texts…</p></div>`;
+  const tpls = state.adminTexts.templates || [];
+  const tpl = currentTextTemplate(r);
+  const history = textsFor(r.id);
+  const already = tpl ? history.find((t) => t.template_id === tpl.id) : null;
+  const note = state.textNote[r.id];
+  return `
+    <div class="text-box">
+      <div class="section-label" style="margin:0 0 6px">TEXT THIS MEMBER ${r.sms_consent ? `<span class="sms-ok">texts OK</span>` : `<span class="sms-no">no text opt-in</span>`}</div>
+      ${history.length ? `
+        <div class="text-history">
+          <div class="text-history-head">Texts you've sent (${history.length})</div>
+          ${history.map((t) => `
+            <div class="text-hist-row">
+              <div><strong>${esc(whenSent(t.sent_at))}</strong> · ${esc(t.template_name)}
+                <button type="button" class="link-inline" data-text-undo="${t.id}" title="Remove this from the log (e.g. you didn't actually send it)">remove</button></div>
+              <div class="text-hist-body">${esc(t.body)}</div>
+            </div>`).join("")}
+        </div>` : `<p class="hint-text" style="margin:0 0 6px">You haven't texted ${esc(firstNameOf(r))} yet.</p>`}
+      <select class="text-pick" data-text-pick="${r.id}">
+        ${tpls.map((t) => {
+          const sent = history.find((h) => h.template_id === t.id);
+          return `<option value="${t.id}"${tpl && tpl.id === t.id ? " selected" : ""}>${esc(t.name)}${sent ? ` — sent ${esc(shortDate(sent.sent_at))}` : ""}</option>`;
+        }).join("")}
+        <option value=""${!tpl ? " selected" : ""}>Type my own…</option>
+      </select>
+      ${already ? `<div class="text-warn">⚠ You already sent this one on ${esc(whenSent(already.sent_at))}.</div>` : ""}
+      <textarea class="text-body" data-text-body="${r.id}" rows="7" placeholder="Type your text…">${esc(textDraftFor(r))}</textarea>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">
+        <a class="tiny-btn text-btn" data-text-open="${r.id}" href="${esc(smsHref(r.phone, textDraftFor(r)))}">💬 Open in Messages</a>
+        <button type="button" class="tiny-btn" data-text-copy="${r.id}">Copy text</button>
+        <button type="button" class="tiny-btn" data-text-log="${r.id}">✓ Log as sent</button>
+      </div>
+      <p class="hint-text" style="font-size:11px">"Open in Messages" fills in the text and logs it for you. If you copy and paste instead, tap "Log as sent" after you send it.</p>
+      ${note ? `<p class="hint-text" style="color:#1F5C57;font-weight:600">${esc(note)}</p>` : ""}
+    </div>`;
+}
+async function logText(r, body, viaKeepalive) {
+  const tpl = currentTextTemplate(r);
+  const payload = { requestId: r.id, templateId: tpl ? tpl.id : null, body };
+  if (viaKeepalive) {
+    // Leaving for Messages can cut a normal request short; keepalive lets it finish.
+    await fetch("/api/admin/texts", { method: "POST", keepalive: true, credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  } else {
+    await api("/api/admin/texts", { method: "POST", body: payload });
+  }
+  delete state.textDraft[r.id];
+  delete state.textPick[r.id];
+  await loadAdminTexts(true);
+  const row = state.adminRequests.find((x) => x.id === r.id);
+  if (row) { row.textCount = textsFor(r.id).length; row.lastTextedAt = new Date().toISOString(); }
+}
+function attachTextHandlers() {
+  const member = (id) => state.adminRequests.find((x) => x.id === id);
+  document.querySelectorAll("[data-text-pick]").forEach((sel) => {
+    sel.onchange = () => {
+      const id = sel.dataset.textPick;
+      state.textPick[id] = sel.value;
+      delete state.textDraft[id];
+      state.textNote[id] = "";
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-text-body]").forEach((ta) => {
+    ta.oninput = () => {
+      const id = ta.dataset.textBody;
+      state.textDraft[id] = ta.value;
+      const r = member(id);
+      const a = document.querySelector(`[data-text-open="${id}"]`);
+      if (a && r) a.href = smsHref(r.phone, ta.value);
+    };
+  });
+  document.querySelectorAll("[data-text-open]").forEach((a) => {
+    a.onclick = () => {
+      const r = member(a.dataset.textOpen);
+      const body = (document.querySelector(`[data-text-body="${r.id}"]`) || {}).value || "";
+      if (!body.trim()) return; // nothing to log; Messages still opens with an empty text
+      a.href = smsHref(r.phone, body);
+      state.textNote[r.id] = `Logged ${whenSent(new Date())}. If you didn't send it after all, tap "remove" on it above.`;
+      logText(r, body.trim(), true).catch(() => { state.textNote[r.id] = "Messages opened, but the log didn't save. Tap \"Log as sent\" once you've sent it."; paintAdmin(); });
+      // Let the link's default action open Messages.
+    };
+  });
+  document.querySelectorAll("[data-text-copy]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.textCopy;
+      const ta = document.querySelector(`[data-text-body="${id}"]`);
+      const body = ta ? ta.value : "";
+      try { await navigator.clipboard.writeText(body); }
+      catch { if (ta) { ta.select(); document.execCommand("copy"); } }
+      state.textNote[id] = `Copied. Paste it into your text, then tap "Log as sent".`;
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-text-log]").forEach((btn) => {
+    btn.onclick = async () => {
+      const r = member(btn.dataset.textLog);
+      const body = ((document.querySelector(`[data-text-body="${r.id}"]`) || {}).value || "").trim();
+      if (!body) { state.textNote[r.id] = "Type or pick a text first."; paintAdmin(); return; }
+      btn.disabled = true;
+      try { await logText(r, body); state.textNote[r.id] = `Logged as sent ${whenSent(new Date())}.`; }
+      catch (e) { state.textNote[r.id] = `Couldn't log that (${e.message}).`; }
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-text-undo]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.textUndo;
+      const entry = ((state.adminTexts && state.adminTexts.log) || []).find((t) => t.id === id);
+      btn.disabled = true;
+      try {
+        await api(`/api/admin/texts/${id}`, { method: "DELETE" });
+        await loadAdminTexts(true);
+        if (entry) {
+          const row = member(entry.request_id);
+          const left = textsFor(entry.request_id);
+          if (row) { row.textCount = left.length; row.lastTextedAt = left.length ? left[0].sent_at : null; }
+          state.textNote[entry.request_id] = "Removed from the log.";
+        }
+      } catch (e) { flash(`Couldn't remove that (${e.message}).`); }
+      paintAdmin();
+    };
+  });
+
+  // Texts tab: edit the ready-made wording.
+  document.querySelectorAll("[data-tpl-save]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.tplSave;
+      const name = document.querySelector(`[data-tpl-name="${id}"]`).value;
+      const body = document.querySelector(`[data-tpl-body="${id}"]`).value;
+      btn.disabled = true;
+      try {
+        if (id === "new") await api("/api/admin/text-templates", { method: "POST", body: { name, body } });
+        else await api(`/api/admin/text-templates/${id}`, { method: "PUT", body: { name, body } });
+        flash(id === "new" ? "Text added." : "Saved.");
+        await loadAdminTexts(true);
+      } catch (e) { flash(e.message === "missing_fields" ? "Give it a name and some wording." : `Couldn't save (${e.message}).`); btn.disabled = false; }
+    };
+  });
+  document.querySelectorAll("[data-tpl-del]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.tplDel;
+      if (state.textTplArmed !== id) { state.textTplArmed = id; paintAdmin(); return; }
+      state.textTplArmed = null;
+      try { await api(`/api/admin/text-templates/${id}`, { method: "DELETE" }); flash("Deleted. Past texts in the log keep their wording."); await loadAdminTexts(true); }
+      catch (e) { flash(`Couldn't delete (${e.message}).`); }
+    };
+  });
+  document.querySelectorAll("[data-text-member]").forEach((btn) => {
+    btn.onclick = () => {
+      state.adminTab = "members";
+      state.adminOpenId = btn.dataset.textMember;
+      paintAdmin();
+      const card = document.querySelector(".member-card.open");
+      if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+  });
+}
+function textsSection() {
+  if (!state.adminTexts) return `<p class="hint-text">Loading texts…</p>`;
+  const { templates = [], log = [] } = state.adminTexts;
+  const tplCard = (t) => `
+    <div class="card">
+      <input class="search-input" data-tpl-name="${t.id}" value="${esc(t.name)}" placeholder="Name (only you see this)" />
+      <textarea class="text-body" data-tpl-body="${t.id}" rows="8" placeholder="Wording of the text">${esc(t.body)}</textarea>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center">
+        <button class="tiny-btn approve" data-tpl-save="${t.id}">${t.id === "new" ? "Add text" : "Save"}</button>
+        ${t.id === "new" ? "" : `<button class="tiny-btn reject" data-tpl-del="${t.id}">${state.textTplArmed === t.id ? "Tap again to delete" : "Delete"}</button>
+        <span class="hint-text" style="margin:0">${log.filter((l) => l.template_id === t.id).length} sent</span>`}
+      </div>
+    </div>`;
+  return `
+    <p class="hint-text">The site doesn't send texts. These are ready-made texts for you to send from your own phone. <code>{{first_name}}</code> is replaced with each member's first name. To text someone, open them under Members.</p>
+    <div class="section-label" style="margin:12px 0 8px">READY-MADE TEXTS (${templates.length})</div>
+    ${templates.map(tplCard).join("")}
+    ${tplCard({ id: "new", name: "", body: "" })}
+    <div class="section-label" style="margin:16px 0 8px">TEXTS YOU'VE SENT (${log.length})</div>
+    ${log.length === 0 ? `<p class="hint-text">Nothing logged yet.</p>` : `
+      <div class="card" style="padding:0">
+        ${log.map((t) => `
+          <div class="text-log-row">
+            <div><strong>${esc(whenSent(t.sent_at))}</strong> · <button type="button" class="link-inline" data-text-member="${t.request_id}">${esc(t.member_name || "(deleted member)")}</button> · ${esc(t.template_name)}</div>
+            <div class="text-hist-body">${esc(t.body)}</div>
+          </div>`).join("")}
+      </div>`}`;
+}
+
 function adminDate(v) {
   if (!v) return "—";
   const d = new Date(v);
@@ -2722,6 +2961,7 @@ function memberCardHtml(r) {
     ${r.role === "crna_readonly" ? `<span class="member-badge member-ro" title="${esc(declaredLabel(r) || "Staffing-side CRNA")} — can read, can't post or message">👁 read-only</span>` : ""}
     <span class="member-badge member-posts${n ? " has-posts" : ""}" title="Reviews posted">${n} post${n === 1 ? "" : "s"}</span>
     ${r.feedbackSubmittedAt ? `<span class="member-badge member-fb" title="Reviewed the site (feedback form submitted ${adminDate(r.feedbackSubmittedAt)})">✓ site feedback</span>` : ""}
+    ${r.textCount ? `<span class="member-badge member-texted" title="You've texted them ${r.textCount} time${r.textCount === 1 ? "" : "s"}">💬 texted ${esc(shortDate(r.lastTextedAt))}${r.textCount > 1 ? ` ×${r.textCount}` : ""}</span>` : ""}
     ${r.openFlags ? `<span class="member-badge member-alert" title="Open review alerts — see the Alerts tab">⚠ ${r.openFlags} alert${r.openFlags === 1 ? "" : "s"}</span>` : ""}`;
   return `
     <div class="card member-card${open ? " open" : ""}">
@@ -2791,6 +3031,7 @@ function memberCardHtml(r) {
                    ${r.reviewCount ? `<button class="tiny-btn reject" data-tier="${r.id}::readonly::1">Make read-only + pull ${r.reviewCount} review${r.reviewCount === 1 ? "" : "s"}</button>` : ""}
                  </div>`}
           </div>`}`}
+        ${memberTextBoxHtml(r)}
         ${memberReviewsHtml(r)}
         ${memberFeedbackHtml(r)}
       </div>`}
@@ -3259,7 +3500,7 @@ function paintAdmin() {
     .filter((r) => !q || `${r.name} ${r.email} ${r.phone || ""} ${r.nbcrna_number || ""}`.toLowerCase().includes(q))
     .sort(byLastName);
 
-  const tab = ["members", "srnas", "reviews", "email", "names", "alerts"].includes(state.adminTab) ? state.adminTab : "members";
+  const tab = ["members", "srnas", "reviews", "email", "texts", "names", "alerts"].includes(state.adminTab) ? state.adminTab : "members";
   const openFlags = (state.adminFlags || []).filter((f) => f.status === "open").length + msgAlertConvIds().length;
   const dupeCount = state.adminNames ? duplicateCandidates().length : 0;
   const membersSection = `
@@ -3298,10 +3539,11 @@ function paintAdmin() {
       <button class="nav-btn${tab === "srnas" ? " active" : ""}" data-admin-tab="srnas">SRNAs${srnaPending ? ` <span class="tab-badge">${srnaPending}</span>` : ""}</button>
       <button class="nav-btn${tab === "reviews" ? " active" : ""}" data-admin-tab="reviews">Reviews${state.adminReviews ? ` <span class="tab-badge">${state.adminReviews.length}</span>` : ""}</button>
       <button class="nav-btn${tab === "email" ? " active" : ""}" data-admin-tab="email">Email</button>
+      <button class="nav-btn${tab === "texts" ? " active" : ""}" data-admin-tab="texts">Texts</button>
       <button class="nav-btn${tab === "names" ? " active" : ""}" data-admin-tab="names">Names${dupeCount ? ` <span class="tab-badge">${dupeCount}</span>` : ""}</button>
       <button class="nav-btn${tab === "alerts" ? " active" : ""}" data-admin-tab="alerts">Alerts${openFlags ? ` <span class="tab-badge alert-badge">${openFlags}</span>` : ""}</button>
     </div>
-    ${tab === "members" ? membersSection : tab === "srnas" ? srnaSection(srnaRows) : tab === "reviews" ? adminReviewsSection() : tab === "email" ? emailSection() : tab === "alerts" ? alertsSection() : namesSection}`;
+    ${tab === "members" ? membersSection : tab === "srnas" ? srnaSection(srnaRows) : tab === "reviews" ? adminReviewsSection() : tab === "email" ? emailSection() : tab === "texts" ? textsSection() : tab === "alerts" ? alertsSection() : namesSection}`;
 
   document.querySelectorAll("[data-admin-tab]").forEach((btn) => {
     btn.onclick = () => {
@@ -3311,6 +3553,7 @@ function paintAdmin() {
       // Each tab loads its own data the first time it's opened.
       if (state.adminTab === "reviews") loadAdminReviews();
       if (state.adminTab === "email") loadEmailData();
+      if (state.adminTab === "texts") loadAdminTexts();
       if (state.adminTab === "alerts") loadAdminFlags();
     };
   });
@@ -3320,6 +3563,7 @@ function paintAdmin() {
     if (state.adminTab === "reviews") loadAdminReviews(true);
     if (state.adminTab === "email") loadEmailData(true);
     if (state.adminTab === "alerts") loadAdminFlags(true);
+    loadAdminTexts(true);
     renderAdmin();
   };
   attachDuplicateHandlers();
@@ -3349,6 +3593,7 @@ function paintAdmin() {
   attachAdminReviewHandlers();
   attachEmailHandlers();
   attachAlertHandlers();
+  attachTextHandlers();
 }
 
 
@@ -3360,6 +3605,7 @@ function attachMemberHandlers() {
       state.adminOpenId = wasOpen ? null : id;
       if (!wasOpen) state.adminConfirmId = null;
       paintAdmin();
+      if (!wasOpen) loadAdminTexts();
     };
   });
   document.querySelectorAll("[data-link]").forEach((btn) => {
