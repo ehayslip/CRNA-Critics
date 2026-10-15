@@ -265,6 +265,21 @@ function weighted(categories, values) {
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+// Admin: phone number as a call link plus a "Text" button that opens Messages with the number filled in.
+function smsNumber(phone) {
+  const d = String(phone || "").replace(/\D/g, "");
+  if (d.length === 10) return "+1" + d;
+  if (d.length === 11 && d[0] === "1") return "+" + d;
+  return d ? (String(phone).trim().startsWith("+") ? "+" : "") + d : "";
+}
+function phoneLinksHtml(r) {
+  const num = smsNumber(r && r.phone);
+  if (!num) return esc((r && r.phone) || "") || "—";
+  const consent = r.role === "srna" ? "" : r.sms_consent
+    ? ` <span class="sms-ok" title="Ticked the texting box at sign-up">texts OK</span>`
+    : ` <span class="sms-no" title="Didn't tick the texting box at sign-up — a personal text is fine, but don't add them to bulk texts">no text opt-in</span>`;
+  return `<span class="phone-links"><a href="tel:${esc(num)}">${esc(r.phone)}</a> <a class="tiny-btn text-btn" href="sms:${esc(num)}">💬 Text</a>${consent}</span>`;
+}
 function starsHtml(value, size, id) {
   let h = `<div class="stars"${id ? ` id="${id}"` : ""}>`;
   for (let n = 1; n <= 5; n++) {
@@ -2724,7 +2739,7 @@ function memberCardHtml(r) {
       <div class="member-body">
         <table class="stats-table">
           <tr><td class="stats-label">Email</td><td><a href="mailto:${esc(r.email)}">${esc(r.email)}</a></td></tr>
-          <tr><td class="stats-label">Phone</td><td>${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : "—"}</td></tr>
+          <tr><td class="stats-label">Phone</td><td>${phoneLinksHtml(r)}</td></tr>
           <tr><td class="stats-label">NBCRNA #</td><td>${esc(r.nbcrna_number)}</td></tr>
           ${r.role === "srna" ? "" : `<tr><td class="stats-label">Says they are</td><td>${declaredLabel(r)
             ? `${esc(declaredLabel(r))} <span style="color:#8A948E">(declared ${adminDate(r.attested_at)})</span>`
@@ -3114,7 +3129,7 @@ function srnaCardHtml(r) {
       </div>
       <div style="font-size:13px;color:#14231F;margin-top:2px">${esc(r.srna_school || "")} &middot; ${esc(r.srna_program || "")} &middot; grad ${esc(srnaGradLabel(r))}</div>
       ${r.srna_expires_at ? `<div style="font-size:12px;color:#6B756F">${r.status === "expired" ? "Access ended" : "Access through the end of"} ${esc(srnaGradLabel(r))}${r.srna_expired_emailed_at ? ` &middot; expiry email sent ${esc(when(r.srna_expired_emailed_at))}` : ""}</div>` : ""}
-      <div style="font-size:12px;color:#6B756F">${esc(r.email)} &middot; ${esc(r.phone || "")}</div>
+      <div style="font-size:12px;color:#6B756F">${esc(r.email)} &middot; ${phoneLinksHtml(r)}</div>
       <div style="font-size:12px;color:#6B756F;margin-top:4px">Program contact: ${esc(r.instructor_name || "?")} &lt;${esc(r.instructor_email || "?")}&gt;
         ${r.instructor_asked_at ? `<br>Emailed ${esc(when(r.instructor_asked_at))}` : ""}
         ${r.instructor_decided_at ? `<br>Answered ${esc(when(r.instructor_decided_at))}: ${r.instructor_decision === "verified" ? "verified" : "can't verify"}` : ""}</div>
@@ -3255,7 +3270,7 @@ function paintAdmin() {
       <div class="card">
         <div style="font-weight:700">${esc(r.name)}</div>
         <div style="font-size:12px;color:#6B756F">NBCRNA ${esc(r.nbcrna_number)}</div>
-        <div style="font-size:12px;color:#6B756F">${esc(r.email)} · ${esc(r.phone)}</div>
+        <div style="font-size:12px;color:#6B756F">${esc(r.email)} · ${phoneLinksHtml(r)}</div>
         <div style="font-size:11px;color:#8A948E;margin-top:4px">${r.terms_accepted_at
           ? `Terms v${esc(r.terms_version || "?")} accepted ${esc(new Date(r.terms_accepted_at).toLocaleString())} · IP ${esc(r.terms_ip || "unknown")}${r.sms_consent ? " · SMS opt-in" : ""}`
           : "No terms acceptance on file (pre-dates the agreement)"}</div>

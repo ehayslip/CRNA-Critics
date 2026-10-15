@@ -159,6 +159,11 @@ textarea { resize: vertical; }
 .checkbox-row input { width: auto; margin-top: 2px; }
 
 a.tiny-btn { text-decoration: none; }
+.phone-links { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.tiny-btn.text-btn { padding: 3px 9px; font-size: 12px; background: #13A15A; color: #fff; border-color: #13A15A; border-radius: 3px; }
+.sms-ok, .sms-no { font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+.sms-ok { background: #E3F4EA; color: #1F5C57; }
+.sms-no { background: #F3EEE4; color: #8A5A0A; }
 .link-btn { display: block; width: 100%; background: none; border: none; color: #0B1526; font-size: 12px; text-decoration: underline; cursor: pointer; padding: 10px 0 0; text-align: center; font-family: Inter, sans-serif; }
 
 /* ---------- category averages (detail view) ---------- */
