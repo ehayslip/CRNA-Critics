@@ -533,7 +533,9 @@ function searchResults(query = state.query, useFilters = true) {
       items.push(item);
     });
   });
-  items.sort((a, b) => (b.count - a.count) || (b.avg - a.avg) || a.name.localeCompare(b.name));
+  // A–Z by name (case-insensitive, numbers in natural order); ties fall back to most-reviewed
+  items.sort((a, b) =>
+    a.name.localeCompare(b.name, "en", { sensitivity: "base", numeric: true }) || (b.count - a.count) || (b.avg - a.avg));
   return items;
 }
 
