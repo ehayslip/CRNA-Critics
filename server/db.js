@@ -438,4 +438,26 @@ if (!db.prepare("SELECT 1 FROM kv WHERE key = 'text_templates_seeded'").get()) {
   db.prepare("INSERT INTO kv (key, value) VALUES ('text_templates_seeded', ?)").run(now);
 }
 
+// ---------- bad phone numbers ----------
+// Eric flags a member whose number is wrong (a text failed to send, or someone else answered).
+addColumnIfMissing("access_requests", "phone_bad_at", "TEXT");   // null = number looks fine
+addColumnIfMissing("access_requests", "phone_bad_note", "TEXT"); // why, e.g. "Text failed to send Oct 17"
+
+// One-time: the 20 numbers whose texts showed "Message Send Failure" in Eric's Messages on
+// Oct 17, 2026, plus any number on file that can't be a US number (not 10 digits).
+if (!db.prepare("SELECT 1 FROM kv WHERE key = 'phone_flags_2026_10_17'").get()) {
+  const failed = ["9014512700","7163903884","2489179521","3186783797","8644415033","8159856602","5047827648",
+    "4782786134","9015814823","2672351036","2318553552","7865167191","5044515562","2158880270","4438542771",
+    "7174753106","2532088703","8634122599","5049134592","5126261229"];
+  const now = new Date().toISOString();
+  const digits = (p) => String(p || "").replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
+  const setBad = db.prepare("UPDATE access_requests SET phone_bad_at = ?, phone_bad_note = ? WHERE id = ? AND phone_bad_at IS NULL");
+  for (const r of db.prepare("SELECT id, phone FROM access_requests").all()) {
+    const d = digits(r.phone);
+    if (failed.includes(d)) setBad.run(now, "Text failed to send (Message Send Failure) on Oct 17, 2026", r.id);
+    else if (d && d.length !== 10) setBad.run(now, `Not a valid 10-digit number (${d.length} digits)`, r.id);
+  }
+  db.prepare("INSERT INTO kv (key, value) VALUES ('phone_flags_2026_10_17', ?)").run(now);
+}
+
 module.exports = db;

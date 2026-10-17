@@ -677,3 +677,5 @@ a.tiny-btn { text-decoration: none; }
 .text-hist-body { color: #5B6660; margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .link-inline { background: none; border: none; padding: 0; color: #0B1526; text-decoration: underline; cursor: pointer; font-size: inherit; font-family: inherit; }
 .text-hist-row .link-inline { color: #8A948E; font-size: 11px; margin-left: 4px; }
+.phone-bad { font-size: 10.5px; font-weight: 800; padding: 1px 6px; border-radius: 3px; background: #FBE9E7; color: #8C3A32; white-space: nowrap; }
+.member-badphone { background: #FBE9E7; color: #8C3A32; }

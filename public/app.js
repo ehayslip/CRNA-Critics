@@ -278,7 +278,8 @@ function phoneLinksHtml(r) {
   const consent = r.role === "srna" ? "" : r.sms_consent
     ? ` <span class="sms-ok" title="Ticked the texting box at sign-up">texts OK</span>`
     : ` <span class="sms-no" title="Didn't tick the texting box at sign-up — a personal text is fine, but don't add them to bulk texts">no text opt-in</span>`;
-  return `<span class="phone-links"><a href="tel:${esc(num)}">${esc(r.phone)}</a> <a class="tiny-btn text-btn" href="sms:${esc(num)}">💬 Text</a>${consent}</span>`;
+  const bad = r.phone_bad_at ? ` <span class="phone-bad" title="${esc(r.phone_bad_note || "Flagged as a wrong number")}">⚠ bad number</span>` : "";
+  return `<span class="phone-links"><a href="tel:${esc(num)}">${esc(r.phone)}</a> <a class="tiny-btn text-btn" href="sms:${esc(num)}">💬 Text</a>${bad}${consent}</span>`;
 }
 function starsHtml(value, size, id) {
   let h = `<div class="stars"${id ? ` id="${id}"` : ""}>`;
@@ -2749,6 +2750,7 @@ function memberTextBoxHtml(r) {
   const note = state.textNote[r.id];
   return `
     <div class="text-box">
+      ${r.phone_bad_at ? `<div class="text-warn" style="background:#FBE9E7;color:#8C3A32;margin:0 0 8px">⚠ This number is flagged as wrong: ${esc(r.phone_bad_note || "")}. Email them to ask for a good number before texting again.</div>` : ""}
       <div class="section-label" style="margin:0 0 6px">TEXT THIS MEMBER ${r.sms_consent ? `<span class="sms-ok">texts OK</span>` : `<span class="sms-no">no text opt-in</span>`}</div>
       ${history.length ? `
         <div class="text-history">
@@ -2961,6 +2963,7 @@ function memberCardHtml(r) {
     ${r.role === "crna_readonly" ? `<span class="member-badge member-ro" title="${esc(declaredLabel(r) || "Staffing-side CRNA")} — can read, can't post or message">👁 read-only</span>` : ""}
     <span class="member-badge member-posts${n ? " has-posts" : ""}" title="Reviews posted">${n} post${n === 1 ? "" : "s"}</span>
     ${r.feedbackSubmittedAt ? `<span class="member-badge member-fb" title="Reviewed the site (feedback form submitted ${adminDate(r.feedbackSubmittedAt)})">✓ site feedback</span>` : ""}
+    ${r.phone_bad_at ? `<span class="member-badge member-badphone" title="${esc(r.phone_bad_note || "")}">⚠ bad number</span>` : ""}
     ${r.textCount ? `<span class="member-badge member-texted" title="You've texted them ${r.textCount} time${r.textCount === 1 ? "" : "s"}">💬 texted ${esc(shortDate(r.lastTextedAt))}${r.textCount > 1 ? ` ×${r.textCount}` : ""}</span>` : ""}
     ${r.openFlags ? `<span class="member-badge member-alert" title="Open review alerts — see the Alerts tab">⚠ ${r.openFlags} alert${r.openFlags === 1 ? "" : "s"}</span>` : ""}`;
   return `
@@ -2979,7 +2982,9 @@ function memberCardHtml(r) {
       <div class="member-body">
         <table class="stats-table">
           <tr><td class="stats-label">Email</td><td><a href="mailto:${esc(r.email)}">${esc(r.email)}</a></td></tr>
-          <tr><td class="stats-label">Phone</td><td>${phoneLinksHtml(r)}</td></tr>
+          <tr><td class="stats-label">Phone</td><td>${phoneLinksHtml(r)}
+            ${r.phone_bad_at ? `<div class="hint-text" style="color:#8C3A32;margin-top:4px">${esc(r.phone_bad_note || "Flagged as a wrong number")} · flagged ${adminDate(r.phone_bad_at)}</div>` : ""}
+            ${r.phone ? `<div style="margin-top:4px"><button class="tiny-btn" data-phone-flag="${r.id}::${r.phone_bad_at ? 0 : 1}">${r.phone_bad_at ? "Number is fine — clear flag" : "Flag as wrong number"}</button></div>` : ""}</td></tr>
           <tr><td class="stats-label">NBCRNA #</td><td>${esc(r.nbcrna_number)}</td></tr>
           ${r.role === "srna" ? "" : `<tr><td class="stats-label">Says they are</td><td>${declaredLabel(r)
             ? `${esc(declaredLabel(r))} <span style="color:#8A948E">(declared ${adminDate(r.attested_at)})</span>`
@@ -3498,7 +3503,9 @@ function paintAdmin() {
   const members = state.adminRequests
     .filter((r) => r.status !== "pending" && r.role !== "srna")
     .filter((r) => !q || `${r.name} ${r.email} ${r.phone || ""} ${r.nbcrna_number || ""}`.toLowerCase().includes(q))
+    .filter((r) => !state.adminBadPhones || r.phone_bad_at)
     .sort(byLastName);
+  const badPhoneCount = state.adminRequests.filter((r) => r.status !== "pending" && r.role !== "srna" && r.phone_bad_at).length;
 
   const tab = ["members", "srnas", "reviews", "email", "texts", "names", "alerts"].includes(state.adminTab) ? state.adminTab : "members";
   const openFlags = (state.adminFlags || []).filter((f) => f.status === "open").length + msgAlertConvIds().length;
@@ -3522,6 +3529,7 @@ function paintAdmin() {
       </div>`).join("")}
     <div class="section-label" style="margin:14px 0 8px">MEMBERS (${members.length}) &middot; BY LAST NAME</div>
     <input id="admin-filter" class="search-input" type="search" placeholder="Filter by name, email, phone, NBCRNA #" value="${esc(state.adminFilter)}" />
+    ${badPhoneCount || state.adminBadPhones ? `<button class="tiny-btn${state.adminBadPhones ? " active-btn" : ""}" id="admin-bad-phones" style="margin:0 0 8px">${state.adminBadPhones ? "Show everyone" : `⚠ Show the ${badPhoneCount} bad number${badPhoneCount === 1 ? "" : "s"}`}</button>` : ""}
     ${members.length === 0 ? `<p class="hint-text">${q ? "No one matches that." : "None yet."}</p>` : ""}
     ${members.map(memberCardHtml).join("")}`;
 
@@ -3678,6 +3686,21 @@ function attachMemberHandlers() {
       } catch (e) {
         state.adminNotes[id] = `Couldn't change their access (${e.message}).`;
       }
+      paintAdmin();
+    };
+  });
+  const badBtn = document.getElementById("admin-bad-phones");
+  if (badBtn) badBtn.onclick = () => { state.adminBadPhones = !state.adminBadPhones; paintAdmin(); };
+  document.querySelectorAll("[data-phone-flag]").forEach((btn) => {
+    btn.onclick = async () => {
+      const [id, val] = btn.dataset.phoneFlag.split("::");
+      btn.disabled = true;
+      try {
+        const out = await api(`/api/admin/requests/${id}/phone-flag`, { method: "POST", body: { bad: val === "1", note: "Flagged as a wrong number by Eric" } });
+        const row = state.adminRequests.find((x) => x.id === id);
+        if (row) { row.phone_bad_at = out.phone_bad_at; row.phone_bad_note = out.phone_bad_note; }
+        state.adminNotes[id] = val === "1" ? "Number flagged as wrong." : "Flag cleared.";
+      } catch (e) { state.adminNotes[id] = `Couldn't change that (${e.message}).`; }
       paintAdmin();
     };
   });

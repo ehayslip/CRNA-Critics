@@ -1926,6 +1926,17 @@ app.get("/api/admin/campaigns/:id", requireAdmin, (req, res) => {
 });
 
 // Admin can flip a member's mailing opt-out by hand (someone who asks by phone).
+// Flag (or clear) a member's phone number as wrong.
+app.post("/api/admin/requests/:id/phone-flag", requireAdmin, (req, res) => {
+  const row = db.prepare("SELECT id FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const bad = !!req.body?.bad;
+  const note = bad ? String(req.body?.note || "Flagged as a wrong number").trim().slice(0, 300) : null;
+  const at = bad ? new Date().toISOString() : null;
+  db.prepare("UPDATE access_requests SET phone_bad_at = ?, phone_bad_note = ? WHERE id = ?").run(at, note, row.id);
+  res.json({ phone_bad_at: at, phone_bad_note: note });
+});
+
 app.post("/api/admin/requests/:id/unsubscribe", requireAdmin, (req, res) => {
   const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "not_found" });
