@@ -677,3 +677,7 @@ a.tiny-btn { text-decoration: none; }
 .text-hist-body { color: #5B6660; margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .link-inline { background: none; border: none; padding: 0; color: #0B1526; text-decoration: underline; cursor: pointer; font-size: inherit; font-family: inherit; }
 .text-hist-row .link-inline { color: #8A948E; font-size: 11px; margin-left: 4px; }
+.got-text { background: #FFF4DE; color: #8A5A0A; }
+.queue-card { border-color: #1F5C57; }
+.queue-preview { background: #fff; border: 1px solid #DDE7E1; border-radius: 6px; padding: 10px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 10px; }
+a.primary-btn.queue-open { display: block; text-align: center; text-decoration: none; background: #13A15A; box-sizing: border-box; }

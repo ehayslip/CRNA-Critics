@@ -323,6 +323,11 @@ const state = {
   textDraft: {},       // memberId -> the wording in their text box (edited or filled)
   textNote: {},        // memberId -> one-line confirmation under their text box
   textTplArmed: null,  // template id waiting for a second "Delete" tap
+  bulkTextPicked: [],  // member ids picked under Texts → Send to a group
+  bulkTextTplId: null, // template chosen for the group ("" = typed by hand)
+  bulkTextBody: null,  // group wording ({{first_name}} kept until each person's turn)
+  bulkTextFilter: "",
+  textQueue: null,     // { ids, i, body, templateId, done, skipped } while working through a group
   adminFilter: "",     // name/email filter in the member list
   adminConfirmId: null, // member row showing the delete confirmation
   adminNotes: {},      // id -> last action message shown on that row
@@ -2889,6 +2894,10 @@ function attachTextHandlers() {
       catch (e) { flash(`Couldn't delete (${e.message}).`); }
     };
   });
+  document.querySelectorAll("[data-text-pane]").forEach((btn) => {
+    btn.onclick = () => { state.textPane = btn.dataset.textPane; paintAdmin(); };
+  });
+  attachBulkTextHandlers();
   document.querySelectorAll("[data-text-member]").forEach((btn) => {
     btn.onclick = () => {
       state.adminTab = "members";
@@ -2899,6 +2908,212 @@ function attachTextHandlers() {
     };
   });
 }
+// ---------- texting a group, one person at a time ----------
+// The site can't send texts itself, and a group text would show everyone each other's numbers,
+// so a "group" is a queue: each tap opens Messages for the next person with their name filled in.
+function textableMembers() {
+  return (state.adminRequests || [])
+    .filter((r) => r.status === "approved" && r.role !== "srna" && smsNumber(r.phone))
+    .sort(byLastName);
+}
+function bulkTextTemplate() {
+  const tpls = (state.adminTexts && state.adminTexts.templates) || [];
+  if (state.bulkTextTplId === "") return null;
+  return tpls.find((t) => t.id === state.bulkTextTplId) || tpls[0] || null;
+}
+function bulkTextBody() {
+  if (state.bulkTextBody != null) return state.bulkTextBody;
+  const t = bulkTextTemplate();
+  return t ? t.body : "";
+}
+function gotThisText(id, tpl) {
+  return tpl ? textsFor(id).find((h) => h.template_id === tpl.id) : null;
+}
+function bulkTextHtml() {
+  const q = state.textQueue;
+  if (q) return textQueueHtml(q);
+  const tpls = (state.adminTexts && state.adminTexts.templates) || [];
+  const tpl = bulkTextTemplate();
+  const all = textableMembers();
+  const f = state.bulkTextFilter.trim().toLowerCase();
+  const shown = all.filter((r) => !f || `${r.name} ${r.phone}`.toLowerCase().includes(f));
+  const picked = new Set(state.bulkTextPicked);
+  const pickedNoConsent = all.filter((r) => picked.has(r.id) && !r.sms_consent).length;
+  const pickedDupes = tpl ? all.filter((r) => picked.has(r.id) && gotThisText(r.id, tpl)).length : 0;
+  return `
+    <div class="card">
+      <div class="section-label">SEND A TEXT TO A GROUP</div>
+      <p class="hint-text" style="margin-top:0">Pick the text and the people, then tap through them one at a time. Each tap opens Messages with that person's name filled in and logs it. Nobody sees anyone else's number.</p>
+      <select class="text-pick" id="bulk-text-pick">
+        ${tpls.map((t) => `<option value="${t.id}"${tpl && tpl.id === t.id ? " selected" : ""}>${esc(t.name)}</option>`).join("")}
+        <option value=""${!tpl ? " selected" : ""}>Type my own…</option>
+      </select>
+      <textarea class="text-body" id="bulk-text-body" rows="7" placeholder="Type your text… {{first_name}} becomes each person's first name">${esc(bulkTextBody())}</textarea>
+      <p class="hint-text">Edits here are just for this batch. They don't change the saved text.</p>
+    </div>
+    <div class="card">
+      <div class="section-label">WHO (${picked.size} picked of ${all.length} with a phone number)</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+        <button class="tiny-btn" data-bulk-sel="all">Select all</button>
+        <button class="tiny-btn" data-bulk-sel="none">Clear</button>
+        <button class="tiny-btn" data-bulk-sel="noreviews">No reviews yet</button>
+        <button class="tiny-btn" data-bulk-sel="notsent">Haven't gotten this text</button>
+        <button class="tiny-btn" data-bulk-sel="never">Never texted</button>
+        <button class="tiny-btn" data-bulk-sel="consent">Only "texts OK"</button>
+      </div>
+      <p class="hint-text" style="margin-top:0">The selection buttons combine: "No reviews yet" then "Haven't gotten this text" leaves people who match both.</p>
+      <input id="bulk-text-filter" class="search-input" type="search" placeholder="Filter by name or phone" value="${esc(state.bulkTextFilter)}" />
+      <div class="rcpt-list">
+        ${shown.length === 0 ? `<p class="hint-text">No one matches that.</p>` : shown.map((r) => {
+          const got = gotThisText(r.id, tpl);
+          return `
+          <label class="rcpt-row">
+            <input type="checkbox" data-bulk-pick="${r.id}"${picked.has(r.id) ? " checked" : ""} />
+            <span style="min-width:0">
+              <strong>${esc(r.name)}</strong>
+              <span class="member-badge member-posts${r.reviewCount ? " has-posts" : ""}">${r.reviewCount || 0} post${r.reviewCount === 1 ? "" : "s"}</span>
+              ${r.sms_consent ? `<span class="sms-ok">texts OK</span>` : `<span class="sms-no">no text opt-in</span>`}
+              ${got ? `<span class="member-badge got-text">got this ${esc(shortDate(got.sent_at))}</span>` : r.textCount ? `<span class="member-badge member-texted">texted ${esc(shortDate(r.lastTextedAt))}</span>` : ""}
+            </span>
+          </label>`; }).join("")}
+      </div>
+    </div>
+    ${pickedDupes ? `<div class="text-warn">⚠ ${pickedDupes} of the people picked already got this text. Tap "Haven't gotten this text" to drop them.</div>` : ""}
+    ${pickedNoConsent ? `<p class="hint-text">${pickedNoConsent} picked didn't tick the texting box at sign-up. A personal text from you is fine; keep it personal.</p>` : ""}
+    <button class="primary-btn" id="bulk-text-start" ${picked.size === 0 || !bulkTextBody().trim() ? "disabled" : ""}>Start texting ${picked.size} ${picked.size === 1 ? "person" : "people"}</button>`;
+}
+function textQueueHtml(q) {
+  const members = state.adminRequests || [];
+  if (q.i >= q.ids.length) {
+    return `
+      <div class="card" style="border-color:#1F5C57">
+        <div class="section-label">ALL DONE</div>
+        <p style="margin:4px 0;font-weight:700">${q.done} text${q.done === 1 ? "" : "s"} opened and logged${q.skipped ? ` · ${q.skipped} skipped` : ""}.</p>
+        <p class="hint-text">Every one is in the list below and on each member's card.</p>
+        <button class="tiny-btn" id="text-queue-close" style="margin-top:8px">Done</button>
+      </div>`;
+  }
+  const r = members.find((x) => x.id === q.ids[q.i]);
+  if (!r) { q.i++; return textQueueHtml(q); }
+  const body = fillText(q.body, r);
+  const tpl = q.templateId ? { id: q.templateId } : null;
+  const got = gotThisText(r.id, tpl);
+  return `
+    <div class="card queue-card">
+      <div class="section-label">TEXTING ${q.i + 1} OF ${q.ids.length}</div>
+      <div class="send-bar"><span style="width:${Math.round((q.i / q.ids.length) * 100)}%"></span></div>
+      <p style="margin:10px 0 2px;font-size:17px;font-weight:800">${esc(r.name)}</p>
+      <p class="hint-text" style="margin:0 0 8px">${esc(r.phone)} · ${r.reviewCount || 0} post${r.reviewCount === 1 ? "" : "s"} · ${r.sms_consent ? "texts OK" : "no text opt-in"}</p>
+      ${got ? `<div class="text-warn">⚠ They already got this text on ${esc(whenSent(got.sent_at))}.</div>` : ""}
+      <div class="queue-preview">${esc(body)}</div>
+      <a class="primary-btn queue-open" id="text-queue-open" href="${esc(smsHref(r.phone, body))}">💬 Open in Messages</a>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+        <button class="tiny-btn" id="text-queue-copy">Copy text</button>
+        <button class="tiny-btn" id="text-queue-logged">Copied & sent — log it, next</button>
+        <button class="tiny-btn" id="text-queue-skip">Skip ${esc(firstNameOf(r))}</button>
+        <button class="tiny-btn reject" id="text-queue-stop">Stop</button>
+      </div>
+      <p class="hint-text">After you send it in Messages, come back here and the next person will be waiting.</p>
+    </div>`;
+}
+async function postTextLog(requestId, templateId, body, keepalive) {
+  const payload = JSON.stringify({ requestId, templateId: templateId || null, body });
+  const res = await fetch("/api/admin/texts", { method: "POST", keepalive: !!keepalive, credentials: "include", headers: { "Content-Type": "application/json" }, body: payload });
+  if (!res.ok) throw new Error(`log failed (${res.status})`);
+}
+function attachBulkTextHandlers() {
+  const all = () => textableMembers();
+  const pick = document.getElementById("bulk-text-pick");
+  if (pick) pick.onchange = () => { state.bulkTextTplId = pick.value; state.bulkTextBody = null; paintAdmin(); };
+  const body = document.getElementById("bulk-text-body");
+  if (body) body.oninput = () => {
+    state.bulkTextBody = body.value;
+    const start = document.getElementById("bulk-text-start");
+    if (start) start.disabled = !state.bulkTextPicked.length || !body.value.trim();
+  };
+  const filt = document.getElementById("bulk-text-filter");
+  if (filt) filt.oninput = () => {
+    state.bulkTextFilter = filt.value;
+    const cur = filt.selectionStart;
+    paintAdmin();
+    const again = document.getElementById("bulk-text-filter");
+    if (again) { again.focus(); again.setSelectionRange(cur, cur); }
+  };
+  document.querySelectorAll("[data-bulk-pick]").forEach((cb) => {
+    cb.onchange = () => {
+      const id = cb.dataset.bulkPick;
+      state.bulkTextPicked = cb.checked ? [...new Set([...state.bulkTextPicked, id])] : state.bulkTextPicked.filter((x) => x !== id);
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-bulk-sel]").forEach((btn) => {
+    btn.onclick = () => {
+      const kind = btn.dataset.bulkSel;
+      const tpl = bulkTextTemplate();
+      const cur = state.bulkTextPicked.length ? new Set(state.bulkTextPicked) : null;
+      const base = (keep) => all().filter((r) => (cur ? cur.has(r.id) : true) && keep(r)).map((r) => r.id);
+      if (kind === "all") state.bulkTextPicked = all().map((r) => r.id);
+      else if (kind === "none") state.bulkTextPicked = [];
+      else if (kind === "noreviews") state.bulkTextPicked = base((r) => !r.reviewCount);
+      else if (kind === "notsent") state.bulkTextPicked = base((r) => !gotThisText(r.id, tpl));
+      else if (kind === "never") state.bulkTextPicked = base((r) => !r.textCount);
+      else if (kind === "consent") state.bulkTextPicked = base((r) => !!r.sms_consent);
+      paintAdmin();
+    };
+  });
+  const start = document.getElementById("bulk-text-start");
+  if (start) start.onclick = () => {
+    const order = all().map((r) => r.id).filter((id) => state.bulkTextPicked.includes(id));
+    const tpl = bulkTextTemplate();
+    state.textQueue = { ids: order, i: 0, body: bulkTextBody(), templateId: tpl && state.bulkTextBody == null ? tpl.id : (tpl && bulkTextBody() === tpl.body ? tpl.id : null), templateName: tpl ? tpl.name : "", done: 0, skipped: 0 };
+    paintAdmin();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // Queue controls
+  const q = state.textQueue;
+  if (!q) return;
+  const current = () => (state.adminRequests || []).find((x) => x.id === q.ids[q.i]);
+  const advance = async (logged) => {
+    if (logged) q.done++; else q.skipped++;
+    q.i++;
+    if (q.i >= q.ids.length) { state.bulkTextPicked = []; }
+    await loadAdminTexts(true);
+    // Keep member rows in step so badges and "got this" markers are right.
+    for (const r of state.adminRequests || []) {
+      const h = textsFor(r.id);
+      r.textCount = h.length; r.lastTextedAt = h.length ? h[0].sent_at : null;
+    }
+    paintAdmin();
+  };
+  const open = document.getElementById("text-queue-open");
+  if (open) open.onclick = () => {
+    const r = current();
+    const body = fillText(q.body, r);
+    postTextLog(r.id, q.templateId, body, true).catch(() => flash(`Messages opened for ${r.name}, but the log didn't save.`));
+    // Let the link open Messages first, then move on to the next person.
+    setTimeout(() => advance(true), 600);
+  };
+  const copy = document.getElementById("text-queue-copy");
+  if (copy) copy.onclick = async () => {
+    const body = fillText(q.body, current());
+    try { await navigator.clipboard.writeText(body); flash("Copied."); } catch { flash("Couldn't copy on this device."); }
+  };
+  const logged = document.getElementById("text-queue-logged");
+  if (logged) logged.onclick = async () => {
+    const r = current();
+    logged.disabled = true;
+    try { await postTextLog(r.id, q.templateId, fillText(q.body, r)); await advance(true); }
+    catch (e) { flash(`Couldn't log that (${e.message}).`); logged.disabled = false; }
+  };
+  const skip = document.getElementById("text-queue-skip");
+  if (skip) skip.onclick = () => advance(false);
+  const stop = document.getElementById("text-queue-stop");
+  if (stop) stop.onclick = () => { state.textQueue = null; paintAdmin(); };
+  const close = document.getElementById("text-queue-close");
+  if (close) close.onclick = () => { state.textQueue = null; paintAdmin(); };
+}
+
 function textsSection() {
   if (!state.adminTexts) return `<p class="hint-text">Loading texts…</p>`;
   const { templates = [], log = [] } = state.adminTexts;
@@ -2912,12 +3127,19 @@ function textsSection() {
         <span class="hint-text" style="margin:0">${log.filter((l) => l.template_id === t.id).length} sent</span>`}
       </div>
     </div>`;
+  const pane = ["group", "templates", "log"].includes(state.textPane) ? state.textPane : "group";
   return `
-    <p class="hint-text">The site doesn't send texts. These are ready-made texts for you to send from your own phone. <code>{{first_name}}</code> is replaced with each member's first name. To text someone, open them under Members.</p>
+    <div class="nav admin-subtabs">
+      <button class="nav-btn${pane === "group" ? " active" : ""}" data-text-pane="group">Send to a group</button>
+      <button class="nav-btn${pane === "templates" ? " active" : ""}" data-text-pane="templates">Ready-made texts</button>
+      <button class="nav-btn${pane === "log" ? " active" : ""}" data-text-pane="log">Sent (${log.length})</button>
+    </div>
+    ${pane === "group" ? bulkTextHtml() : pane === "templates" ? `
+    <p class="hint-text">The site doesn't send texts. These are ready-made texts for you to send from your own phone. <code>{{first_name}}</code> is replaced with each member's first name.</p>
     <div class="section-label" style="margin:12px 0 8px">READY-MADE TEXTS (${templates.length})</div>
     ${templates.map(tplCard).join("")}
-    ${tplCard({ id: "new", name: "", body: "" })}
-    <div class="section-label" style="margin:16px 0 8px">TEXTS YOU'VE SENT (${log.length})</div>
+    ${tplCard({ id: "new", name: "", body: "" })}` : `
+    <div class="section-label" style="margin:12px 0 8px">TEXTS YOU'VE SENT (${log.length})</div>
     ${log.length === 0 ? `<p class="hint-text">Nothing logged yet.</p>` : `
       <div class="card" style="padding:0">
         ${log.map((t) => `
@@ -2925,7 +3147,7 @@ function textsSection() {
             <div><strong>${esc(whenSent(t.sent_at))}</strong> · <button type="button" class="link-inline" data-text-member="${t.request_id}">${esc(t.member_name || "(deleted member)")}</button> · ${esc(t.template_name)}</div>
             <div class="text-hist-body">${esc(t.body)}</div>
           </div>`).join("")}
-      </div>`}`;
+      </div>`}`}`;
 }
 
 function adminDate(v) {
