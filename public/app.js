@@ -579,6 +579,7 @@ function render() {
   if (state.view === "terms") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${termsPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachTermsPageHandlers(); return; }
   if (state.view === "guidelines") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${guidelinesPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachGuidelinesPageHandlers(); return; }
   if (state.view === "deleteprofile") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${deleteProfilePageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachDeleteProfileHandlers(); return; }
+  if (state.view === "contact") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${contactPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachContactHandlers(); return; }
   root.innerHTML = headerHtml() + toastHtml() + navHtml() + studentBannerHtml() + declareCardHtml() + sideBarHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
   attachFooterHandlers();
   attachNavHandlers();
@@ -611,6 +612,7 @@ function footerHtml() {
         <button type="button" class="inline-link" id="terms-link-btn">Terms of Use &amp; Member Agreement</button>
         <span class="footer-sep">&middot;</span>
         <button type="button" class="inline-link" id="guidelines-link-btn">Review Guidelines</button>
+        ${state.user ? `<span class="footer-sep">&middot;</span><button type="button" class="inline-link" id="contact-link-btn">My contact info</button>` : ""}
         ${state.user ? `<span class="footer-sep">&middot;</span><button type="button" class="inline-link danger-link" id="delete-profile-link-btn">Delete my profile</button>` : ""}
       </div>
       <button type="button" class="admin-link" id="admin-link-btn">Site admin</button>
@@ -627,6 +629,96 @@ function attachFooterHandlers() {
   if (guideBtn) guideBtn.onclick = () => { openGuidelines(); };
   const delBtn = document.getElementById("delete-profile-link-btn");
   if (delBtn) delBtn.onclick = () => { openDeleteProfile(); };
+  const contactBtn = document.getElementById("contact-link-btn");
+  if (contactBtn) contactBtn.onclick = () => { openContact(); };
+}
+
+// ---------- my contact info (every signed-in user) ----------
+
+const CONTACT_ERRORS = {
+  bad_phone: "Enter the full phone number, including the area code.",
+  bad_email: "That doesn't look like an email address.",
+  same_email: "That's the email you already use.",
+  bad_password: "That password isn't right.",
+  locked: "Too many wrong tries. Wait 15 minutes and try again.",
+  student_needs_edu: "Student accounts need a school address that ends in .edu.",
+  email_unavailable: "That address can't be used. Try a different one.",
+  too_many: "That's a lot of requests in a row. Try again in an hour.",
+  send_failed: "We couldn't send the confirmation email just now. Try again in a minute.",
+};
+function openContact() {
+  state.contactDraft = {
+    phone: (state.user && state.user.phone) || "", newEmail: "", password: "",
+    phoneMsg: "", phoneErr: "", emailMsg: "", emailErr: "", busyPhone: false, busyEmail: false,
+  };
+  state.view = "contact";
+  render();
+  window.scrollTo(0, 0);
+}
+function contactPageHtml() {
+  const d = state.contactDraft || {};
+  return `
+    <button class="back-btn" id="contact-back-btn" style="margin-bottom:10px">&larr; Back</button>
+    <div class="card">
+      <div class="section-label">PHONE</div>
+      <p class="hint-text" style="margin:0 0 8px">Used only by CRNA Critics. It is never shown to other members.</p>
+      <input id="contact-phone" type="tel" autocomplete="tel" value="${esc(d.phone)}" placeholder="Phone number" style="max-width:300px">
+      ${d.phoneErr ? `<p style="color:#8C3A32;font-size:13px;margin:8px 0 0">${esc(d.phoneErr)}</p>` : ""}
+      ${d.phoneMsg ? `<p style="color:#1F5C57;font-size:13px;font-weight:600;margin:8px 0 0">${esc(d.phoneMsg)}</p>` : ""}
+      <div style="margin-top:10px"><button class="tiny-btn" id="contact-phone-save" ${d.busyPhone ? "disabled" : ""}>${d.busyPhone ? "Saving…" : "Save phone"}</button></div>
+    </div>
+    <div class="card">
+      <div class="section-label">EMAIL</div>
+      <p style="margin:0 0 4px;font-size:14px">Your email now: <strong>${esc(state.user.email)}</strong></p>
+      <p class="hint-text" style="margin:0 0 8px">This is how you sign in. To change it we send a confirmation link to the new address, and the change happens when you tap it. Your reviews and messages come with you.</p>
+      ${d.emailMsg ? `
+        <div class="anon-notice" style="margin:0"><strong>Check ${esc(d.emailMsg)}.</strong> We sent a confirmation link there that works for 48 hours. Your email stays ${esc(state.user.email)} until you tap it.</div>` : `
+        <label class="field-label" for="contact-email" style="display:block">New email</label>
+        <input id="contact-email" type="email" autocomplete="email" value="${esc(d.newEmail)}" placeholder="new@example.com" style="max-width:300px">
+        ${state.user.hasPassword ? `
+        <label class="field-label" for="contact-password" style="display:block;margin-top:8px">Your current password</label>
+        <input id="contact-password" type="password" autocomplete="current-password" value="${esc(d.password)}" style="max-width:300px">` : ""}
+        ${d.emailErr ? `<p style="color:#8C3A32;font-size:13px;margin:8px 0 0">${esc(d.emailErr)}</p>` : ""}
+        <div style="margin-top:10px"><button class="tiny-btn" id="contact-email-send" ${d.busyEmail ? "disabled" : ""}>${d.busyEmail ? "Sending…" : "Send confirmation link"}</button></div>`}
+    </div>
+    <button class="tiny-btn" id="contact-done">Done</button>`;
+}
+function attachContactHandlers() {
+  const d = state.contactDraft;
+  const back = () => { state.contactDraft = null; state.view = "app"; render(); window.scrollTo(0, 0); };
+  document.getElementById("contact-back-btn").onclick = back;
+  document.getElementById("contact-done").onclick = back;
+  const bind = (id, key) => { const el = document.getElementById(id); if (el) el.oninput = () => { d[key] = el.value; }; };
+  bind("contact-phone", "phone");
+  bind("contact-email", "newEmail");
+  bind("contact-password", "password");
+  document.getElementById("contact-phone-save").onclick = async () => {
+    if (d.busyPhone) return;
+    d.busyPhone = true; d.phoneErr = ""; d.phoneMsg = "";
+    render();
+    try {
+      const out = await api("/api/me/phone", { method: "POST", body: { phone: d.phone } });
+      state.user.phone = out.phone; d.phone = out.phone; d.phoneMsg = "Saved.";
+    } catch (e) {
+      d.phoneErr = CONTACT_ERRORS[e.message] || "Something went wrong and nothing was saved. Please try again.";
+    }
+    d.busyPhone = false;
+    render();
+  };
+  const send = document.getElementById("contact-email-send");
+  if (send) send.onclick = async () => {
+    if (d.busyEmail) return;
+    d.busyEmail = true; d.emailErr = "";
+    render();
+    try {
+      const out = await api("/api/me/email-change", { method: "POST", body: { email: d.newEmail, password: d.password } });
+      d.emailMsg = out.sentTo; d.password = "";
+    } catch (e) {
+      d.emailErr = CONTACT_ERRORS[e.message] || "Something went wrong. Please try again.";
+    }
+    d.busyEmail = false;
+    render();
+  };
 }
 
 // ---------- delete my profile (every signed-in user) ----------
@@ -757,8 +849,8 @@ function attachGuidelinesPageHandlers() {
 
 function navHtml() {
   const items = isReadOnly()
-    ? [["search", "Search"], ["signout", "Sign out"]]
-    : [["search", "Search"], ["submit", "Post a review"], ["mine", "My reviews"], ["messages", "Messages"], ["signout", "Sign out"]];
+    ? [["search", "Search"], ["account", "Account"], ["signout", "Sign out"]]
+    : [["search", "Search"], ["submit", "Post a review"], ["mine", "My reviews"], ["messages", "Messages"], ["account", "Account"], ["signout", "Sign out"]];
   return `<div class="nav">${items
     .map(([key, label]) => `<button class="nav-btn${state.tab === key ? " active" : ""}" data-tab="${key}">${label}${key === "messages" ? msgBadgeHtml() : ""}</button>`)
     .join("")}</div>`;
@@ -872,7 +964,7 @@ function studentBannerHtml() {
 }
 
 function renderTab() {
-  if (isReadOnly() && state.tab !== "search") state.tab = "search";
+  if (isReadOnly() && state.tab !== "search" && state.tab !== "account") state.tab = "search";
   const el = document.getElementById("tab-root");
   if (state.tab === "search") {
     if (state.detail) {
@@ -891,7 +983,47 @@ function renderTab() {
     el.innerHTML = messagesHtml();
     attachMessagesHandlers();
     if (state.msgList === null && !state.msgOpenId && !state.msgCompose) loadMessages();
+  } else if (state.tab === "account") {
+    el.innerHTML = accountHtml();
+    attachAccountHandlers();
   }
+}
+
+// ---------- account (top bar, every member type) ----------
+
+function accountHtml() {
+  const u = state.user;
+  const tier = u.role === "srna" ? `Student (SRNA)${u.accessThrough ? ` · access through ${esc(u.accessThrough)}` : ""}`
+    : u.readOnly ? `CRNA · read-only${u.declaredRole ? ` (${esc(u.declaredRole)})` : ""}`
+    : "CRNA · full member";
+  const row = (label, value) => `<tr><td class="stats-label">${label}</td><td>${value}</td></tr>`;
+  return `
+    <div class="card">
+      <div class="section-label" style="margin-bottom:6px">MY ACCOUNT</div>
+      <div style="font-size:17px;font-weight:700;margin-bottom:8px">${esc(u.name)}</div>
+      <table class="stats-table">
+        ${row("Member", tier)}
+        ${row("Email", esc(u.email))}
+        ${row("Phone", u.phone ? esc(u.phone) : "<em>none on file</em>")}
+        ${row("Viewing", `${esc(SIDES[currentSide()].label)}`)}
+        ${row("Password", u.hasPassword ? "set" : "<em>not set yet</em>")}
+      </table>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px">
+        <button class="tiny-btn" id="acct-contact-btn">Edit email / phone</button>
+        <button class="tiny-btn" id="acct-pw-btn">${u.hasPassword ? "Change password" : "Set a password"}</button>
+        <button class="tiny-btn" id="acct-side-btn">Switch to ${esc(SIDES[otherSide()].label)}</button>
+      </div>
+    </div>
+    <div class="card danger-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:13px">Leaving CRNA Critics? You can delete your profile at any time.</span>
+      <button class="tiny-btn danger-outline" id="acct-delete-btn">Delete profile</button>
+    </div>`;
+}
+function attachAccountHandlers() {
+  document.getElementById("acct-contact-btn").onclick = () => { openContact(); };
+  document.getElementById("acct-pw-btn").onclick = () => { state.view = "setpw"; render(); };
+  document.getElementById("acct-side-btn").onclick = () => { setSide(otherSide()); };
+  document.getElementById("acct-delete-btn").onclick = () => { openDeleteProfile(); };
 }
 
 // ---------- landing / home ----------
@@ -2311,6 +2443,7 @@ function mineHtml() {
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="tiny-btn" id="change-employment-btn">Switch to ${esc(SIDES[otherSide()].label)}</button>
         <button class="tiny-btn" id="change-pw-btn">Change password</button>
+        <button class="tiny-btn" id="contact-info-btn">Contact info</button>
         <button class="tiny-btn danger-outline" id="delete-profile-btn">Delete profile</button>
       </div>
     </div>`;
@@ -2388,6 +2521,7 @@ function reviewBodyHtml(r) {
 function attachMineHandlers() {
   attachDeleteHandlers();
   document.getElementById("change-pw-btn").onclick = () => { state.view = "setpw"; render(); };
+  document.getElementById("contact-info-btn").onclick = () => { openContact(); };
   document.getElementById("delete-profile-btn").onclick = () => { openDeleteProfile(); };
   document.getElementById("change-employment-btn").onclick = () => { setSide(otherSide()); };
 }
@@ -3057,6 +3191,19 @@ function memberCardHtml(r) {
         <p class="hint-text" style="font-size:11px">${termsLine(r)}</p>
         <p class="hint-text" style="font-size:11px">Passwords are stored one-way encrypted, so no one — including you — can read a member's password. Use the reset button to let them set a new one.</p>
         ${note ? `<p class="hint-text" style="color:#1F5C57;font-weight:600">${esc(note)}</p>` : ""}
+        ${state.adminContactEdit === r.id && state.adminContactDraft ? `
+          <div class="empty-box" style="margin-top:10px">
+            <p style="margin:0 0 6px;font-weight:700;font-size:13px">Edit contact info</p>
+            <label class="field-label" for="admin-contact-email" style="display:block">Email</label>
+            <input id="admin-contact-email" type="email" value="${esc(state.adminContactDraft.email)}" style="max-width:320px">
+            <label class="field-label" for="admin-contact-phone" style="display:block;margin-top:8px">Phone</label>
+            <input id="admin-contact-phone" type="tel" value="${esc(state.adminContactDraft.phone)}" style="max-width:320px">
+            <p class="hint-text">Changing the email moves their reviews and messages with it, signs them out of other devices, and emails the new address. They sign in with the new address.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+              <button class="tiny-btn" data-contact-save="${r.id}">Save</button>
+              <button class="tiny-btn" data-contact-cancel="${r.id}">Cancel</button>
+            </div>
+          </div>` : ""}
         ${confirming ? `
           <div class="empty-box" style="margin-top:10px;border-color:#8C3A32">
             <p style="margin:0;font-weight:700;font-size:13px">Delete ${esc(r.name)}?</p>
@@ -3075,6 +3222,7 @@ function memberCardHtml(r) {
               <button class="tiny-btn" data-feedback-send="${r.id}">${r.feedback_sent_at ? "Resend" : "Send"} feedback form</button>
               ${r.feedbackSubmittedAt ? `<button class="tiny-btn${state.adminMemberFeedbackOpen === r.id ? " active-btn" : ""}" data-feedback-view="${r.id}">${state.adminMemberFeedbackOpen === r.id ? "Hide" : "View"} feedback</button>` : ""}
               <button class="tiny-btn" data-unsub="${r.id}::${r.bulk_unsubscribed ? 0 : 1}">${r.bulk_unsubscribed ? "Put back on mailings" : "Opt out of mailings"}</button>` : ""}
+            <button class="tiny-btn" data-contact-edit="${r.id}">Edit email / phone</button>
             <button class="tiny-btn reject" data-del-start="${r.id}">Delete</button>
           </div>
           ${r.role === "srna" ? "" : `
@@ -3754,6 +3902,54 @@ function attachMemberHandlers() {
         if (row) { row.phone_bad_at = out.phone_bad_at; row.phone_bad_note = out.phone_bad_note; }
         state.adminNotes[id] = val === "1" ? "Number flagged as wrong." : "Flag cleared.";
       } catch (e) { state.adminNotes[id] = `Couldn't change that (${e.message}).`; }
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-contact-edit]").forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.dataset.contactEdit;
+      const row = state.adminRequests.find((x) => x.id === id);
+      if (!row) return;
+      state.adminContactEdit = id;
+      state.adminContactDraft = { email: row.email || "", phone: row.phone || "" };
+      paintAdmin();
+    };
+  });
+  document.querySelectorAll("[data-contact-cancel]").forEach((btn) => {
+    btn.onclick = () => { state.adminContactEdit = null; state.adminContactDraft = null; paintAdmin(); };
+  });
+  const adminEmailInput = document.getElementById("admin-contact-email");
+  if (adminEmailInput) adminEmailInput.oninput = () => { state.adminContactDraft.email = adminEmailInput.value; };
+  const adminPhoneInput = document.getElementById("admin-contact-phone");
+  if (adminPhoneInput) adminPhoneInput.oninput = () => { state.adminContactDraft.phone = adminPhoneInput.value; };
+  document.querySelectorAll("[data-contact-save]").forEach((btn) => {
+    btn.onclick = async () => {
+      const id = btn.dataset.contactSave;
+      const row = state.adminRequests.find((x) => x.id === id);
+      const draft = state.adminContactDraft;
+      if (!row || !draft) return;
+      const body = {};
+      if (draft.email.trim().toLowerCase() !== String(row.email || "").toLowerCase()) body.email = draft.email;
+      if (draft.phone.trim() !== String(row.phone || "").trim()) body.phone = draft.phone;
+      if (!Object.keys(body).length) { state.adminNotes[id] = "Nothing changed."; state.adminContactEdit = null; state.adminContactDraft = null; paintAdmin(); return; }
+      btn.disabled = true;
+      try {
+        const out = await api(`/api/admin/requests/${id}/contact`, { method: "POST", body });
+        Object.assign(row, out.row);
+        state.adminNotes[id] = body.email ? "Contact info saved. Their new address was emailed and their reviews moved with it." : "Contact info saved.";
+        state.adminContactEdit = null; state.adminContactDraft = null;
+        // Reviews and email lists are keyed by address; refetch them next time they're opened.
+        if (body.email) {
+          state.adminReviews = null; state.adminMemberReviews = {};
+          const rcpt = (state.emailRecipients || []).find((x) => x.id === id);
+          if (rcpt) rcpt.email = out.row.email;
+        }
+      } catch (e) {
+        state.adminNotes[id] = e.message === "email_unavailable" ? "Another account already uses that email."
+          : e.message === "bad_email" ? "That doesn't look like an email address."
+          : e.message === "bad_phone" ? "That phone number looks too short."
+          : `Couldn't save (${e.message}).`;
+      }
       paintAdmin();
     };
   });

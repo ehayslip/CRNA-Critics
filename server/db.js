@@ -386,6 +386,18 @@ addColumnIfMissing("conversations", "reviewer_reminded_at", "TEXT");
 
 addColumnIfMissing("review_flags", "reporter_email", "TEXT"); // set when a member reported the review (rule = member_report)
 
+// ---------- members changing their own email ----------
+//
+// Old addresses are remembered so links already sitting in someone's inbox (the unsubscribe
+// link carries the address) still land on the right account after the address changes.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS email_changes (
+    old_email TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    changed_at TEXT NOT NULL
+  );
+`);
+
 // ---------- personal texts (Admin → Texts) ----------
 //
 // The site doesn't send texts. Eric texts members from his own phone; the admin gives him

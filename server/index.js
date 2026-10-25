@@ -65,6 +65,7 @@ function requireSession(req, res, next) {
     email: row.email, name: row.name, credentials: role === "srna" ? "SRNA" : "CRNA", role,
     readOnly: isReadOnlyRole(role), declaredRole: declaredRoleLabel(row),
     hasPassword: !!row.password_hash, employmentType: row.employment_type || null,
+    phone: row.phone || "",
     accessThrough: role === "srna" ? monthYearLabel(row) : undefined,
     needsDeclaration: needsDeclaration(row), pastDeadline: !row.declared_role && !!row.declare_deadline_at,
   };
@@ -1106,6 +1107,160 @@ app.get("/api/me", requireSession, (req, res) => {
   res.json({ user: req.user });
 });
 
+// ---------- members update their own contact info ----------
+//
+// Phone: saved right away. Email: the address is also the login and the key that ties reviews and
+// messages to the member, so a change is only made after the member clicks a confirmation link
+// sent to the NEW address (and, if they have a password, after typing it). The old address gets a
+// heads-up when the request is made, so a stolen session can't quietly redirect an account.
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+function cleanPhone(v) {
+  const s = String(v || "").trim().replace(/\s+/g, " ").slice(0, 40);
+  const digits = s.replace(/\D/g, "");
+  return digits.length >= 10 && digits.length <= 15 ? s : "";
+}
+function studentEmailOk(email) {
+  return /^[^\s@]+@[^\s@]+\.edu$/i.test(email) || SRNA_TEST_EMAILS.includes(String(email).toLowerCase());
+}
+function emailTaken(email, exceptId) {
+  return !!db.prepare("SELECT 1 FROM access_requests WHERE lower(email) = lower(?) AND id <> ?").get(email, exceptId);
+}
+// Saves a new phone number; a number the admin had flagged as wrong is cleared when it actually changes.
+function savePhone(row, phone) {
+  if (phone === row.phone) return;
+  db.prepare("UPDATE access_requests SET phone = ?, phone_bad_at = NULL, phone_bad_note = NULL WHERE id = ?").run(phone, row.id);
+}
+// Moves an account to a new email everywhere the old one is the key. The mailing log
+// (email_campaign_recipients) is left alone on purpose: it records where each message actually went.
+function moveAccountEmail(row, newEmail) {
+  const oldEmail = row.email;
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    db.prepare("UPDATE access_requests SET email = ? WHERE id = ?").run(newEmail, row.id);
+    db.prepare("UPDATE reviews SET reviewer_email = ? WHERE reviewer_email = ?").run(newEmail, oldEmail);
+    db.prepare("UPDATE review_flags SET reviewer_email = ? WHERE reviewer_email = ?").run(newEmail, oldEmail);
+    db.prepare("UPDATE review_flags SET reporter_email = ? WHERE reporter_email = ?").run(newEmail, oldEmail);
+    db.prepare("UPDATE conversations SET asker_email = ? WHERE asker_email = ?").run(newEmail, oldEmail);
+    db.prepare("UPDATE conversations SET reviewer_email = ? WHERE reviewer_email = ?").run(newEmail, oldEmail);
+    db.prepare("UPDATE messages SET sender_email = ? WHERE sender_email = ?").run(newEmail, oldEmail);
+    db.prepare("UPDATE message_flags SET reporter_email = ? WHERE reporter_email = ?").run(newEmail, oldEmail);
+    db.prepare("INSERT OR REPLACE INTO email_changes (old_email, request_id, changed_at) VALUES (?,?,?)").run(oldEmail, row.id, now);
+  })();
+}
+// Links that carry an address (the unsubscribe link) keep working after the address changes.
+function accountForEmail(email) {
+  const direct = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
+  if (direct) return direct;
+  const moved = db.prepare("SELECT request_id FROM email_changes WHERE old_email = ?").get(email);
+  return moved ? db.prepare("SELECT * FROM access_requests WHERE id = ?").get(moved.request_id) : null;
+}
+
+app.post("/api/me/phone", requireSession, (req, res) => {
+  const phone = cleanPhone(req.body?.phone);
+  if (!phone) return res.status(400).json({ error: "bad_phone" });
+  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(req.user.email);
+  savePhone(row, phone);
+  res.json({ ok: true, phone });
+});
+
+const emailChangeAsks = new Map(); // member id -> timestamps, so the form can't be used to spam an inbox
+app.post("/api/me/email-change", requireSession, async (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(req.user.email);
+  if (loginLocked(row.email)) return res.status(429).json({ error: "locked" });
+  if (row.password_hash && !verifyPassword(String(req.body?.password || ""), row.password_hash)) {
+    recordLoginFailure(row.email);
+    return res.status(401).json({ error: "bad_password" });
+  }
+  const newEmail = String(req.body?.email || "").trim().toLowerCase();
+  if (!EMAIL_SHAPE.test(newEmail) || newEmail.length > 254) return res.status(400).json({ error: "bad_email" });
+  if (newEmail === row.email.toLowerCase()) return res.status(400).json({ error: "same_email" });
+  if (row.role === "srna" && !studentEmailOk(newEmail)) return res.status(400).json({ error: "student_needs_edu" });
+  // Deliberately vague: this must not become a way to find out who has an account.
+  if (emailTaken(newEmail, row.id)) return res.status(409).json({ error: "email_unavailable" });
+  const recent = (emailChangeAsks.get(row.id) || []).filter((t) => Date.now() - t < 60 * 60 * 1000);
+  if (recent.length >= 5) return res.status(429).json({ error: "too_many" });
+  recent.push(Date.now());
+  emailChangeAsks.set(row.id, recent);
+
+  const token = sign({ id: row.id, from: row.email, to: newEmail, purpose: "email_change" }, LINK_SECONDS);
+  const link = `${BASE_URL}/confirm-email?t=${encodeURIComponent(token)}`;
+  try {
+    await sendEmail({
+      to: newEmail,
+      subject: "Confirm your new CRNA Critics email",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+          ${emailHeaderHtml(BASE_URL, 480)}
+          <h2 style="color:#123C3A;">Confirm your new email</h2>
+          <p>${escapeHtml(row.name)} asked to use this address for their CRNA Critics account. Tap the button to make the change. Until you do, nothing changes.</p>
+          <p><a href="${link}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Confirm this email</a></p>
+          <p style="color:#888;font-size:12px;">This link expires in 48 hours. If you didn't ask for this, ignore this email.</p>
+        </div>`,
+    });
+  } catch (e) {
+    console.error("Failed to send email-change link:", e.message);
+    return res.status(502).json({ error: "send_failed" });
+  }
+  // Heads-up to the address on file today, in case the request wasn't theirs.
+  sendEmail({
+    to: row.email,
+    subject: "Someone asked to change your CRNA Critics email",
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+        ${emailHeaderHtml(BASE_URL, 480)}
+        <p>A request was made to change the email on your CRNA Critics account to <strong>${escapeHtml(newEmail)}</strong>. The change only happens if someone opens the confirmation link sent to that address.</p>
+        <p>If this was you, there's nothing to do here. If it wasn't, change your password right away (My reviews &rarr; Change password) and write to <a href="mailto:${REPLY_TO}" style="color:#1F5C57;">${REPLY_TO}</a>.</p>
+      </div>`,
+  }).catch((e) => console.error("Email-change heads-up failed:", e.message));
+  res.json({ ok: true, sentTo: newEmail });
+});
+
+function emailChangePage(title, inner) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>${escapeHtml(title)} · CRNA Critics</title></head>
+    <body style="font-family:Arial,sans-serif;max-width:480px;margin:32px auto;padding:0 16px;color:#14231F;">
+    ${emailHeaderHtml(BASE_URL, 480)}${inner}</body></html>`;
+}
+// The link is checked before anything is shown or changed. A row whose email no longer matches
+// the one in the link means the link was already used (or the address changed some other way).
+function emailChangeFromToken(t) {
+  const p = verify(String(t || ""));
+  if (!p || p.purpose !== "email_change" || !p.id || !p.from || !p.to) return { error: "invalid" };
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(p.id);
+  if (!row || row.email !== p.from || row.status !== "approved") return { error: "used" };
+  if (emailTaken(p.to, row.id)) return { error: "taken" };
+  return { row, to: p.to };
+}
+const EMAIL_CHANGE_ERRORS = {
+  invalid: ["Link expired or invalid", "<p>Sign in at <a href=\"" + BASE_URL + "\" style=\"color:#1F5C57;\">crnacritics.com</a>, open My contact info at the bottom of the page, and ask for a new confirmation link.</p>"],
+  used: ["Link already used", "<p>This email change was already made, or the account has changed since. Sign in at <a href=\"" + BASE_URL + "\" style=\"color:#1F5C57;\">crnacritics.com</a>.</p>"],
+  taken: ["That address is no longer available", "<p>Another account now uses it. Sign in and choose a different address from My contact info.</p>"],
+};
+app.get("/confirm-email", (req, res) => {
+  const out = emailChangeFromToken(req.query.t);
+  if (out.error) { const [t, body] = EMAIL_CHANGE_ERRORS[out.error]; return res.status(400).send(emailChangePage(t, `<h2 style="color:#123C3A;">${t}</h2>${body}`)); }
+  res.send(emailChangePage("Confirm your new email", `
+    <h2 style="color:#123C3A;">Use this email for CRNA Critics?</h2>
+    <p>Your account will move from <strong>${escapeHtml(out.row.email)}</strong> to <strong>${escapeHtml(out.to)}</strong>. Your reviews and messages come with you.</p>
+    <form method="POST" action="/confirm-email">
+      <input type="hidden" name="t" value="${escapeHtml(String(req.query.t))}"/>
+      <button type="submit" style="background:#123C3A;color:#fff;border:0;padding:13px 22px;border-radius:4px;font-weight:bold;font-size:15px;cursor:pointer;">Yes, make this change</button>
+    </form>`));
+});
+app.post("/confirm-email", express.urlencoded({ extended: false }), (req, res) => {
+  const out = emailChangeFromToken(req.body?.t);
+  if (out.error) { const [t, body] = EMAIL_CHANGE_ERRORS[out.error]; return res.status(400).send(emailChangePage(t, `<h2 style="color:#123C3A;">${t}</h2>${body}`)); }
+  const oldEmail = out.row.email;
+  moveAccountEmail(out.row, out.to);
+  // They just proved they own the new inbox, so this browser is signed in under it.
+  res.cookie("session", sign({ email: out.to }, SESSION_SECONDS), cookieOpts(SESSION_SECONDS));
+  console.log(`Member ${out.row.id} changed email ${oldEmail} -> ${out.to}`);
+  res.send(emailChangePage("Email changed", `
+    <h2 style="color:#123C3A;">Done — your email is now ${escapeHtml(out.to)}</h2>
+    <p>Use this address to sign in from now on. On your other devices you'll need to sign in again.</p>
+    <p><a href="${BASE_URL}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Back to CRNA Critics</a></p>`));
+});
+
 // Self-service profile deletion, open to every member type (CRNA and SRNA student).
 // The member must send {confirm:"DELETE"}. Their private messages, feedback answers and mailing
 // log rows are always erased. Reviews follow their choice: {deleteReviews:true} removes them;
@@ -1937,6 +2092,47 @@ app.post("/api/admin/requests/:id/phone-flag", requireAdmin, (req, res) => {
   res.json({ phone_bad_at: at, phone_bad_note: note });
 });
 
+// Admin edits a member's email and/or phone directly (typos, a number that bounced, someone who
+// can't sign in). No confirmation link: the admin is the authority. Everything is checked before
+// anything is saved, so a bad email never leaves a half-applied phone change.
+app.post("/api/admin/requests/:id/contact", requireAdmin, (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  let phone = null;
+  let newEmail = null;
+  if (req.body?.phone !== undefined) {
+    phone = cleanPhone(req.body.phone);
+    if (!phone) return res.status(400).json({ error: "bad_phone" });
+  }
+  if (req.body?.email !== undefined) {
+    const e = String(req.body.email || "").trim().toLowerCase();
+    if (!EMAIL_SHAPE.test(e) || e.length > 254) return res.status(400).json({ error: "bad_email" });
+    if (e !== row.email.toLowerCase()) {
+      if (emailTaken(e, row.id)) return res.status(409).json({ error: "email_unavailable" });
+      newEmail = e;
+    }
+  }
+  if (phone) savePhone(row, phone);
+  if (newEmail) {
+    moveAccountEmail(row, newEmail);
+    if (req.body?.notify !== false) {
+      sendEmail({
+        to: newEmail,
+        subject: "Your CRNA Critics email was updated",
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+            ${emailHeaderHtml(BASE_URL, 480)}
+            <p>The email on your CRNA Critics account was updated to <strong>${escapeHtml(newEmail)}</strong>. Use this address to sign in. If you've lost your password, tap "Forgot your password?" on the sign-in screen.</p>
+            <p style="color:#888;font-size:12px;">Questions? Reply to this email.</p>
+          </div>`,
+        replyTo: REPLY_TO,
+      }).catch((e) => console.error("Contact-updated notice failed:", e.message));
+    }
+  }
+  const fresh = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(row.id);
+  res.json({ ok: true, row: adminRow(fresh) });
+});
+
 app.post("/api/admin/requests/:id/unsubscribe", requireAdmin, (req, res) => {
   const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
   if (!row) return res.status(404).json({ error: "not_found" });
@@ -1962,7 +2158,7 @@ app.get("/unsubscribe", (req, res) => {
   if (!payload || payload.purpose !== "unsub" || !payload.email) {
     return res.status(400).send(unsubPage("That link isn't valid", `<p>Ask us to take you off the list by replying to any CRNA Critics email.</p>`));
   }
-  const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(payload.email);
+  const row = accountForEmail(payload.email);
   if (!row) return res.status(404).send(unsubPage("Account not found", `<p>There's no CRNA Critics account with that address.</p>`));
   if (row.bulk_unsubscribed) {
     return res.send(unsubPage("You're already unsubscribed", `<p>${escapeHtml(row.email)} won't get member mailings. Account email — sign-in links and password resets — still comes through.</p>`));
@@ -1985,12 +2181,15 @@ app.post("/unsubscribe", express.urlencoded({ extended: false }), (req, res) => 
   if (!payload || payload.purpose !== "unsub" || !payload.email) {
     return res.status(400).send(unsubPage("That link isn't valid", `<p>Reply to any CRNA Critics email and we'll take you off by hand.</p>`));
   }
-  db.prepare("UPDATE access_requests SET bulk_unsubscribed=1, unsubscribed_at=? WHERE email=?")
-    .run(new Date().toISOString(), payload.email);
+  const target = accountForEmail(payload.email);
+  if (target) {
+    db.prepare("UPDATE access_requests SET bulk_unsubscribed=1, unsubscribed_at=? WHERE id=?")
+      .run(new Date().toISOString(), target.id);
+  }
   res.send(
     unsubPage(
       "Done — you're unsubscribed",
-      `<p>${escapeHtml(payload.email)} won't get member mailings any more.</p>
+      `<p>${escapeHtml(target ? target.email : payload.email)} won't get member mailings any more.</p>
        <p style="color:#6B756F;font-size:14px;">Account email still works, so you can always sign in. Changed your mind? Ask the admin to put you back on.</p>
        <p><a href="${BASE_URL}" style="color:#1F5C57;">Back to CRNA Critics</a></p>`
     )
