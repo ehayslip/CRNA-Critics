@@ -1,0 +1,73 @@
+# Builds the CRNA Critics phone apps on GitHub's servers, so no Mac or Android Studio is
+# needed to get an installable build. Runs whenever mobile/ changes, or by hand from the
+# Actions tab ("Run workflow").
+#
+# Android: always produces a test APK (install it on any Android phone). When the four
+# ANDROID_* signing secrets are set in repo Settings -> Secrets -> Actions, it also produces
+# the signed .aab that gets uploaded to Google Play.
+# iOS: compiles the app for the iPhone simulator to prove the project builds. Shipping to
+# the App Store still needs an Apple Developer account (see mobile/README.md).
+name: Mobile apps
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["mobile/**", ".github/workflows/mobile-build.yml"]
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mobile } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: npm ci
+      - run: npx cap sync android
+      - name: Build test APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crna-critics-android-test-apk
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Build signed Play Store bundle
+        if: ${{ env.KS != '' }}
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        working-directory: mobile/android
+        run: |
+          echo "$KS" | base64 -d > app/release.keystore
+          ./gradlew bundleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file=$PWD/app/release.keystore \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+          rm app/release.keystore
+      - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('mobile/android/app/build/outputs/bundle/release/*.aab') != '' }}
+        with:
+          name: crna-critics-android-play-bundle
+          path: mobile/android/app/build/outputs/bundle/release/app-release.aab
+
+  ios:
+    runs-on: macos-15
+    defaults: { run: { working-directory: mobile } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx cap sync ios
+      - name: Compile for iPhone simulator
+        working-directory: mobile/ios/App
+        run: |
+          xcodebuild -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build | tail -20

@@ -2433,6 +2433,29 @@ app.get("/site.webmanifest", (req, res) => {
     display: "standalone",
   }));
 });
+// ---------- mobile apps ----------
+// Store links live in Railway variables so the home page's download buttons switch from
+// "Coming soon" to live the moment a listing is approved, with no code change.
+function appLinks() {
+  return {
+    ios: (process.env.IOS_APP_URL || "").trim(),
+    android: (process.env.ANDROID_APP_URL || "").trim(),
+  };
+}
+app.get("/api/app-links", (req, res) => {
+  res.set("Cache-Control", "no-cache");
+  res.json(appLinks());
+});
+// One link to share anywhere (texts, Facebook, a QR code): sends iPhones to the App Store,
+// Android phones to Google Play, and everyone else to the home page's download section.
+app.get("/app", (req, res) => {
+  const ua = String(req.get("user-agent") || "");
+  const { ios, android } = appLinks();
+  if (/iPhone|iPad|iPod/i.test(ua) && ios) return res.redirect(302, ios);
+  if (/Android/i.test(ua) && android) return res.redirect(302, android);
+  res.redirect(302, "/#get-the-app");
+});
+
 app.get("/robots.txt", (req, res) => {
   res.type("text/plain").send("User-agent: *\nAllow: /\nSitemap: https://crnacritics.com/sitemap.xml\n");
 });

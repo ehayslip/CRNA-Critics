@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CRNA Critics</string>
+    <string name="title_activity_main">CRNA Critics</string>
+    <string name="package_name">com.crnacritics.app</string>
+    <string name="custom_url_scheme">com.crnacritics.app</string>
+</resources>

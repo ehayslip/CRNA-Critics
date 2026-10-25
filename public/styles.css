@@ -679,3 +679,33 @@ a.tiny-btn { text-decoration: none; }
 .text-hist-row .link-inline { color: #8A948E; font-size: 11px; margin-left: 4px; }
 .phone-bad { font-size: 10.5px; font-weight: 800; padding: 1px 6px; border-radius: 3px; background: #FBE9E7; color: #8C3A32; white-space: nowrap; }
 .member-badphone { background: #FBE9E7; color: #8C3A32; }
+
+/* ---------- get the app (home page) ---------- */
+.app-band { background: #0B1526; color: #F2F4F1; border-top: 4px solid #13A15A; }
+.app-band .lp-h { color: #F2F4F1; }
+.app-band .lp-body { color: #C2CBC6; }
+.app-band .lp-label { color: #F5B301; }
+.app-band-inner { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.app-band-icon { width: 72px; height: 72px; border-radius: 16px; box-shadow: 0 0 0 1px #24324D; }
+.store-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin: 18px 0 6px; }
+.store-btn {
+  display: inline-flex; align-items: center; gap: 10px; min-width: 196px; box-sizing: border-box;
+  padding: 10px 18px 10px 14px; border-radius: 12px; background: #000; color: #fff;
+  border: 1.5px solid #5B6B87; text-decoration: none; text-align: left;
+}
+a.store-btn:hover { border-color: #F5B301; }
+a.store-btn:focus-visible { outline: 3px solid #F5B301; outline-offset: 2px; }
+.store-btn.soon { opacity: 0.55; cursor: default; border-style: dashed; }
+.store-ico { display: flex; color: #fff; }
+.store-txt { display: flex; flex-direction: column; line-height: 1.15; }
+.store-top { font-size: 11px; letter-spacing: 0.2px; color: #D8DDE6; }
+.store-name { font-size: 19px; font-weight: 700; letter-spacing: -0.2px; }
+.store-sub { font-size: 10.5px; color: #9BA8BC; margin-top: 2px; }
+.app-band-fine { font-size: 12.5px; line-height: 1.55; color: #8D9AAF; margin: 8px auto 0; max-width: 560px; }
+.app-band-fine strong { color: #F2F4F1; }
+@media (min-width: 760px) {
+  .app-band-inner { flex-direction: row; align-items: flex-start; gap: 28px; text-align: left; }
+  .app-band-icon { width: 96px; height: 96px; border-radius: 22px; margin-top: 4px; }
+  .app-band .lp-body, .app-band-fine { margin-left: 0; }
+  .store-row { justify-content: flex-start; }
+}

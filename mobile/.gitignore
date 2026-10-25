@@ -1,0 +1,10 @@
+node_modules/
+ios/App/Pods/
+ios/App/App/public/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/src/main/assets/public/
+*.keystore
+*.jks

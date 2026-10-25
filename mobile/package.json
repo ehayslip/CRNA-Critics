@@ -1,0 +1,27 @@
+{
+  "name": "crna-critics-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Capacitor shell (iOS + Android) around crnacritics.com",
+  "scripts": {
+    "sync": "cap sync",
+    "ios": "cap sync ios && cap open ios",
+    "android": "cap sync android && cap open android",
+    "assets": "capacitor-assets generate --iconBackgroundColor '#0B1526' --splashBackgroundColor '#0B1526'"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.3",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/share": "^8.0.3",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.4"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.3"
+  }
+}

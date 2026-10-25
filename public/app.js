@@ -969,6 +969,52 @@ function heroArtHtml() {
   </svg>`;
 }
 
+// ---------- get the app (home page) ----------
+// Inside the iOS/Android app itself the page is the same site, so the app sets a
+// user-agent marker and we hide the download band there.
+const IN_NATIVE_APP = /CRNACriticsApp/.test(navigator.userAgent);
+const PHONE_ICON = '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10.5 18.5h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+function storeBtnHtml(kind, url) {
+  const top = kind === "ios" ? "Download on the" : "Get it on";
+  const name = kind === "ios" ? "App Store" : "Google Play";
+  const sub = kind === "ios" ? "iPhone &amp; iPad" : "Android phones";
+  const inner = `<span class="store-ico">${PHONE_ICON}</span><span class="store-txt"><span class="store-top">${url ? top : "Coming soon to the"}</span><span class="store-name">${name}</span><span class="store-sub">${sub}</span></span>`;
+  return url
+    ? `<a class="store-btn" data-store="${kind}" href="${esc(url)}" target="_blank" rel="noopener">${inner}</a>`
+    : `<span class="store-btn soon" data-store="${kind}" aria-disabled="true">${inner}</span>`;
+}
+function appDownloadHtml() {
+  if (IN_NATIVE_APP) return "";
+  const links = state.appLinks || { ios: "", android: "" };
+  const live = links.ios || links.android;
+  const ua = navigator.userAgent;
+  // Put the visitor's own phone first.
+  const order = /Android/i.test(ua) ? ["android", "ios"] : ["ios", "android"];
+  return `
+    <section class="lp-section app-band" id="get-the-app">
+      <div class="app-band-inner">
+        <img class="app-band-icon" src="/apple-touch-icon.png" alt="" width="72" height="72">
+        <div class="app-band-copy">
+          <div class="lp-label">GET THE APP</div>
+          <h3 class="lp-h">CRNA Critics, right on your phone.</h3>
+          <p class="lp-body">Check an agency, recruiter, hospital, or group in the few minutes between cases, or before you call a recruiter back. Same verified, anonymous reviews, same login as the website.</p>
+          <div class="store-row">${order.map((k) => storeBtnHtml(k, links[k])).join("")}</div>
+          <p class="app-band-fine">${live ? `Sharing with a colleague? Send them <strong>crnacritics.com/app</strong> and it opens the right store for their phone.` : `The apps are on their way to the App Store and Google Play. Until then, the website works on any phone.`}</p>
+        </div>
+      </div>
+    </section>`;
+}
+function loadAppLinks() {
+  if (IN_NATIVE_APP || state.appLinks) return;
+  state.appLinks = { ios: "", android: "" };
+  fetch("/api/app-links").then((r) => r.ok ? r.json() : null).then((links) => {
+    if (!links) return;
+    state.appLinks = { ios: links.ios || "", android: links.android || "" };
+    const band = document.getElementById("get-the-app");
+    if (band) band.outerHTML = appDownloadHtml();
+  }).catch(() => {});
+}
+
 function landingHtml() {
   return `
   <div class="landing">
@@ -988,6 +1034,8 @@ function landingHtml() {
       </div>
       <img class="hero-art" src="image.jpg" alt="CRNA holding a locum contract full of red flags - CRNA Beware, know before you sign">
     </section>
+
+    ${appDownloadHtml()}
 
     <section class="lp-section">
       <div class="lp-label">WHY THIS EXISTS</div>
@@ -1076,6 +1124,11 @@ function landingHtml() {
 }
 
 function attachLandingHandlers() {
+  loadAppLinks();
+  if (location.hash === "#get-the-app") {
+    const band = document.getElementById("get-the-app");
+    if (band) setTimeout(() => band.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }
   document.querySelectorAll("[data-go]").forEach((btn) => {
     btn.onclick = () => {
       state.gateMode = btn.dataset.go === "request" ? "request" : btn.dataset.go === "srna" ? "srna" : "signin";

@@ -1,0 +1,32 @@
+{
+  "appId": "com.crnacritics.app",
+  "appName": "CRNA Critics",
+  "webDir": "www",
+  "server": {
+    "url": "https://crnacritics.com",
+    "allowNavigation": ["crnacritics.com", "*.crnacritics.com"],
+    "errorPath": "offline.html"
+  },
+  "appendUserAgent": "CRNACriticsApp",
+  "backgroundColor": "#0B1526",
+  "ios": {
+    "contentInset": "always",
+    "scheme": "CRNA Critics"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "launchAutoHide": true,
+      "backgroundColor": "#0B1526",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#0B1526",
+      "overlaysWebView": false
+    }
+  }
+}
