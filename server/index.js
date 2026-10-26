@@ -2632,6 +2632,8 @@ app.get("/site.webmanifest", (req, res) => {
     display: "standalone",
   }));
 });
+// ---------- YouTube ----------
+const { youtubeChannelUrl, youtubeVideoId } = require("./social");
 // ---------- mobile apps ----------
 // Store links live in Railway variables so the home page's download buttons switch from
 // "Coming soon" to live the moment a listing is approved, with no code change.
@@ -2644,6 +2646,13 @@ function appLinks() {
 app.get("/api/app-links", (req, res) => {
   res.set("Cache-Control", "no-cache");
   res.json(appLinks());
+});
+// YouTube: YOUTUBE_URL = the channel link (footer + email footer), YOUTUBE_VIDEO_ID = the one
+// video featured on the home page. Both optional; blank means nothing shows. Only a real
+// youtube.com URL and an 11-character video id are accepted, so a typo can't inject anything.
+app.get("/api/social-links", (req, res) => {
+  res.set("Cache-Control", "no-cache");
+  res.json({ youtube: youtubeChannelUrl(), video: youtubeVideoId() });
 });
 // One link to share anywhere (texts, Facebook, a QR code): sends iPhones to the App Store,
 // Android phones to Google Play, and everyone else to the home page's download section.

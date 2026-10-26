@@ -604,6 +604,47 @@ function headerHtml(compact) {
     </div>`;
 }
 
+// ---------- YouTube (channel link in the footer, one featured video on the home page) ----------
+// Both come from /api/social-links, which reads Railway variables; blank means nothing shows.
+function youtubeFooterLinkHtml() {
+  const url = state.social && state.social.youtube;
+  return url ? `<span class="footer-sep">&middot;</span><a class="inline-link" id="footer-yt" href="${esc(url)}" target="_blank" rel="noopener">YouTube</a>` : "";
+}
+// ?sub_confirmation=1 makes YouTube open its "Subscribe to CRNA Critics?" prompt on arrival.
+function subscribeUrl(channel) {
+  try { const u = new URL(channel); u.searchParams.set("sub_confirmation", "1"); return u.toString(); }
+  catch (e) { return channel; }
+}
+function youtubeBandHtml() {
+  const id = state.social && state.social.video;
+  if (!id) return `<div id="yt-slot"></div>`;
+  const channel = state.social.youtube;
+  return `
+    <section class="lp-section yt-band" id="yt-slot">
+      <div class="lp-label">WATCH</div>
+      <h3 class="lp-h">See how CRNA Critics works.</h3>
+      <div class="yt-frame">
+        <iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?rel=0&modestbranding=1&playsinline=1" title="CRNA Critics video" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+      </div>
+      ${channel ? `<div class="yt-sub-row"><a class="yt-sub" href="${esc(subscribeUrl(channel))}" target="_blank" rel="noopener"><span class="yt-sub-icon" aria-hidden="true"></span>Subscribe on YouTube</a></div>` : ""}
+    </section>`;
+}
+// The video is a real embedded YouTube player (privacy-enhanced youtube-nocookie domain),
+// so it plays in place with YouTube's own controls. Nothing to wire up.
+function attachYoutubeHandlers() {}
+function loadSocialLinks() {
+  if (state.social) return;
+  state.social = { youtube: "", video: "" };
+  fetch("/api/social-links").then((r) => r.ok ? r.json() : null).then((s) => {
+    if (!s) return;
+    state.social = { youtube: s.youtube || "", video: s.video || "" };
+    const links = document.querySelector(".footer-links");
+    if (links && state.social.youtube && !document.getElementById("footer-yt")) links.insertAdjacentHTML("beforeend", youtubeFooterLinkHtml());
+    const slot = document.getElementById("yt-slot");
+    if (slot && state.social.video) { slot.outerHTML = youtubeBandHtml(); attachYoutubeHandlers(); }
+  }).catch(() => {});
+}
+
 function footerHtml() {
   return `
     <div class="footer">
@@ -614,11 +655,14 @@ function footerHtml() {
         <button type="button" class="inline-link" id="guidelines-link-btn">Review Guidelines</button>
         ${state.user ? `<span class="footer-sep">&middot;</span><button type="button" class="inline-link" id="contact-link-btn">My contact info</button>` : ""}
         ${state.user ? `<span class="footer-sep">&middot;</span><button type="button" class="inline-link danger-link" id="delete-profile-link-btn">Delete my profile</button>` : ""}
+        ${youtubeFooterLinkHtml()}
       </div>
       <button type="button" class="admin-link" id="admin-link-btn">Site admin</button>
     </div>`;
 }
 function attachFooterHandlers() {
+  loadSocialLinks();
+  attachYoutubeHandlers();
   document.getElementById("admin-link-btn").onclick = () => {
     state.view = state.view === "admin" ? (state.user ? "app" : "home") : "admin";
     render();
@@ -1168,6 +1212,8 @@ function landingHtml() {
     </section>
 
     ${appDownloadHtml()}
+
+    ${youtubeBandHtml()}
 
     <section class="lp-section">
       <div class="lp-label">WHY THIS EXISTS</div>

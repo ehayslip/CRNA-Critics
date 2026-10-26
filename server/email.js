@@ -136,6 +136,14 @@ function bodyToHtml(text, ctx) {
     .join("\n");
 }
 
+// One line above the unsubscribe text when the channel link is set; nothing when it isn't.
+function youtubeFooterLine() {
+  const url = require("./social").youtubeChannelUrl();
+  if (!url) return "";
+  const safe = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  return `<p style="margin:0 0 6px;">Watch us on <a href="${safe}" style="color:#13A15A;font-weight:bold;">YouTube</a>.</p>`;
+}
+
 // The shell every campaign email goes out in. The unsubscribe line is always present
 // and always points at the bulk-only opt-out — account email is never affected.
 function campaignHtml({ body, ctx, unsubscribeUrl }) {
@@ -144,6 +152,7 @@ function campaignHtml({ body, ctx, unsubscribeUrl }) {
       ${emailHeaderHtml(ctx.baseUrl, 560)}
       ${bodyToHtml(body, ctx)}
       <div style="border-top:1px solid #DDE3E0;margin-top:30px;padding-top:12px;color:#8A948E;font-size:11px;line-height:1.5;">
+        ${youtubeFooterLine()}
         <p style="margin:0 0 6px;">You're getting this because you're a verified member of CRNA Critics.</p>
         <p style="margin:0;"><a href="${unsubscribeUrl}" style="color:#8A948E;">Unsubscribe from member mailings</a> — you'll still get account email such as sign-in links and password resets.</p>
       </div>
