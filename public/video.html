@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A quick ask from Eric — CRNA Critics</title>
+<meta name="description" content="18 seconds from Eric Hayslip, CRNA: please leave a review on CRNA Critics. It's anonymous and helps the next CRNA headed to your site.">
+<meta property="og:type" content="video.other" />
+<meta property="og:site_name" content="CRNA Critics" />
+<meta property="og:url" content="https://crnacritics.com/video" />
+<meta property="og:title" content="Please leave a review on CRNA Critics (18 sec)" />
+<meta property="og:description" content="A quick ask from Eric Hayslip, CRNA. Reviews are anonymous and take 3–5 minutes." />
+<meta property="og:image" content="https://crnacritics.com/video/leave-a-review-poster.jpg" />
+<meta property="og:image:width" content="720" />
+<meta property="og:image:height" content="1280" />
+<meta property="og:video" content="https://crnacritics.com/video/leave-a-review.mp4" />
+<meta property="og:video:secure_url" content="https://crnacritics.com/video/leave-a-review.mp4" />
+<meta property="og:video:type" content="video/mp4" />
+<meta property="og:video:width" content="720" />
+<meta property="og:video:height" content="1280" />
+<meta name="twitter:card" content="player" />
+<link rel="icon" href="/favicon.ico" sizes="48x48" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+<meta name="theme-color" content="#0B1526" />
+<style>
+  html,body{ margin:0; background:#0B1526; color:#fff; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap{ min-height:100vh; min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:18px 16px 28px; box-sizing:border-box; }
+  .brand{ font-size:12px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:#13A15A; margin-bottom:12px; }
+  video{ width:min(100%, 360px); max-height:70vh; max-height:70dvh; aspect-ratio:9/16; border-radius:16px; background:#000; box-shadow:0 10px 40px rgba(0,0,0,.5); object-fit:cover; }
+  .cta{ display:block; width:min(100%, 360px); box-sizing:border-box; margin-top:16px; padding:16px; border-radius:12px; background:#13A15A; color:#fff; font-size:17px; font-weight:700; text-align:center; text-decoration:none; }
+  .cta:active{ opacity:.85; }
+  .sub{ margin:12px 0 0; font-size:13.5px; color:#AEB7C2; text-align:center; max-width:360px; }
+  .sub a{ color:#fff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">CRNA Critics</div>
+  <video id="v" src="/video/leave-a-review.mp4" poster="/video/leave-a-review-poster.jpg" controls playsinline autoplay preload="auto"></video>
+  <a class="cta" href="/">Leave a review on crnacritics.com</a>
+  <p class="sub">Reviews are anonymous and take 3–5 minutes. New here? <a href="/">Sign up free</a> with your NBCRNA number.</p>
+</div>
+<script>
+  // Browsers only autoplay muted video. Start muted; unmute at the first tap so the sound comes on.
+  var v = document.getElementById('v');
+  v.muted = true;
+  v.play().catch(function(){});
+  function unmute(){ v.muted = false; if (v.paused) v.play().catch(function(){}); document.removeEventListener('touchstart', unmute); document.removeEventListener('click', unmute); }
+  document.addEventListener('touchstart', unmute, { once: true });
+  document.addEventListener('click', unmute, { once: true });
+</script>
+</body>
+</html>

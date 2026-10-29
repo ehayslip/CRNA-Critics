@@ -2680,6 +2680,13 @@ app.get("/feedback", (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "feedback.html"));
 });
 
+// crnacritics.com/video — Eric's 18-second "please leave a review" clip, for texts and
+// social posts (iMessage shows the poster as a preview). The MP4 lives in public/video/.
+app.get("/video", (req, res) => {
+  res.set("Cache-Control", "no-cache");
+  res.sendFile(path.join(__dirname, "..", "public", "video.html"));
+});
+
 // Code and styles: browsers must re-check on every load (ETag makes that a cheap 304), so a
 // deploy shows up on the next visit instead of whenever Safari feels like it. Images keep a week.
 app.use(express.static(path.join(__dirname, "..", "public"), {
