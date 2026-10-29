@@ -10,6 +10,8 @@ const { searchDirectory } = require("./nbcrna-directory");
 const PEOPLE = {
   125095: { id: "125095", cert: "125095", name: "Eric B Hayslip", period: "01/01/2023 - 12/31/2026", status: "Re-Certified" },
   1126369: { id: "144366", cert: "144366", name: "Arif Amos Sabir", period: "05/10/2023 - 05/31/2027", status: "Certified" },
+  121735: { id: "121735", cert: "121735", name: "Aaron Michael McNutt", period: "02/01/2027 - 01/31/2031", status: "Re-Certified" }, // recertified early
+  100001: { id: "100001", cert: "100001", name: "Lapsed Person", period: "01/01/2020 - 12/31/2023", status: "Re-Certified" },
   1128914: { id: "147306", cert: "147306", name: "John R Fratianni", period: "01/22/2024 - 07/31/2028", status: "Certified" },
   144366: { id: "990001", cert: "990001", name: "Somebody Else", period: "01/01/2020 - 12/31/2027", status: "Certified" }, // ID collision
 };
@@ -34,6 +36,15 @@ const now = new Date("2026-09-23T12:00:00Z");
   // Older CRNA: direct hit, no directory search needed
   let r = await checkApplicant({ name: "Eric Hayslip", nbcrna_number: "125095" }, now, { ...deps, searchDirectory: async () => { throw new Error("should not search"); } });
   assert.strictEqual(r.verified, true, r.reason);
+
+  // Recertified early: current period starts in the future → still verified
+  r = await checkApplicant({ name: "Aaron McNutt", nbcrna_number: "121735" }, now, deps);
+  assert.strictEqual(r.verified, true, r.reason);
+
+  // Period already ended → not verified
+  r = await checkApplicant({ name: "Lapsed Person", nbcrna_number: "100001" }, now, deps);
+  assert.strictEqual(r.verified, false);
+  assert.match(r.reason, /has expired/);
 
   // Newer CRNA, "No data found" on the direct URL → found by name
   r = await checkApplicant({ name: "John Fratianni", nbcrna_number: "147306" }, now, deps);

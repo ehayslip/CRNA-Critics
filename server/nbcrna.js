@@ -206,8 +206,12 @@ async function checkApplicant({ name, nbcrna_number }, now = new Date(), deps = 
   if (!ACTIVE_STATUSES.includes(rec.status.trim().toLowerCase())) {
     return { verified: false, reason: `status is "${rec.status || "blank"}"`, record: rec };
   }
-  if (!rec.periodEnd || rec.periodEnd < now || (rec.periodStart && rec.periodStart > now)) {
-    return { verified: false, reason: `certification period "${rec.period || "blank"}" doesn't cover today`, record: rec };
+  // Only an *expired* period fails the check. A CRNA who recertifies early shows
+  // a "Current Certification Period" that starts in the future (e.g. 01/01/2027 -
+  // 12/31/2030 while it's still 2026) — they're certified now, just already
+  // renewed, so a future start date is fine.
+  if (!rec.periodEnd || rec.periodEnd < now) {
+    return { verified: false, reason: `certification period "${rec.period || "blank"}" has expired`, record: rec };
   }
   return {
     verified: true,
