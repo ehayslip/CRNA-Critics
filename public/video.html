@@ -28,6 +28,12 @@
   .wrap{ min-height:100vh; min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:18px 16px 28px; box-sizing:border-box; }
   .brand{ font-size:12px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:#13A15A; margin-bottom:12px; }
   video{ width:min(100%, 360px); max-height:70vh; max-height:70dvh; aspect-ratio:9/16; border-radius:16px; background:#000; box-shadow:0 10px 40px rgba(0,0,0,.5); object-fit:cover; }
+  .stage{ position:relative; width:min(100%, 360px); }
+  .stage video{ width:100%; display:block; }
+  .tap{ position:absolute; inset:0; border:0; border-radius:16px; background:rgba(11,21,38,.35); color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; cursor:pointer; font-family:inherit; }
+  .tap[hidden]{ display:none; }
+  .tap-ring{ width:84px; height:84px; border-radius:50%; background:#13A15A; display:flex; align-items:center; justify-content:center; font-size:34px; padding-left:6px; box-sizing:border-box; box-shadow:0 8px 30px rgba(0,0,0,.45); }
+  .tap-text{ font-size:16px; font-weight:700; text-shadow:0 1px 6px rgba(0,0,0,.6); }
   .cta{ display:block; width:min(100%, 360px); box-sizing:border-box; margin-top:16px; padding:16px; border-radius:12px; background:#13A15A; color:#fff; font-size:17px; font-weight:700; text-align:center; text-decoration:none; }
   .cta:active{ opacity:.85; }
   .sub{ margin:12px 0 0; font-size:13.5px; color:#AEB7C2; text-align:center; max-width:360px; }
@@ -37,18 +43,27 @@
 <body>
 <div class="wrap">
   <div class="brand">CRNA Critics</div>
-  <video id="v" src="/video/leave-a-review.mp4" poster="/video/leave-a-review-poster.jpg" controls playsinline autoplay preload="auto"></video>
+  <div class="stage">
+    <video id="v" src="/video/leave-a-review.mp4" poster="/video/leave-a-review-poster.jpg" controls playsinline preload="auto"></video>
+    <button id="tap" class="tap" type="button" aria-label="Play with sound">
+      <span class="tap-ring">&#9654;</span>
+      <span class="tap-text">Tap to play with sound</span>
+    </button>
+  </div>
   <a class="cta" href="/">Leave a review on crnacritics.com</a>
   <p class="sub">Reviews are anonymous and take 3–5 minutes. New here? <a href="/">Sign up free</a> with your NBCRNA number.</p>
 </div>
 <script>
-  // Browsers only autoplay muted video. Start muted; unmute at the first tap so the sound comes on.
+  // Try to start with sound. Phones block that until the person taps, so if play() is refused
+  // we leave a big play button over the video; one tap plays it with sound.
   var v = document.getElementById('v');
-  v.muted = true;
-  v.play().catch(function(){});
-  function unmute(){ v.muted = false; if (v.paused) v.play().catch(function(){}); document.removeEventListener('touchstart', unmute); document.removeEventListener('click', unmute); }
-  document.addEventListener('touchstart', unmute, { once: true });
-  document.addEventListener('click', unmute, { once: true });
+  var tap = document.getElementById('tap');
+  v.muted = false;
+  v.volume = 1;
+  function playWithSound(){ v.muted = false; return v.play(); }
+  playWithSound().then(function(){ tap.hidden = true; }).catch(function(){ tap.hidden = false; });
+  tap.addEventListener('click', function(){ tap.hidden = true; playWithSound().catch(function(){}); });
+  v.addEventListener('play', function(){ tap.hidden = true; });
 </script>
 </body>
 </html>
