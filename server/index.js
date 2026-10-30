@@ -1562,6 +1562,42 @@ app.post("/api/admin/texts", requireAdmin, (req, res) => {
   res.json({ entry: db.prepare("SELECT * FROM text_log WHERE id = ?").get(id) });
 });
 
+// Log a whole batch of texts at once (the Texts tab's "send to several people"). The server
+// re-checks who may be texted, whatever the page sent: approved CRNAs who ticked the text
+// opt-in box at sign-up, with a usable US number that isn't flagged as wrong. Anyone else in
+// the batch is skipped and listed, so a page bug can't log (or invite) a text to the wrong person.
+app.post("/api/admin/texts/bulk", requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const items = Array.isArray(b.items) ? b.items.slice(0, 100) : [];
+  if (!items.length) return res.status(400).json({ error: "no_items" });
+  const tpl = b.templateId ? db.prepare("SELECT id, name FROM text_templates WHERE id = ?").get(String(b.templateId)) : null;
+  const tplName = tpl ? tpl.name : (String(b.templateName || "").slice(0, 120) || "Typed by hand");
+  const now = new Date().toISOString();
+  const logged = [];
+  const skipped = [];
+  const insert = db.prepare("INSERT INTO text_log (id, request_id, template_id, template_name, body, sent_at) VALUES (?,?,?,?,?,?)");
+  const run = db.transaction(() => {
+    for (const it of items) {
+      const m = db.prepare("SELECT id, name, phone, status, role, sms_consent, phone_bad_at FROM access_requests WHERE id = ?").get(String(it.requestId || ""));
+      const body = String(it.body || "").trim().slice(0, 2000);
+      const digits = String(m?.phone || "").replace(/\D/g, "");
+      const okNumber = digits.length === 10 || (digits.length === 11 && digits[0] === "1");
+      let why = "";
+      if (!m) why = "not found";
+      else if (m.status !== "approved" || m.role === "srna") why = "not an approved CRNA";
+      else if (!m.sms_consent) why = "no text opt-in";
+      else if (m.phone_bad_at) why = "number flagged as wrong";
+      else if (!okNumber) why = "no usable number";
+      else if (!body) why = "empty text";
+      if (why) { skipped.push({ requestId: String(it.requestId || ""), name: m ? m.name : "(unknown)", why }); continue; }
+      insert.run(crypto.randomUUID(), m.id, tpl ? tpl.id : null, tplName, body, now);
+      logged.push(m.id);
+    }
+  });
+  run();
+  res.json({ logged: logged.length, loggedIds: logged, skipped });
+});
+
 app.delete("/api/admin/texts/:id", requireAdmin, (req, res) => {
   const changed = db.prepare("DELETE FROM text_log WHERE id = ?").run(req.params.id).changes;
   if (!changed) return res.status(404).json({ error: "not_found" });

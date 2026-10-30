@@ -323,6 +323,7 @@ const state = {
   textPick: {},        // memberId -> chosen text template id ("" = type my own)
   textDraft: {},       // memberId -> the wording in their text box (edited or filled)
   textNote: {},        // memberId -> one-line confirmation under their text box
+  bulk: { tplId: "", video: false, picked: [], filter: "", stage: "pick", batch: 0, note: "" }, // Texts tab: send to several people
   textTplArmed: null,  // template id waiting for a second "Delete" tap
   adminFilter: "",     // name/email filter in the member list
   adminConfirmId: null, // member row showing the delete confirmation
@@ -3157,6 +3158,200 @@ function attachTextHandlers() {
     };
   });
 }
+// ---- Send one text to several people (Texts tab) ------------------------------------------
+// The page hands a batch to the "CRNA bulk text" Shortcut, which sends each text from Eric's own
+// Messages with a pause between them (and attaches the review video when asked). Only approved
+// CRNAs who ticked the text opt-in, with a good US number, can be picked; the server re-checks
+// that when it logs the batch.
+const BULK_SHORTCUT = "CRNA bulk text";
+const BULK_BATCH = 25;
+function bulkEligible(r) {
+  if (!r || r.status !== "approved" || r.role === "srna" || !r.sms_consent || r.phone_bad_at) return false;
+  return /^\+1\d{10}$/.test(smsNumber(r.phone));
+}
+function bulkTemplate() {
+  const tpls = (state.adminTexts && state.adminTexts.templates) || [];
+  return tpls.find((t) => t.id === state.bulk.tplId) || null;
+}
+function bulkSentSet(tplId) {
+  return new Set(((state.adminTexts && state.adminTexts.log) || []).filter((l) => l.template_id === tplId).map((l) => l.request_id));
+}
+function bulkPeople() {
+  const q = state.bulk.filter.trim().toLowerCase();
+  return state.adminRequests
+    .filter(bulkEligible)
+    .filter((r) => !q || `${r.name} ${r.email} ${r.phone || ""}`.toLowerCase().includes(q))
+    .sort(byLastName);
+}
+function bulkPickedMembers() {
+  const ids = new Set(state.bulk.picked);
+  return state.adminRequests.filter((r) => ids.has(r.id) && bulkEligible(r)).sort(byLastName);
+}
+function bulkClean(s) { return String(s || "").replace(/\|\|\||§§§/g, "|"); }
+// One record per person: mode|||phone|||message, records joined by §§§ (the Shortcut splits on both).
+function bulkBatchItems(batchIndex) {
+  const tpl = bulkTemplate();
+  if (!tpl) return [];
+  return bulkPickedMembers().slice(batchIndex * BULK_BATCH, (batchIndex + 1) * BULK_BATCH).map((r) => ({ member: r, body: fillText(tpl.body, r).trim() }));
+}
+function bulkHref(batchIndex) {
+  const mode = state.bulk.video ? "video" : "plain";
+  const payload = bulkBatchItems(batchIndex).map((it) => `${mode}|||${smsNumber(it.member.phone)}|||${bulkClean(it.body)}`).join("§§§");
+  return `shortcuts://run-shortcut?name=${encodeURIComponent(BULK_SHORTCUT)}&input=text&text=${encodeURIComponent(payload)}`;
+}
+function bulkRowHtml(r, sent) {
+  const picked = state.bulk.picked.includes(r.id);
+  return `
+    <label class="rcpt-row${picked ? " picked" : ""}">
+      <input type="checkbox" data-bulk-pick="${r.id}" ${picked ? "checked" : ""}/>
+      <span class="rcpt-main">
+        <span class="rcpt-name">${esc(r.name)}</span>
+        <span class="rcpt-sub">${esc(r.phone || "")}</span>
+      </span>
+      <span class="rcpt-meta">${r.reviewCount || 0} review${r.reviewCount === 1 ? "" : "s"}<br/><span style="color:#8A948E">${sent.has(r.id) ? "already sent this" : r.textCount ? `texted ${esc(shortDate(r.lastTextedAt))}` : "never texted"}</span></span>
+    </label>`;
+}
+function bulkListInnerHtml() {
+  const sent = bulkSentSet(state.bulk.tplId);
+  const people = bulkPeople();
+  return people.length === 0 ? `<p class="hint-text" style="padding:10px">No one matches that.</p>` : people.map((r) => bulkRowHtml(r, sent)).join("");
+}
+function bulkCountText() {
+  return `${bulkPickedMembers().length} picked of ${state.adminRequests.filter(bulkEligible).length} who can be texted`;
+}
+function bulkSectionHtml() {
+  const b = state.bulk;
+  const tpls = (state.adminTexts && state.adminTexts.templates) || [];
+  const tpl = bulkTemplate();
+  const approved = state.adminRequests.filter((r) => r.status === "approved" && r.role !== "srna");
+  const eligible = approved.filter(bulkEligible);
+  const noOptIn = approved.filter((r) => !r.sms_consent).length;
+  const badNum = approved.filter((r) => r.sms_consent && (r.phone_bad_at || !/^\+1\d{10}$/.test(smsNumber(r.phone)))).length;
+  const head = `<div class="section-label" style="margin:0 0 6px">TEXT SEVERAL PEOPLE AT ONCE</div>`;
+  if (!isAppleDevice()) {
+    return `<div class="card">${head}<p class="hint-text" style="margin:0">Sending to several people runs a Shortcut on an iPhone or Mac. Open this page on your iPhone or Mac to use it.</p></div>`;
+  }
+  // Confirm / send-in-batches screen
+  if (b.stage === "confirm" || b.stage === "done") {
+    const picked = bulkPickedMembers();
+    const batches = Math.max(1, Math.ceil(picked.length / BULK_BATCH));
+    if (b.stage === "done" || b.batch >= batches) {
+      return `<div class="card" style="border-color:#1F5C57">${head}
+        <p style="margin:4px 0;font-weight:700">All ${picked.length} texts handed to your Shortcut and logged.</p>
+        <p class="hint-text">Shortcuts keeps sending in the background, about ${BULK_PAUSE_SECONDS} seconds apart, so give it a few minutes. Each one is listed under "Texts you've sent" below. If one didn't go out, tap "remove" on it there.</p>
+        <button class="tiny-btn" id="bulk-reset">Done</button></div>`;
+    }
+    const first = picked[0];
+    const thisBatch = bulkBatchItems(b.batch);
+    return `<div class="card" style="border-color:#1F5C57">${head}
+      <p style="margin:4px 0;font-weight:700">Ready: ${picked.length} ${picked.length === 1 ? "person" : "people"} · ${b.video ? "with the video attached" : "text only"}</p>
+      <p class="hint-text" style="margin:0 0 6px">"${esc(tpl ? tpl.name : "")}". It goes out from your own number. Here is what the first person gets:</p>
+      <div class="text-hist-body" style="white-space:pre-wrap;background:#F4F6F4;padding:8px 10px;border-radius:8px">${esc(first && tpl ? fillText(tpl.body, first).trim() : "")}</div>
+      <p class="hint-text" style="margin:8px 0 4px"><strong>${esc(picked.slice(0, 6).map((r) => r.name).join(", "))}${picked.length > 6 ? ` and ${picked.length - 6} more` : ""}</strong></p>
+      ${b.note ? `<p class="hint-text" style="color:#1F5C57;font-weight:600">${esc(b.note)}</p>` : ""}
+      <p class="hint-text">${batches > 1 ? `Sent in ${batches} batches of up to ${BULK_BATCH} so each launch stays small. This is batch ${b.batch + 1} of ${batches}: ${thisBatch.length} ${thisBatch.length === 1 ? "person" : "people"}. ` : ""}Tapping the green button hands the batch to the "${esc(BULK_SHORTCUT)}" Shortcut and logs it. The first time, macOS or iOS may ask to allow it. Tap Allow.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">
+        <a class="tiny-btn approve" id="bulk-launch" href="${esc(bulkHref(b.batch))}" style="text-decoration:none">🎬 Send batch ${b.batch + 1} of ${batches} (${thisBatch.length})</a>
+        <button type="button" class="tiny-btn" id="bulk-back">← Change who</button>
+      </div></div>`;
+  }
+  // Pick screen
+  const picked = bulkPickedMembers().length;
+  return `<div class="card">${head}
+    <p class="hint-text" style="margin:0 0 8px">Pick a text and the people to send it to, and one tap runs it for all of them from your own number. Only members who ticked the text opt-in at sign-up and have a good number can be picked (${noOptIn} have no opt-in${badNum ? `, ${badNum} have a bad number` : ""}).</p>
+    <select id="bulk-tpl" class="search-input">
+      <option value="">— choose the text to send —</option>
+      ${tpls.map((t) => `<option value="${esc(t.id)}"${b.tplId === t.id ? " selected" : ""}>${esc(t.name)}</option>`).join("")}
+    </select>
+    <label style="display:flex;align-items:center;gap:8px;margin:8px 0;font-size:13.5px"><input type="checkbox" id="bulk-video" ${b.video ? "checked" : ""} style="width:auto;margin:0"/> Attach the review video to each text</label>
+    <div class="section-label" style="margin:8px 0 6px" id="bulk-count">${esc(bulkCountText())}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <button class="tiny-btn" id="bulk-all">Select all ${eligible.length}</button>
+      <button class="tiny-btn" id="bulk-none">Clear</button>
+      <button class="tiny-btn" id="bulk-noreviews">Only those with no reviews</button>
+      <button class="tiny-btn" id="bulk-unsent">Only those not sent this text yet</button>
+      <button class="tiny-btn" id="bulk-shown">Select everyone shown</button>
+    </div>
+    <input id="bulk-filter" class="search-input" type="search" placeholder="Filter by name, email or phone" value="${esc(b.filter)}" />
+    <div class="rcpt-list" id="bulk-list">${bulkListInnerHtml()}</div>
+    ${b.note ? `<p class="hint-text" style="color:#8C3A32;font-weight:600">${esc(b.note)}</p>` : ""}
+    <button class="tiny-btn approve" id="bulk-review" style="margin-top:8px" ${picked && tpl ? "" : "disabled"}>Review and send…</button>
+  </div>`;
+}
+const BULK_PAUSE_SECONDS = 6;
+function attachBulkHandlers() {
+  const b = state.bulk;
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+  const refreshList = () => {
+    const list = document.getElementById("bulk-list");
+    if (list) list.innerHTML = bulkListInnerHtml();
+    const c = document.getElementById("bulk-count");
+    if (c) c.textContent = bulkCountText();
+    const rv = document.getElementById("bulk-review");
+    if (rv) rv.disabled = !(bulkPickedMembers().length && bulkTemplate());
+  };
+  const setPicked = (members) => { b.picked = members.map((r) => r.id); b.note = ""; refreshList(); };
+  const tplSel = document.getElementById("bulk-tpl");
+  if (tplSel) tplSel.onchange = () => {
+    b.tplId = tplSel.value;
+    const t = bulkTemplate();
+    if (t) b.video = /VIDEO ATTACHED/i.test(t.name);
+    b.note = "";
+    paintAdmin();
+  };
+  const vid = document.getElementById("bulk-video");
+  if (vid) vid.onchange = () => { b.video = vid.checked; };
+  on("bulk-all", () => setPicked(state.adminRequests.filter(bulkEligible)));
+  on("bulk-none", () => setPicked([]));
+  on("bulk-noreviews", () => setPicked(state.adminRequests.filter((r) => bulkEligible(r) && !(r.reviewCount > 0))));
+  on("bulk-unsent", () => { const sent = bulkSentSet(b.tplId); setPicked(state.adminRequests.filter((r) => bulkEligible(r) && !sent.has(r.id))); });
+  on("bulk-shown", () => setPicked(bulkPeople()));
+  const f = document.getElementById("bulk-filter");
+  if (f) f.oninput = () => { b.filter = f.value; refreshList(); };
+  const list = document.getElementById("bulk-list");
+  if (list) list.onchange = (e) => {
+    const cb = e.target.closest("[data-bulk-pick]");
+    if (!cb) return;
+    const id = cb.dataset.bulkPick;
+    b.picked = b.picked.filter((x) => x !== id);
+    if (cb.checked) b.picked.push(id);
+    cb.closest(".rcpt-row").classList.toggle("picked", cb.checked);
+    const c = document.getElementById("bulk-count");
+    if (c) c.textContent = bulkCountText();
+    const rv = document.getElementById("bulk-review");
+    if (rv) rv.disabled = !(bulkPickedMembers().length && bulkTemplate());
+  };
+  on("bulk-review", () => {
+    if (!bulkTemplate()) { b.note = "Choose the text to send first."; paintAdmin(); return; }
+    if (!bulkPickedMembers().length) { b.note = "Pick at least one person."; paintAdmin(); return; }
+    b.stage = "confirm"; b.batch = 0; b.note = ""; paintAdmin();
+  });
+  on("bulk-back", () => { b.stage = "pick"; b.note = ""; paintAdmin(); });
+  on("bulk-reset", () => { state.bulk = { tplId: b.tplId, video: b.video, picked: [], filter: "", stage: "pick", batch: 0, note: "" }; paintAdmin(); });
+  const launch = document.getElementById("bulk-launch");
+  if (launch) launch.onclick = () => {
+    const tpl = bulkTemplate();
+    const items = bulkBatchItems(b.batch);
+    if (!tpl || !items.length) return false;
+    const n = items.length;
+    // keepalive lets the log request finish even though the page is handing off to Shortcuts.
+    fetch("/api/admin/texts/bulk", {
+      method: "POST", keepalive: true, credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ templateId: tpl.id, items: items.map((it) => ({ requestId: it.member.id, body: it.body })) }),
+    }).then((r) => r.json()).then((j) => {
+      (j.loggedIds || []).forEach((id) => { const row = state.adminRequests.find((x) => x.id === id); if (row) { row.textCount = (row.textCount || 0) + 1; row.lastTextedAt = new Date().toISOString(); } });
+      loadAdminTexts(true);
+      if (j.skipped && j.skipped.length) { b.note = `The server skipped ${j.skipped.length} (${j.skipped.map((s) => `${s.name}: ${s.why}`).join("; ")}). They weren't logged, but the Shortcut may still text them.`; paintAdmin(); }
+    }).catch(() => { b.note = "Handed to Shortcuts, but the log didn't save. Check \"Texts you've sent\" below."; paintAdmin(); });
+    const totalBatches = Math.ceil(bulkPickedMembers().length / BULK_BATCH);
+    b.batch += 1;
+    b.note = `Batch ${b.batch} of ${totalBatches} handed to Shortcuts (${n} ${n === 1 ? "text" : "texts"}, about ${BULK_PAUSE_SECONDS} seconds apart). Wait for it to finish before the next one.`;
+    if (b.batch >= totalBatches) b.stage = "done";
+    setTimeout(paintAdmin, 400);
+    // Let the link's default action open Shortcuts.
+  };
+}
+
 function textsSection() {
   if (!state.adminTexts) return `<p class="hint-text">Loading texts…</p>`;
   const { templates = [], log = [] } = state.adminTexts;
@@ -3171,7 +3366,8 @@ function textsSection() {
       </div>
     </div>`;
   return `
-    <p class="hint-text">The site doesn't send texts. These are ready-made texts for you to send from your own phone. <code>{{first_name}}</code> is replaced with each member's first name. To text someone, open them under Members.</p>
+    <p class="hint-text">The site doesn't send texts itself. These are ready-made texts that go out from your own phone or Mac. <code>{{first_name}}</code> is replaced with each member's first name. To text one person, open them under Members. To text several, use the box below.</p>
+    ${bulkSectionHtml()}
     <div class="section-label" style="margin:12px 0 8px">READY-MADE TEXTS (${templates.length})</div>
     ${templates.map(tplCard).join("")}
     ${tplCard({ id: "new", name: "", body: "" })}
@@ -3872,6 +4068,7 @@ function paintAdmin() {
   attachEmailHandlers();
   attachAlertHandlers();
   attachTextHandlers();
+  attachBulkHandlers();
 }
 
 
