@@ -323,6 +323,8 @@ const state = {
   textPick: {},        // memberId -> chosen text template id ("" = type my own)
   textDraft: {},       // memberId -> the wording in their text box (edited or filled)
   textNote: {},        // memberId -> one-line confirmation under their text box
+  adminTraffic: null,  // Admin → Traffic report
+  trafficDays: 30,
   bulk: { tplId: "", video: false, picked: [], filter: "", stage: "pick", batch: 0, note: "" }, // Texts tab: send to several people
   textTplArmed: null,  // template id waiting for a second "Delete" tap
   adminFilter: "",     // name/email filter in the member list
@@ -486,7 +488,66 @@ const root = document.getElementById("app");
 
 // ---------- init ----------
 
+// ---- Where visitors come from (Admin → Traffic) ----------------------------------------------
+// Works out how this browser arrived: ?utm_source=…, Facebook's ?fbclid=…, or the referring site.
+// The first non-direct source is remembered for 30 days so a sign-up a few days after an ad click
+// still counts for the ad. One anonymous ping per browser per day; nothing personal is sent.
+const SRC_KEY = "cc_src";
+const SRC_DAYS = 30;
+function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+function sourceOfThisVisit() {
+  const p = new URLSearchParams(window.location.search);
+  const tag = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 40);
+  if (p.get("utm_source")) return { source: tag(p.get("utm_source")), campaign: tag(p.get("utm_campaign")) };
+  if (p.get("fbclid")) return { source: "facebook", campaign: tag(p.get("utm_campaign")) };
+  let host = "";
+  try { host = document.referrer ? new URL(document.referrer).hostname.replace(/^www\./, "") : ""; } catch {}
+  if (host && !/crnacritics\.com$/.test(host)) {
+    if (/(^|\.)(facebook\.com|fb\.com|fb\.me)$/.test(host) || host === "l.facebook.com" || host === "lm.facebook.com") return { source: "facebook", campaign: "" };
+    if (/instagram\.com$/.test(host)) return { source: "instagram", campaign: "" };
+    if (/google\./.test(host)) return { source: "google", campaign: "" };
+    return { source: tag(host), campaign: "" };
+  }
+  if (/CRNACriticsApp/.test(navigator.userAgent)) return { source: "app", campaign: "" };
+  return { source: "direct", campaign: "" };
+}
+// The source a sign-up should be credited to: the remembered first outside source, else this visit's.
+function signupSource() {
+  try {
+    const saved = JSON.parse(lsGet(SRC_KEY) || "null");
+    if (saved && saved.source && Date.now() - saved.at < SRC_DAYS * 86400000) return { source: saved.source, campaign: saved.campaign || "" };
+  } catch {}
+  return sourceOfThisVisit();
+}
+function trackVisit() {
+  try {
+    const now = sourceOfThisVisit();
+    if (now.source !== "direct") {
+      let saved = null;
+      try { saved = JSON.parse(lsGet(SRC_KEY) || "null"); } catch {}
+      const expired = !saved || Date.now() - saved.at > SRC_DAYS * 86400000;
+      if (expired || saved.source === "direct") lsSet(SRC_KEY, JSON.stringify({ ...now, at: Date.now() }));
+    }
+    let vid = lsGet("cc_vid");
+    if (!vid) { vid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()); lsSet("cc_vid", vid); }
+    const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+    if (lsGet("cc_ping") !== day) {
+      fetch("/api/track/visit", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ vid, ...now }) })
+        .then(() => lsSet("cc_ping", day)).catch(() => {});
+    }
+    // Tidy the address bar so shared links don't carry the ad's tracking bits.
+    const p = new URLSearchParams(window.location.search);
+    if (p.has("fbclid") || [...p.keys()].some((k) => k.startsWith("utm_"))) {
+      ["fbclid", "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "utm_id"].forEach((k) => p.delete(k));
+      const qs = p.toString();
+      window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash);
+    }
+  } catch {}
+}
+
 async function init() {
+  trackVisit();
   try {
     const data = await api("/api/me");
     state.user = data.user;
@@ -1532,7 +1593,7 @@ function attachSrnaFormHandlers() {
     if (body.instructorEmail.toLowerCase() === body.email.toLowerCase()) { errEl.textContent = "The program contact has to be someone other than you."; return; }
     errEl.textContent = "";
     try {
-      await api("/api/request-access-srna", { method: "POST", body });
+      await api("/api/request-access-srna", { method: "POST", body: { ...body, ...signupSource() } });
       document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Submitted.</p><p class="hint-text">We emailed ${esc(body.instructorName)} at ${esc(body.instructorEmail)} to confirm you're enrolled. As soon as they confirm, we'll email your sign-in link to ${esc(body.email)}.</p></div>`;
     } catch (e) {
       const code = e.data && e.data.error;
@@ -1640,7 +1701,7 @@ function attachGateHandlers() {
       if (!acceptedTerms) { errEl.textContent = "You have to accept the Terms of Use & Member Agreement to request access."; return; }
       errEl.textContent = "";
       try {
-        await api("/api/request-access", { method: "POST", body: { firstName, lastName, nbcrnaNumber, email, phone, declaredRole, acceptedTerms, termsVersion, smsConsent } });
+        await api("/api/request-access", { method: "POST", body: { firstName, lastName, nbcrnaNumber, email, phone, declaredRole, acceptedTerms, termsVersion, smsConsent, ...signupSource() } });
         const ro = pickedTier() === "readonly";
         document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Submitted.</p><p class="hint-text">We check your first and last name and NBCRNA number against the NBCRNA credential record. You'll get an email once you're approved${ro ? " &mdash; for read-only access, as you chose above" : ""}.</p></div>`;
       } catch (e) {
@@ -3352,6 +3413,55 @@ function attachBulkHandlers() {
   };
 }
 
+// ---- Admin → Traffic: visits vs. sign-ups by where people came from ---------------------------
+async function loadAdminTraffic(force) {
+  if (state.adminTraffic && !force) return;
+  try { state.adminTraffic = await api(`/api/admin/traffic?days=${state.trafficDays}`); }
+  catch { state.adminTraffic = { error: true, totals: [], days: [] }; }
+  paintAdmin();
+}
+function trafficLabel(k) {
+  const [src, camp] = String(k).split(" · ");
+  const names = { facebook: "Facebook", instagram: "Instagram", google: "Google", direct: "Direct / typed in", app: "Mobile app" };
+  return (names[src] || src) + (camp ? ` · ${camp}` : "");
+}
+function trafficRate(t) { return t.visits ? `${((t.requests / t.visits) * 100).toFixed(1)}%` : "—"; }
+function trafficSection() {
+  const d = state.adminTraffic;
+  if (!d) return `<p class="hint-text">Loading traffic…</p>`;
+  if (d.error) return `<p class="hint-text">Couldn't load traffic. Try Refresh.</p>`;
+  const fb = d.totals.filter((t) => /^facebook/.test(t.source));
+  const sum = (arr, f) => arr.reduce((n, t) => n + t[f], 0);
+  const fbT = { visits: sum(fb, "visits"), requests: sum(fb, "requests"), approved: sum(fb, "approved") };
+  const row = (t) => `<tr><td>${esc(trafficLabel(t.source))}</td><td style="text-align:right">${t.visits}</td><td style="text-align:right">${t.requests}</td><td style="text-align:right">${t.approved}</td><td style="text-align:right">${trafficRate(t)}</td></tr>`;
+  const head = `<tr><th style="text-align:left">Came from</th><th style="text-align:right">Visitors</th><th style="text-align:right">Requested</th><th style="text-align:right">Approved</th><th style="text-align:right">Sign-up rate</th></tr>`;
+  return `
+    <p class="hint-text">Each browser counts once a day. "Requested" is someone who filled in First time here; "Approved" is how many of those are members now. A sign-up is credited to where that person first came from in the last 30 days. Your own admin browser isn't counted.${d.trackingStarted ? ` Tracking started ${esc(d.trackingStarted)}.` : " No visits recorded yet."}</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+      ${[7, 30, 90].map((n) => `<button class="tiny-btn${state.trafficDays === n ? " active-btn" : ""}" data-traffic-days="${n}">Last ${n} days</button>`).join("")}
+    </div>
+    <div class="card" style="border-color:#1F5C57">
+      <div class="section-label">FACEBOOK ADS · LAST ${state.trafficDays} DAYS</div>
+      <p style="margin:6px 0;font-size:15px"><strong>${fbT.visits}</strong> visitors → <strong>${fbT.requests}</strong> requested membership → <strong>${fbT.approved}</strong> approved${fbT.visits ? ` &nbsp;(${trafficRate(fbT)} signed up)` : ""}</p>
+      <p class="hint-text" style="margin:0">Compare with "Landing page views" and "Amount spent" in Ads Manager to get cost per visitor and per sign-up.</p>
+    </div>
+    <div class="card">
+      <div class="section-label">ALL SOURCES · LAST ${state.trafficDays} DAYS</div>
+      ${d.totals.length ? `<table class="stats-table" style="width:100%">${head}${d.totals.map(row).join("")}</table>` : `<p class="hint-text">Nothing yet.</p>`}
+    </div>
+    <div class="card">
+      <div class="section-label">BY DAY</div>
+      ${d.days.length ? d.days.map((day) => `
+        <div style="margin:8px 0 4px;font-weight:700">${esc(day.day)}</div>
+        <table class="stats-table" style="width:100%">${head}${Object.entries(day.sources).sort((a, b) => b[1].visits - a[1].visits).map(([k, t]) => row({ source: k, ...t })).join("")}</table>`).join("") : `<p class="hint-text">Nothing yet.</p>`}
+    </div>`;
+}
+function attachTrafficHandlers() {
+  document.querySelectorAll("[data-traffic-days]").forEach((b) => {
+    b.onclick = () => { state.trafficDays = Number(b.dataset.trafficDays); state.adminTraffic = null; paintAdmin(); loadAdminTraffic(true); };
+  });
+}
+
 function textsSection() {
   if (!state.adminTexts) return `<p class="hint-text">Loading texts…</p>`;
   const { templates = [], log = [] } = state.adminTexts;
@@ -3973,7 +4083,7 @@ function paintAdmin() {
     .sort(byLastName);
   const badPhoneCount = state.adminRequests.filter((r) => r.status !== "pending" && r.role !== "srna" && r.phone_bad_at).length;
 
-  const tab = ["members", "srnas", "reviews", "email", "texts", "names", "alerts"].includes(state.adminTab) ? state.adminTab : "members";
+  const tab = ["members", "srnas", "reviews", "email", "texts", "traffic", "names", "alerts"].includes(state.adminTab) ? state.adminTab : "members";
   const openFlags = (state.adminFlags || []).filter((f) => f.status === "open").length + msgAlertConvIds().length;
   const dupeCount = state.adminNames ? duplicateCandidates().length : 0;
   const membersSection = `
@@ -4014,10 +4124,11 @@ function paintAdmin() {
       <button class="nav-btn${tab === "reviews" ? " active" : ""}" data-admin-tab="reviews">Reviews${state.adminReviews ? ` <span class="tab-badge">${state.adminReviews.length}</span>` : ""}</button>
       <button class="nav-btn${tab === "email" ? " active" : ""}" data-admin-tab="email">Email</button>
       <button class="nav-btn${tab === "texts" ? " active" : ""}" data-admin-tab="texts">Texts</button>
+      <button class="nav-btn${tab === "traffic" ? " active" : ""}" data-admin-tab="traffic">Traffic</button>
       <button class="nav-btn${tab === "names" ? " active" : ""}" data-admin-tab="names">Names${dupeCount ? ` <span class="tab-badge">${dupeCount}</span>` : ""}</button>
       <button class="nav-btn${tab === "alerts" ? " active" : ""}" data-admin-tab="alerts">Alerts${openFlags ? ` <span class="tab-badge alert-badge">${openFlags}</span>` : ""}</button>
     </div>
-    ${tab === "members" ? membersSection : tab === "srnas" ? srnaSection(srnaRows) : tab === "reviews" ? adminReviewsSection() : tab === "email" ? emailSection() : tab === "texts" ? textsSection() : tab === "alerts" ? alertsSection() : namesSection}`;
+    ${tab === "members" ? membersSection : tab === "srnas" ? srnaSection(srnaRows) : tab === "reviews" ? adminReviewsSection() : tab === "email" ? emailSection() : tab === "texts" ? textsSection() : tab === "traffic" ? trafficSection() : tab === "alerts" ? alertsSection() : namesSection}`;
 
   document.querySelectorAll("[data-admin-tab]").forEach((btn) => {
     btn.onclick = () => {
@@ -4028,6 +4139,7 @@ function paintAdmin() {
       if (state.adminTab === "reviews") loadAdminReviews();
       if (state.adminTab === "email") loadEmailData();
       if (state.adminTab === "texts") loadAdminTexts();
+      if (state.adminTab === "traffic") loadAdminTraffic();
       if (state.adminTab === "alerts") loadAdminFlags();
     };
   });
@@ -4037,6 +4149,7 @@ function paintAdmin() {
     if (state.adminTab === "reviews") loadAdminReviews(true);
     if (state.adminTab === "email") loadEmailData(true);
     if (state.adminTab === "alerts") loadAdminFlags(true);
+    if (state.adminTab === "traffic") loadAdminTraffic(true);
     loadAdminTexts(true);
     renderAdmin();
   };
@@ -4069,6 +4182,7 @@ function paintAdmin() {
   attachAlertHandlers();
   attachTextHandlers();
   attachBulkHandlers();
+  attachTrafficHandlers();
 }
 
 

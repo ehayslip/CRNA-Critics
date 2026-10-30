@@ -119,6 +119,70 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// ---------- traffic: where visitors and sign-ups come from ----------
+// The page sends one ping per browser per day with the source it worked out (utm_source, a
+// Facebook click id, or the referring site). Eric's own admin browser is never counted.
+function cleanTag(v, max) {
+  return String(v || "").toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, max);
+}
+function easternDay(d = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d); // YYYY-MM-DD
+}
+function isAdminRequest(req) {
+  const p = verify(req.cookies.admin_session);
+  return !!(p && p.role === "admin");
+}
+app.post("/api/track/visit", (req, res) => {
+  const b = req.body || {};
+  const vid = String(b.vid || "").replace(/[^A-Za-z0-9-]/g, "").slice(0, 64);
+  const source = cleanTag(b.source, 40) || "direct";
+  const campaign = cleanTag(b.campaign, 60);
+  if (vid.length < 8 || isAdminRequest(req)) return res.json({ ok: true });
+  db.prepare("INSERT OR IGNORE INTO traffic_visits (visitor_id, day, source, campaign, created_at) VALUES (?,?,?,?,?)")
+    .run(vid, easternDay(), source, campaign, new Date().toISOString());
+  res.json({ ok: true });
+});
+// First touch wins: a member who re-applies keeps the source they first signed up with.
+function stampSignupSource(email, body) {
+  const source = cleanTag(body?.source, 40);
+  if (!source) return;
+  db.prepare("UPDATE access_requests SET signup_source = COALESCE(signup_source, ?), signup_campaign = COALESCE(signup_campaign, ?) WHERE email = ?")
+    .run(source, cleanTag(body?.campaign, 60) || null, email);
+}
+
+app.get("/api/admin/traffic", requireAdmin, (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
+  const sinceDate = new Date(Date.now() - (days - 1) * 86400000);
+  const since = easternDay(sinceDate);
+  const tracked = db.prepare("SELECT MIN(day) AS d FROM traffic_visits").get().d;
+  const visits = db.prepare("SELECT day, source, campaign, COUNT(*) AS n FROM traffic_visits WHERE day >= ? GROUP BY day, source, campaign").all(since);
+  const reqs = db.prepare("SELECT requested_at, status, role, signup_source, signup_campaign FROM access_requests WHERE requested_at >= ?")
+    .all(new Date(sinceDate.getTime() - 86400000).toISOString());
+  const key = (s, c) => `${s}${c ? ` · ${c}` : ""}`;
+  const totals = {};
+  const byDay = {};
+  const bump = (day, k, field, n = 1) => {
+    totals[k] = totals[k] || { source: k, visits: 0, requests: 0, approved: 0 };
+    totals[k][field] += n;
+    byDay[day] = byDay[day] || {};
+    byDay[day][k] = byDay[day][k] || { visits: 0, requests: 0, approved: 0 };
+    byDay[day][k][field] += n;
+  };
+  for (const v of visits) bump(v.day, key(v.source, v.campaign), "visits", v.n);
+  for (const r of reqs) {
+    const day = easternDay(new Date(r.requested_at));
+    if (day < since) continue;
+    const k = r.signup_source ? key(r.signup_source, r.signup_campaign) : "unknown (no tracking)";
+    bump(day, k, "requests");
+    if (r.status === "approved") bump(day, k, "approved");
+  }
+  res.json({
+    since, trackingStarted: tracked || null,
+    totals: Object.values(totals).sort((a, b) => b.visits - a.visits || b.requests - a.requests),
+    days: Object.keys(byDay).sort().reverse().map((day) => ({ day, sources: byDay[day] })),
+  });
+});
+
 // ---------- access requests ----------
 
 app.post("/api/request-access", async (req, res) => {
@@ -154,6 +218,7 @@ app.post("/api/request-access", async (req, res) => {
       "INSERT INTO access_requests (id, name, nbcrna_number, email, phone, status, requested_at, terms_version, terms_accepted_at, terms_ip, terms_user_agent, sms_consent, role, declared_role, attested_at) VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,?,?,?,?)"
     ).run(crypto.randomUUID(), name, nbcrnaNumber, email, phone, now, termsV, now, termsIp, termsUa, sms, role, declaredRole, now);
   }
+  stampSignupSource(email, req.body);
   const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
 
   res.json({ ok: true });
@@ -572,6 +637,7 @@ app.post("/api/request-access-srna", async (req, res) => {
       "INSERT INTO access_requests (id, name, nbcrna_number, email, phone, status, requested_at, terms_version, terms_accepted_at, terms_ip, terms_user_agent, sms_consent, role, srna_school, srna_program, srna_grad_year, srna_grad_month, srna_expires_at, instructor_name, instructor_email) VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,0,'srna',?,?,?,?,?,?,?)"
     ).run(crypto.randomUUID(), name, "SRNA", email, String(phone).slice(0, 40), now, termsV, now, termsIp, termsUa, school, program, gradYear, gradMonth, expiresAt, instructorName, instructorEmail);
   }
+  stampSignupSource(email, req.body);
   const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
   res.json({ ok: true });
   try {

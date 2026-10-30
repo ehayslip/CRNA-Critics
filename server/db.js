@@ -472,4 +472,21 @@ if (!db.prepare("SELECT 1 FROM kv WHERE key = 'phone_flags_2026_10_17'").get()) 
   db.prepare("INSERT INTO kv (key, value) VALUES ('phone_flags_2026_10_17', ?)").run(now);
 }
 
+// Traffic (Oct 30, 2026): one row per anonymous browser per Eastern day, with where it came from
+// (facebook, a utm_source, or a referring site). No IP, no name: visitor_id is a random string the
+// browser makes for itself. Sign-ups carry the source the browser first arrived with.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS traffic_visits (
+    visitor_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    source TEXT NOT NULL,
+    campaign TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (visitor_id, day)
+  );
+  CREATE INDEX IF NOT EXISTS idx_traffic_day ON traffic_visits (day);
+`);
+addColumnIfMissing("access_requests", "signup_source", "TEXT");   // e.g. 'facebook', 'direct', 'google.com'
+addColumnIfMissing("access_requests", "signup_campaign", "TEXT"); // utm_campaign when there was one
+
 module.exports = db;
