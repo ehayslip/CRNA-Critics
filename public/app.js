@@ -2949,6 +2949,15 @@ function smsHref(phone, body) {
   const sep = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) ? "&" : "?";
   return `sms:${num}${body ? `${sep}body=${encodeURIComponent(body)}` : ""}`;
 }
+// "Text with video": hands the number and the wording to an iPhone/Mac Shortcut named
+// VIDEO_SHORTCUT, which attaches the review clip and sends it from Eric's own Messages.
+// Shortcut input is one text: phone, then "|||", then the message.
+const VIDEO_SHORTCUT = "CRNA video text";
+function isAppleDevice() { return /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent); }
+function videoTextHref(phone, body) {
+  const input = `${smsNumber(phone)}|||${body || ""}`;
+  return `shortcuts://run-shortcut?name=${encodeURIComponent(VIDEO_SHORTCUT)}&input=text&text=${encodeURIComponent(input)}`;
+}
 function textsFor(id) {
   return ((state.adminTexts && state.adminTexts.log) || []).filter((t) => t.request_id === id);
 }
@@ -3006,10 +3015,11 @@ function memberTextBoxHtml(r) {
       <textarea class="text-body" data-text-body="${r.id}" rows="7" placeholder="Type your text…">${esc(textDraftFor(r))}</textarea>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">
         <a class="tiny-btn text-btn" data-text-open="${r.id}" href="${esc(smsHref(r.phone, textDraftFor(r)))}">💬 Open in Messages</a>
+        ${isAppleDevice() ? `<a class="tiny-btn text-btn" data-text-video="${r.id}" href="${esc(videoTextHref(r.phone, textDraftFor(r)))}">🎬 Text with video</a>` : ""}
         <button type="button" class="tiny-btn" data-text-copy="${r.id}">Copy text</button>
         <button type="button" class="tiny-btn" data-text-log="${r.id}">✓ Log as sent</button>
       </div>
-      <p class="hint-text" style="font-size:11px">"Open in Messages" fills in the text and logs it for you. If you copy and paste instead, tap "Log as sent" after you send it.</p>
+      <p class="hint-text" style="font-size:11px">"Open in Messages" fills in the text and logs it for you. ${isAppleDevice() ? `"Text with video" runs your "${esc(VIDEO_SHORTCUT)}" Shortcut, which attaches the review clip and sends the text above. ` : ""}If you copy and paste instead, tap "Log as sent" after you send it.</p>
       ${note ? `<p class="hint-text" style="color:#1F5C57;font-weight:600">${esc(note)}</p>` : ""}
     </div>`;
 }
@@ -3046,6 +3056,19 @@ function attachTextHandlers() {
       const r = member(id);
       const a = document.querySelector(`[data-text-open="${id}"]`);
       if (a && r) a.href = smsHref(r.phone, ta.value);
+      const v = document.querySelector(`[data-text-video="${id}"]`);
+      if (v && r) v.href = videoTextHref(r.phone, ta.value);
+    };
+  });
+  document.querySelectorAll("[data-text-video]").forEach((a) => {
+    a.onclick = () => {
+      const r = member(a.dataset.textVideo);
+      const body = (document.querySelector(`[data-text-body="${r.id}"]`) || {}).value || "";
+      if (!body.trim()) { state.textNote[r.id] = "Type or pick a text first."; paintAdmin(); return false; }
+      a.href = videoTextHref(r.phone, body);
+      state.textNote[r.id] = `Sent to your "${VIDEO_SHORTCUT}" Shortcut and logged ${whenSent(new Date())}. If nothing happened, the Shortcut isn't set up on this device yet.`;
+      logText(r, body.trim(), true).catch(() => { state.textNote[r.id] = "The Shortcut ran, but the log didn't save. Tap \"Log as sent\" once you've sent it."; paintAdmin(); });
+      // Let the link's default action open Shortcuts.
     };
   });
   document.querySelectorAll("[data-text-open]").forEach((a) => {
