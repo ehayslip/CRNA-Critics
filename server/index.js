@@ -1032,51 +1032,10 @@ app.post("/api/admin/reject/:id", adminPage, express.urlencoded({ extended: fals
 // then creates a password and signs in with email + password from there on.
 // Emailed links remain available as a "forgot password" fallback.
 
-// What a newly approved practicing CRNA gets: the sign-in button first, then Eric's 18-second
-// video and the ask for a review. Editable under Email → Templates (name below); if it's ever
-// deleted, this built-in copy is used. Read-only (staffing-side) members and SRNAs don't get it —
-// they can't post reviews, so they keep their own welcome wording.
-const WELCOME_TEMPLATE = {
-  name: "Welcome — verified, sign in + video",
-  category: "Onboarding",
-  subject: "You're verified on CRNA Critics",
-  body: `Hi {{first_name}},
-
-You're approved as a verified CRNA on CRNA Critics.
-
-🔒 You're anonymous. Your name is never shown on the site — every review you post appears as "Anonymous CRNA," so no one will know who you are.
-
-Use the button below to sign in for the first time and create your password. After that, you'll sign in with your email and password — no more links.
-
-{{login_link}}
-
-This link expires in 48 hours. If it expires, use "Forgot password" on the sign-in screen to get a new one.
-
-Once you're in, here's a quick 18-second ask from me:
-
-{{video}}
-
-The site only works if CRNAs leave reviews. If every one of us rated our current assignment — good or bad — the next CRNA headed there would know exactly what to expect. It takes 3 to 5 minutes.
-
-— Eric Hayslip, CRNA, CRNA Critics`,
-};
-(function ensureWelcomeTemplate() {
-  if (db.prepare("SELECT 1 FROM email_templates WHERE name = ?").get(WELCOME_TEMPLATE.name)) return;
-  const now = new Date().toISOString();
-  db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
-    .run(crypto.randomUUID(), WELCOME_TEMPLATE.name, WELCOME_TEMPLATE.category, WELCOME_TEMPLATE.subject, WELCOME_TEMPLATE.body, now, now);
-})();
-
-// opts.plain: skip the video/review ask (used when Eric re-sends a sign-in link by hand).
-function sendWelcomeEmail(row, opts = {}) {
+function sendWelcomeEmail(row) {
   if (row.role === "srna") return sendSrnaWelcome(row);
   const loginToken = sign({ email: row.email, purpose: "login" }, LINK_SECONDS);
   const loginUrl = `${BASE_URL}/api/auth/verify?token=${loginToken}`;
-  if ((row.role || "crna") === "crna" && !opts.plain) {
-    const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(WELCOME_TEMPLATE.name) || WELCOME_TEMPLATE;
-    const ctx = { name: row.name, email: row.email, reviewCount: 0, baseUrl: BASE_URL, loginUrl };
-    return sendEmail({ to: row.email, replyTo: REPLY_TO, subject: fillTokens(tpl.subject, ctx), html: plainMailHtml({ body: tpl.body, ctx }) });
-  }
   return sendEmail({
     to: row.email,
     replyTo: REPLY_TO,
@@ -1159,6 +1118,10 @@ function recordLoginFailure(email) {
   loginFailures.set(email, f);
 }
 
+function markFirstLogin(email) {
+  db.prepare("UPDATE access_requests SET first_login_at = ? WHERE email = ? AND first_login_at IS NULL").run(new Date().toISOString(), email);
+}
+
 app.post("/api/auth/login", (req, res) => {
   const email = String(req.body?.email || "").trim().toLowerCase();
   const password = String(req.body?.password || "");
@@ -1174,6 +1137,7 @@ app.post("/api/auth/login", (req, res) => {
     return res.status(401).json({ error: "bad_password" });
   }
   loginFailures.delete(email);
+  markFirstLogin(row.email);
   const session = sign({ email: row.email }, SESSION_SECONDS);
   res.cookie("session", session, cookieOpts(SESSION_SECONDS));
   res.json({ ok: true });
@@ -1229,6 +1193,7 @@ app.get("/api/auth/verify", (req, res) => {
   if (!row || row.status !== "approved") {
     return res.status(403).send(row && row.status === "expired" ? "Your student access has expired. Sign up as a CRNA at crnacritics.com with your NBCRNA credentials." : "This account is not an approved CRNA.");
   }
+  markFirstLogin(row.email);
   const session = sign({ email: row.email }, SESSION_SECONDS);
   res.cookie("session", session, cookieOpts(SESSION_SECONDS));
   // Arriving via an emailed link always offers to (re)set the password.
@@ -1547,7 +1512,7 @@ app.post("/api/admin/requests/:id/send-link", requireAdmin, async (req, res) => 
   if (!row) return res.status(404).json({ error: "not_found" });
   if (row.status !== "approved") return res.status(400).json({ error: "not_approved" });
   try {
-    await (kind === "reset" ? sendResetEmail(row) : sendWelcomeEmail(row, { plain: true }));
+    await (kind === "reset" ? sendResetEmail(row) : sendWelcomeEmail(row));
   } catch (e) {
     console.error(`Failed to send ${kind} link to ${row.email}:`, e.message);
     return res.status(502).json({ error: "send_failed" });
@@ -1914,9 +1879,11 @@ app.post("/api/admin/email/send", requireAdmin, (req, res) => {
 // ---------- automatic nudges (built into the site, no admin login needed) ----------
 // Two programs, both checked hourly during the day (Eastern) and both sent as ordinary
 // campaigns through runCampaign(), so they show in the Sent pane and honour unsubscribe:
-//   review   — approved members with NO review yet get the "Ask for a review" template
-//              (first one NUDGE_FIRST_AFTER_DAYS after approval, then every NUDGE_EVERY_DAYS
-//              days, max NUDGE_MAX; stops the moment they post).
+//   review   — full-access members with NO review yet get the "Ask for a review (video)"
+//              template (Eric's 18-second clip as a tappable card): first one
+//              NUDGE_FIRST_AFTER_DAYS after their FIRST SIGN-IN, then every NUDGE_EVERY_DAYS days,
+//              max NUDGE_MAX (4); stops the moment they post. Read-only members never get it.
+//              Changed Oct 31, 2026 (was: "Ask for a review", counted from approval).
 //   feedback — members who HAVE posted but have not filled in the site feedback form get
 //              the feedback template, same spacing. TURNED OFF Oct 30, 2026 (Eric's call);
 //              set FEEDBACK_NUDGES=on in Railway to bring it back.
@@ -1944,11 +1911,11 @@ function latest(...isoDates) {
 const NUDGE_PROGRAMS = {
   review: {
     label: "Ask for a review",
-    templateName: process.env.NUDGE_TEMPLATE_NAME || "Ask for a review",
+    templateName: "Ask for a review (video)",
     countCol: "nudge_count",
     lastCol: "last_nudged_at",
-    // Eligible: approved, no review yet. Anchor = when they were approved.
-    anchor: (r) => (reviewCountFor(r.email) > 0 ? null : (r.decided_at || r.requested_at)),
+    // Eligible: approved, signed in at least once, no review yet. Anchor = first sign-in.
+    anchor: (r) => (reviewCountFor(r.email) > 0 ? null : r.first_login_at),
     lastSent: (r) => r.last_nudged_at,
   },
   feedback: {
@@ -2000,6 +1967,56 @@ function runNudgeProgram(key) {
   console.log(`Nudges (${key}): sending "${tpl.name}" to ${due.length} member(s).`);
   runCampaign(campaignId, tpl.subject, tpl.body).catch((e) => {
     console.error(`Nudge campaign (${key}) crashed:`, e.message);
+    db.prepare("UPDATE email_campaigns SET status='done', last_error=?, finished_at=? WHERE id=?")
+      .run(String(e.message || "crashed").slice(0, 300), new Date().toISOString(), campaignId);
+  });
+}
+
+// Read-only members (staffing-side CRNAs) can't post reviews, so instead of the review series they
+// get one thank-you the first time they sign in. Editable under Email → Templates.
+const THANKS_TEMPLATE = {
+  name: "Thank you for signing up (read-only)",
+  category: "Onboarding",
+  subject: "Thanks for joining CRNA Critics, {{first_name}}",
+  body: `Hi {{first_name}},
+
+This is Eric Hayslip, CRNA. Thank you for signing up for CRNA Critics.
+
+Your account has read-only access: you can search and read every review on the site. Posting reviews and messaging reviewers are for CRNAs with nothing at stake in the ratings, which is the rule on the sign-up form and in Section 1 of the Terms. It's what keeps the reviews honest.
+
+If your situation changes, or you have a question or an idea for the site, just reply to this email. I read every one.
+
+{{cta}}
+
+— Eric Hayslip, CRNA, CRNA Critics`,
+};
+(function ensureThanksTemplate() {
+  if (db.prepare("SELECT 1 FROM email_templates WHERE name = ?").get(THANKS_TEMPLATE.name)) return;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), THANKS_TEMPLATE.name, THANKS_TEMPLATE.category, THANKS_TEMPLATE.subject, THANKS_TEMPLATE.body, now, now);
+})();
+// Clean-up: an unedited "Welcome — verified, sign in + video" template was added by mistake on Oct 31.
+db.prepare("DELETE FROM email_templates WHERE name = 'Welcome — verified, sign in + video' AND created_at = updated_at").run();
+
+function runReadOnlyThanks() {
+  const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(THANKS_TEMPLATE.name) || THANKS_TEMPLATE;
+  const due = db.prepare(
+    "SELECT * FROM access_requests WHERE status = 'approved' AND role = 'crna_readonly' AND first_login_at IS NOT NULL AND thanks_sent_at IS NULL AND COALESCE(bulk_unsubscribed, 0) = 0"
+  ).all();
+  if (due.length === 0) return;
+  const campaignId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO email_campaigns (id, subject, body, template_name, status, total, created_at) VALUES (?,?,?,?, 'sending', ?, ?)")
+    .run(campaignId, tpl.subject, tpl.body, `Auto — ${tpl.name}`, due.length, now);
+  const insert = db.prepare("INSERT INTO email_campaign_recipients (id, campaign_id, email, name, status) VALUES (?,?,?,?, 'queued')");
+  const stamp = db.prepare("UPDATE access_requests SET thanks_sent_at = ? WHERE id = ?");
+  db.transaction(() => {
+    due.forEach((r) => { insert.run(crypto.randomUUID(), campaignId, r.email, r.name); stamp.run(now, r.id); });
+  })();
+  console.log(`Thank-you (read-only): sending "${tpl.name}" to ${due.length} member(s).`);
+  runCampaign(campaignId, tpl.subject, tpl.body).catch((e) => {
+    console.error("Thank-you campaign crashed:", e.message);
     db.prepare("UPDATE email_campaigns SET status='done', last_error=?, finished_at=? WHERE id=?")
       .run(String(e.message || "crashed").slice(0, 300), new Date().toISOString(), campaignId);
   });
@@ -2153,6 +2170,7 @@ function runReviewNudges() {
   Object.keys(NUDGE_PROGRAMS).forEach((key) => {
     try { runNudgeProgram(key); } catch (e) { console.error(`Nudge program ${key} failed:`, e.message); }
   });
+  try { runReadOnlyThanks(); } catch (e) { console.error("Read-only thank-you failed:", e.message); }
   // One reminder email for private messages still unanswered after a few days (server/messages.js).
   messaging.runMessageReminders().catch((e) => console.error("Message reminders failed:", e.message));
 }

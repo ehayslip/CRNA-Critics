@@ -125,6 +125,10 @@ addColumnIfMissing("access_requests", "bulk_unsubscribed", "INTEGER NOT NULL DEF
 // Automatic "Ask for a review" nudges to approved members who haven't posted yet.
 addColumnIfMissing("access_requests", "nudge_count", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("access_requests", "last_nudged_at", "TEXT");
+// First time the member actually signed in (emailed link or password). The review-video emails
+// start counting from here, not from approval. thanks_sent_at: read-only members' one-time thank-you.
+addColumnIfMissing("access_requests", "first_login_at", "TEXT");
+addColumnIfMissing("access_requests", "thanks_sent_at", "TEXT");
 // Automatic site-feedback nudges after a member's first review, until they submit the form.
 addColumnIfMissing("access_requests", "feedback_nudge_count", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("access_requests", "last_feedback_nudged_at", "TEXT");
@@ -446,6 +450,16 @@ const STARTER_TEXTS = [
   },
 ];
 // Seed once (tracked in kv) so deleting every template doesn't bring the starters back.
+if (!db.prepare("SELECT 1 FROM kv WHERE key = 'first_login_backfill_2026_10_31'").get()) {
+  const now = new Date().toISOString();
+  // Anyone with a password has signed in before; use their approval date as a stand-in so the
+  // switch doesn't make them wait again (they were already on the old approval-based schedule).
+  db.prepare("UPDATE access_requests SET first_login_at = COALESCE(decided_at, requested_at) WHERE password_hash IS NOT NULL AND first_login_at IS NULL AND status = 'approved'").run();
+  // Read-only members who joined before today don't get a retroactive thank-you.
+  db.prepare("UPDATE access_requests SET thanks_sent_at = ? WHERE role = 'crna_readonly' AND thanks_sent_at IS NULL").run(now);
+  db.prepare("INSERT INTO kv (key, value) VALUES ('first_login_backfill_2026_10_31', ?)").run(now);
+}
+
 if (!db.prepare("SELECT 1 FROM kv WHERE key = 'text_templates_seeded'").get()) {
   const now = new Date().toISOString();
   const ins = db.prepare("INSERT INTO text_templates (id, name, body, sort, created_at, updated_at) VALUES (?,?,?,?,?,?)");
