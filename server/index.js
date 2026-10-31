@@ -19,6 +19,7 @@ const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE || "";
 const isProd = process.env.NODE_ENV === "production";
 const SESSION_SECONDS = 60 * 60 * 24 * 90; // members stay signed in for 90 days per device
+const SETUP_LINK_SECONDS = 60 * 60 * 24 * 7; // sign-in link in the "finish setting up" reminders
 const LINK_SECONDS = 60 * 60 * 48; // emailed sign-in links (welcome + forgot-password) are good for 48 hours
 const FEEDBACK_LINK_SECONDS = 60 * 60 * 24 * 60; // beta feedback links stay open for 60 days — testers take their time
 const MIN_PASSWORD_LENGTH = 8;
@@ -1701,10 +1702,32 @@ app.delete("/api/admin/texts/:id", requireAdmin, (req, res) => {
 
 // --- templates (the CMS) ---
 
+// Which templates the site sends on its own, for the SCHEDULED / AUTO labels in Email → Templates.
+//   scheduled — goes out on a timetable (days after something, repeating)
+//   auto      — goes out by itself when something happens, no click from Eric
+// Anything not listed here only goes out when Eric sends it.
+function autoTemplateInfo() {
+  return {
+    [NUDGE_PROGRAMS.review.templateName]: {
+      kind: "scheduled",
+      when: `${NUDGE_FIRST_AFTER_DAYS} days after a full-access member's first sign-in, then every ${NUDGE_EVERY_DAYS} days, ${NUDGE_MAX} in total. Stops when they post a review or unsubscribe.`,
+    },
+    [SETUP_TEMPLATE.name]: {
+      kind: "scheduled",
+      when: `For approved members who never created a password: ${SETUP_FIRST_AFTER_DAYS} days after approval, then ${SETUP_GAPS_DAYS[0]} days later, then ${SETUP_GAPS_DAYS[1]} days after that (3 in total, each with a fresh sign-in button). Stops when they create a password or unsubscribe.`,
+    },
+    [THANKS_TEMPLATE.name]: { kind: "auto", when: "Once, after a read-only member's first sign-in." },
+    [SRNA_TEMPLATES.ask.name]: { kind: "auto", when: "When a student signs up, sent to their program contact." },
+    [SRNA_TEMPLATES.welcome.name]: { kind: "auto", when: "When a student is approved." },
+    [SRNA_TEMPLATES.expired.name]: { kind: "auto", when: "When a student's access runs out (graduation month)." },
+    [SRNA_TEMPLATES.thanks.name]: { kind: "auto", when: "After a program contact verifies a student." },
+  };
+}
 app.get("/api/admin/templates", requireAdmin, (req, res) => {
   res.json({
     templates: db.prepare("SELECT * FROM email_templates ORDER BY category, name").all(),
     tokens: TOKENS,
+    auto: autoTemplateInfo(),
   });
 });
 
@@ -1810,6 +1833,10 @@ async function runCampaign(campaignId, subject, body) {
       markRecipient.run("skipped", "unsubscribed from mailings", new Date().toISOString(), r.id);
     } else {
       const ctx = { name: member.name, email: member.email, reviewCount: reviewCountFor(member.email), baseUrl: BASE_URL, feedbackUrl: feedbackUrlFor(member), declareUrl: declareUrlFor(member), declareDays: DECLARE_DEADLINE_DAYS };
+      // {{login_link}} in a mailing = a fresh one-person sign-in link, good for 7 days (it sits in an inbox longer than a welcome email does).
+      if (/\{\{\s*login_link\s*\}\}/i.test(body)) {
+        ctx.loginUrl = `${BASE_URL}/api/auth/verify?token=${sign({ email: member.email, purpose: "login" }, SETUP_LINK_SECONDS)}`;
+      }
       try {
         await sendEmail({
           to: member.email,
@@ -1999,6 +2026,74 @@ If your situation changes, or you have a question or an idea for the site, just 
 // Clean-up: an unedited "Welcome — verified, sign in + video" template was added by mistake on Oct 31.
 db.prepare("DELETE FROM email_templates WHERE name = 'Welcome — verified, sign in + video' AND created_at = updated_at").run();
 
+// "Finish setting up your account": approved members (full-access or read-only) who never created a
+// password. 3 reminders — 3 days after approval, then 7 days later, then 14 days after that — each
+// with a fresh sign-in link. Stops the moment they create a password. Max SETUP_PER_RUN per hourly
+// check so a big backlog trickles out instead of landing at once.
+const SETUP_TEMPLATE = {
+  name: "Finish setting up your account",
+  category: "Onboarding",
+  subject: "{{first_name}}, finish setting up your CRNA Critics account",
+  body: `Hi {{first_name}},
+
+This is Eric Hayslip, CRNA. You were approved as a verified member of CRNA Critics, but you haven't created your password yet, so you can't get in.
+
+It takes about a minute. Tap the button, create a password, and you're in.
+
+{{login_link}}
+
+The site is anonymous: reviews are posted as "Anonymous CRNA," and your name is never shown.
+
+This button works for 7 days. After that, tap "Forgot password" on the sign-in screen at crnacritics.com and we'll send you a new one. If anything isn't working, just reply to this email.
+
+— Eric Hayslip, CRNA, CRNA Critics`,
+};
+(function ensureSetupTemplate() {
+  if (db.prepare("SELECT 1 FROM email_templates WHERE name = ?").get(SETUP_TEMPLATE.name)) return;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), SETUP_TEMPLATE.name, SETUP_TEMPLATE.category, SETUP_TEMPLATE.subject, SETUP_TEMPLATE.body, now, now);
+})();
+const SETUP_FIRST_AFTER_DAYS = 3;
+const SETUP_GAPS_DAYS = [7, 14]; // wait before reminder 2, then before reminder 3
+const SETUP_PER_RUN = 30;
+
+function setupNudgeDue(row, nowMs) {
+  if (row.status !== "approved" || row.password_hash || row.bulk_unsubscribed) return false;
+  if (row.role !== "crna" && row.role !== "crna_readonly") return false; // students have their own flow
+  const n = row.setup_nudge_count || 0;
+  if (n > SETUP_GAPS_DAYS.length) return false; // 3 sent
+  if (n === 0) {
+    const anchor = Date.parse(row.decided_at || row.requested_at);
+    return !Number.isNaN(anchor) && nowMs - anchor >= SETUP_FIRST_AFTER_DAYS * DAY_MS;
+  }
+  const last = Date.parse(row.last_setup_nudge_at);
+  return !Number.isNaN(last) && nowMs - last >= SETUP_GAPS_DAYS[n - 1] * DAY_MS;
+}
+
+function runSetupNudges() {
+  const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(SETUP_TEMPLATE.name) || SETUP_TEMPLATE;
+  const nowMs = Date.now();
+  const due = db.prepare("SELECT * FROM access_requests WHERE status = 'approved' AND password_hash IS NULL ORDER BY decided_at")
+    .all().filter((r) => setupNudgeDue(r, nowMs)).slice(0, SETUP_PER_RUN);
+  if (due.length === 0) return;
+  const campaignId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO email_campaigns (id, subject, body, template_name, status, total, created_at) VALUES (?,?,?,?, 'sending', ?, ?)")
+    .run(campaignId, tpl.subject, tpl.body, `Auto — ${tpl.name}`, due.length, now);
+  const insert = db.prepare("INSERT INTO email_campaign_recipients (id, campaign_id, email, name, status) VALUES (?,?,?,?, 'queued')");
+  const stamp = db.prepare("UPDATE access_requests SET setup_nudge_count = COALESCE(setup_nudge_count, 0) + 1, last_setup_nudge_at = ? WHERE id = ?");
+  db.transaction(() => {
+    due.forEach((r) => { insert.run(crypto.randomUUID(), campaignId, r.email, r.name); stamp.run(now, r.id); });
+  })();
+  console.log(`Setup reminders: sending "${tpl.name}" to ${due.length} member(s).`);
+  runCampaign(campaignId, tpl.subject, tpl.body).catch((e) => {
+    console.error("Setup reminder campaign crashed:", e.message);
+    db.prepare("UPDATE email_campaigns SET status='done', last_error=?, finished_at=? WHERE id=?")
+      .run(String(e.message || "crashed").slice(0, 300), new Date().toISOString(), campaignId);
+  });
+}
+
 function runReadOnlyThanks() {
   const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(THANKS_TEMPLATE.name) || THANKS_TEMPLATE;
   const due = db.prepare(
@@ -2171,6 +2266,7 @@ function runReviewNudges() {
     try { runNudgeProgram(key); } catch (e) { console.error(`Nudge program ${key} failed:`, e.message); }
   });
   try { runReadOnlyThanks(); } catch (e) { console.error("Read-only thank-you failed:", e.message); }
+  try { runSetupNudges(); } catch (e) { console.error("Setup reminders failed:", e.message); }
   // One reminder email for private messages still unanswered after a few days (server/messages.js).
   messaging.runMessageReminders().catch((e) => console.error("Message reminders failed:", e.message));
 }

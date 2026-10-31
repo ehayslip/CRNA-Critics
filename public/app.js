@@ -3559,6 +3559,7 @@ function memberCardHtml(r) {
           <tr><td class="stats-label">Feedback form</td><td>${feedbackStatusLabel(r)}</td></tr>
           <tr><td class="stats-label">Mailings</td><td>${r.bulk_unsubscribed ? "<strong>opted out</strong> (account email still sends)" : "subscribed"}</td></tr>
           <tr><td class="stats-label">First sign-in</td><td>${r.first_login_at ? adminDate(r.first_login_at) : "not yet"}</td></tr>
+          ${r.hasPassword ? "" : `<tr><td class="stats-label">Setup reminders</td><td>${r.setup_nudge_count ? `${r.setup_nudge_count} of 3 sent, last ${adminDate(r.last_setup_nudge_at)}` : "none yet"} — no password created</td></tr>`}
           <tr><td class="stats-label">Review nudges</td><td>${r.nudge_count ? `${r.nudge_count} sent, last ${adminDate(r.last_nudged_at)}` : (r.reviewCount ? "not needed" : "none yet")}${r.reviewCount && r.nudge_count ? " — stopped, they posted" : ""}</td></tr>
           <tr><td class="stats-label">Feedback nudges</td><td>${r.feedback_nudge_count ? `${r.feedback_nudge_count} sent, last ${adminDate(r.last_feedback_nudged_at)}` : "none (turned off Oct 30, 2026)"}${r.feedbackSubmittedAt && r.feedback_nudge_count ? " — stopped, form submitted" : ""}</td></tr>
           <tr><td class="stats-label">Requested</td><td>${adminDate(r.requested_at)}</td></tr>
@@ -4689,6 +4690,7 @@ async function loadEmailData(force) {
     ]);
     state.emailTemplates = t.templates || [];
     state.emailTokens = t.tokens || [];
+    state.emailAuto = t.auto || {};
     state.emailRecipients = r.recipients || [];
     state.emailCampaigns = c.campaigns || [];
   } catch {
@@ -4800,6 +4802,18 @@ function composePaneHtml() {
       </div>` : ""}`;
 }
 
+// SCHEDULED (green) = the site sends it on a timetable; AUTO (orange) = the site sends it by itself
+// when something happens. No label = only goes out when Eric sends it. The list comes from the server.
+function tplAutoBadge(name) {
+  const a = (state.emailAuto || {})[name];
+  if (!a) return "";
+  return a.kind === "scheduled" ? ` <span class="tpl-flag tpl-sched">SCHEDULED</span>` : ` <span class="tpl-flag tpl-auto">AUTO</span>`;
+}
+function tplAutoWhen(name) {
+  const a = (state.emailAuto || {})[name];
+  return a ? `<div class="tpl-when ${a.kind === "scheduled" ? "tpl-when-sched" : "tpl-when-auto"}">${esc(a.when)}</div>` : "";
+}
+
 function templatesPaneHtml() {
   const list = state.emailTemplates || [];
   const ed = state.emailEditing;
@@ -4833,8 +4847,9 @@ function templatesPaneHtml() {
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
           <div>
             ${t.category ? `<div style="font-size:11px;font-weight:700;color:#1F5C57">${esc(String(t.category).toUpperCase())}</div>` : ""}
-            <div style="font-weight:700">${esc(t.name)}</div>
+            <div style="font-weight:700">${esc(t.name)}${tplAutoBadge(t.name)}</div>
             <div style="font-size:13px;color:#6B756F">${esc(t.subject)}</div>
+            ${tplAutoWhen(t.name)}
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             <button class="tiny-btn" data-tpl-use="${esc(t.id)}">Use</button>
