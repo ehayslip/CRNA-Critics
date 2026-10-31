@@ -1032,10 +1032,51 @@ app.post("/api/admin/reject/:id", adminPage, express.urlencoded({ extended: fals
 // then creates a password and signs in with email + password from there on.
 // Emailed links remain available as a "forgot password" fallback.
 
-function sendWelcomeEmail(row) {
+// What a newly approved practicing CRNA gets: the sign-in button first, then Eric's 18-second
+// video and the ask for a review. Editable under Email → Templates (name below); if it's ever
+// deleted, this built-in copy is used. Read-only (staffing-side) members and SRNAs don't get it —
+// they can't post reviews, so they keep their own welcome wording.
+const WELCOME_TEMPLATE = {
+  name: "Welcome — verified, sign in + video",
+  category: "Onboarding",
+  subject: "You're verified on CRNA Critics",
+  body: `Hi {{first_name}},
+
+You're approved as a verified CRNA on CRNA Critics.
+
+🔒 You're anonymous. Your name is never shown on the site — every review you post appears as "Anonymous CRNA," so no one will know who you are.
+
+Use the button below to sign in for the first time and create your password. After that, you'll sign in with your email and password — no more links.
+
+{{login_link}}
+
+This link expires in 48 hours. If it expires, use "Forgot password" on the sign-in screen to get a new one.
+
+Once you're in, here's a quick 18-second ask from me:
+
+{{video}}
+
+The site only works if CRNAs leave reviews. If every one of us rated our current assignment — good or bad — the next CRNA headed there would know exactly what to expect. It takes 3 to 5 minutes.
+
+— Eric Hayslip, CRNA, CRNA Critics`,
+};
+(function ensureWelcomeTemplate() {
+  if (db.prepare("SELECT 1 FROM email_templates WHERE name = ?").get(WELCOME_TEMPLATE.name)) return;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), WELCOME_TEMPLATE.name, WELCOME_TEMPLATE.category, WELCOME_TEMPLATE.subject, WELCOME_TEMPLATE.body, now, now);
+})();
+
+// opts.plain: skip the video/review ask (used when Eric re-sends a sign-in link by hand).
+function sendWelcomeEmail(row, opts = {}) {
   if (row.role === "srna") return sendSrnaWelcome(row);
   const loginToken = sign({ email: row.email, purpose: "login" }, LINK_SECONDS);
   const loginUrl = `${BASE_URL}/api/auth/verify?token=${loginToken}`;
+  if ((row.role || "crna") === "crna" && !opts.plain) {
+    const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(WELCOME_TEMPLATE.name) || WELCOME_TEMPLATE;
+    const ctx = { name: row.name, email: row.email, reviewCount: 0, baseUrl: BASE_URL, loginUrl };
+    return sendEmail({ to: row.email, replyTo: REPLY_TO, subject: fillTokens(tpl.subject, ctx), html: plainMailHtml({ body: tpl.body, ctx }) });
+  }
   return sendEmail({
     to: row.email,
     replyTo: REPLY_TO,
@@ -1506,7 +1547,7 @@ app.post("/api/admin/requests/:id/send-link", requireAdmin, async (req, res) => 
   if (!row) return res.status(404).json({ error: "not_found" });
   if (row.status !== "approved") return res.status(400).json({ error: "not_approved" });
   try {
-    await (kind === "reset" ? sendResetEmail(row) : sendWelcomeEmail(row));
+    await (kind === "reset" ? sendResetEmail(row) : sendWelcomeEmail(row, { plain: true }));
   } catch (e) {
     console.error(`Failed to send ${kind} link to ${row.email}:`, e.message);
     return res.status(502).json({ error: "send_failed" });
