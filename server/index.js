@@ -642,10 +642,10 @@ app.post("/api/request-access-srna", async (req, res) => {
   res.json({ ok: true });
   try {
     await sendInstructorRequest(row);
-    notifyAdminSrna(`CRNA Critics — SRNA application: ${escapeHtml(row.name)}`, [
-      `<strong>${escapeHtml(row.name)}</strong> applied for student access (${escapeHtml(row.srna_school)} · ${escapeHtml(row.srna_program)} · ${escapeHtml(monthYearLabel(row))}).`,
-      `Verification email sent to ${escapeHtml(row.instructor_name)} &lt;${escapeHtml(row.instructor_email)}&gt;. They'll be approved automatically when the contact taps "verify".`,
-    ]);
+    // No admin email for a plain application (Eric, Oct 30, 2026): the program contact
+    // does the verifying. Eric is only emailed when something needs him (below, and the
+    // "could not be verified" case in /srna/verify).
+    console.log(`SRNA application: ${row.name} — verification email sent to ${row.instructor_email}`);
   } catch (e) {
     console.error("Instructor email failed:", e.message);
     notifyAdminSrna(`CRNA Critics — SRNA application: ${escapeHtml(row.name)} (instructor email FAILED)`, [
@@ -698,7 +698,7 @@ app.post("/srna/verify", express.urlencoded({ extended: false }), async (req, re
       sendSrnaWelcome(fresh).catch((e) => console.error("SRNA welcome failed:", e.message));
       sendSrnaTemplate("thanks", { to: row.instructor_email, row, ctx: srnaCtx(row, { name: row.instructor_name }), replyTo: REPLY_TO })
         .catch((e) => console.error("Instructor thank-you failed:", e.message));
-      notifyAdminSrna(`CRNA Critics — SRNA verified: ${escapeHtml(row.name)}`, [`${escapeHtml(row.instructor_name)} verified <strong>${escapeHtml(row.name)}</strong>. Approved, sign-in link sent, instructor thanked.`]);
+      console.log(`SRNA verified by ${row.instructor_name}: ${row.name} approved (no admin email — Eric, Oct 30, 2026).`);
     }
     return res.send(srnaPage("Thank you", `<h2 style="color:#13A15A;">Verified. Thank you!</h2><p>${escapeHtml(row.name)} has been approved for student access. We'll send you a short thank-you email too.</p>`));
   }
@@ -1363,15 +1363,8 @@ app.delete("/api/me", requireSession, (req, res) => {
     return { deletedReviews, keptReviews };
   })();
   res.clearCookie("session", { path: "/" });
-  if (process.env.ADMIN_EMAIL) {
-    const who = row.role === "srna" ? "student (SRNA)" : "CRNA";
-    const reviewsLine = row.role === "srna" ? "" : alsoReviews ? `<p>Their ${out.deletedReviews} review(s) were deleted with the profile.</p>` : `<p>Their ${out.keptReviews} review(s) were kept and disconnected from the account.</p>`;
-    sendEmail({
-      to: process.env.ADMIN_EMAIL,
-      subject: `CRNA Critics — ${row.name} deleted their profile`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">${emailHeaderHtml(BASE_URL, 480)}<p><strong>${escapeHtml(row.name)}</strong> (${who}) deleted their own profile.</p>${reviewsLine}<p style="color:#888;font-size:12px;">No action needed. They can apply again at any time.</p></div>`,
-    }).catch((e) => console.error("Profile-deleted notice failed:", e.message));
-  }
+  // No admin email on self-deletion (Eric, Oct 30, 2026) — nothing to act on. Logged only.
+  console.log(`Profile deleted by member: ${row.name} (${row.role || "crna"}); reviews deleted ${out.deletedReviews || 0}, kept ${out.keptReviews || 0}.`);
   res.json({ ok: true, ...out });
 });
 
