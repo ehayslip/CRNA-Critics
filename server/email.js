@@ -46,6 +46,7 @@ const TOKENS = [
   { token: "{{email}}", what: "Their email address" },
   { token: "{{review_count}}", what: "\"3 reviews\" / \"no reviews yet\"" },
   { token: "{{site_url}}", what: "The site address, as a link" },
+  { token: "{{video}}", what: "Eric's 18-second \"please leave a review\" video. On its own line it becomes a tappable video card (poster with a play button) — the same clip the text Shortcut sends. Inside a sentence it becomes the link crnacritics.com/video." },
   { token: "{{feedback_link}}", what: "This member's personal link to the site's feedback form (no login needed). On its own line it becomes a \"Give feedback\" button." },
   { token: "{{review_subject}}", what: "Review-notice emails only: what the review was about, e.g. \"Mercy General / Envision\"" },
   { token: "{{flags}}", what: "Review-notice emails only: the flagged passage(s) with why it matters and a better way to say it" },
@@ -83,6 +84,7 @@ function fillTokens(text, ctx) {
     .replace(/\{\{\s*review_count\s*\}\}/gi, reviewCountLabel(ctx.reviewCount || 0))
     .replace(/\{\{\s*site_url\s*\}\}/gi, ctx.baseUrl || "")
     .replace(/\{\{\s*feedback_link\s*\}\}/gi, ctx.feedbackUrl || `${ctx.baseUrl || ""}/feedback`)
+    .replace(/\{\{\s*video\s*\}\}/gi, `${ctx.baseUrl || ""}/video`)
     .replace(/\{\{\s*review_subject\s*\}\}/gi, ctx.reviewSubject || "your review")
     .replace(/\{\{\s*student_name\s*\}\}/gi, ctx.studentName || "")
     .replace(/\{\{\s*school\s*\}\}/gi, ctx.school || "")
@@ -97,6 +99,21 @@ function fillTokens(text, ctx) {
     .replace(/\{\{\s*declare_days\s*\}\}/gi, String(ctx.declareDays || ""));
 }
 
+// {{video}} on its own line: Eric's 18-second "please leave a review" clip as a tappable card.
+// Email clients won't play video inline, so this is the poster (with a play button baked into
+// the image) linking to crnacritics.com/video, where the clip plays with one tap.
+function videoCardHtml(baseUrl) {
+  const base = baseUrl || "";
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:18px auto;">
+  <tr><td align="center">
+    <a href="${base}/video" style="text-decoration:none;display:inline-block;">
+      <img src="${base}/video/leave-a-review-email.jpg" width="240" height="427" alt="Play: a quick ask from Eric, 18 seconds" style="display:block;width:240px;height:auto;border-radius:12px;border:0;" />
+    </a>
+    <p style="margin:8px 0 0;font-size:13px;color:#555;"><a href="${base}/video" style="color:#13A15A;font-weight:bold;text-decoration:none;">&#9654; Watch Eric's 18-second ask</a></p>
+  </td></tr>
+</table>`;
+}
+
 // Plain text -> HTML paragraphs. {{cta}} on its own becomes the button. Everything
 // else is escaped; bare URLs become links.
 function bodyToHtml(text, ctx) {
@@ -109,6 +126,7 @@ function bodyToHtml(text, ctx) {
   // filled, so it can become the button instead of a bare URL.
   const marked = String(text == null ? "" : text)
     .replace(/(^|\n{2,})[ \t]*\{\{\s*feedback_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{feedback_button}}")
+    .replace(/(^|\n{2,})[ \t]*\{\{\s*video\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{video_card}}")
     .replace(/(^|\n{2,})[ \t]*\{\{\s*verify_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{verify_button}}")
     .replace(/(^|\n{2,})[ \t]*\{\{\s*cant_verify_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{cant_button}}")
     .replace(/(^|\n{2,})[ \t]*\{\{\s*login_link\s*\}\}[ \t]*(?=\n{2,}|$)/gi, "$1{{login_button}}")
@@ -121,6 +139,7 @@ function bodyToHtml(text, ctx) {
       if (!trimmed) return "";
       if (/^\{\{\s*cta\s*\}\}$/i.test(trimmed)) return ctaHtml;
       if (/^\{\{\s*feedback_button\s*\}\}$/i.test(trimmed)) return feedbackHtml;
+      if (/^\{\{\s*video_card\s*\}\}$/i.test(trimmed)) return videoCardHtml(ctx.baseUrl);
       if (/^\{\{\s*flags\s*\}\}$/i.test(trimmed)) return ctx.flagsHtml || "";
       if (/^\{\{\s*verify_button\s*\}\}$/i.test(trimmed)) return btn(ctx.verifyUrl, "#13A15A", "Yes, I can verify this student");
       if (/^\{\{\s*cant_button\s*\}\}$/i.test(trimmed)) return btn(ctx.cantVerifyUrl, "#8C3A32", "I can't verify this student");
