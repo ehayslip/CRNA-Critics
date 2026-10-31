@@ -1851,15 +1851,16 @@ app.post("/api/admin/email/send", requireAdmin, (req, res) => {
 // Two programs, both checked hourly during the day (Eastern) and both sent as ordinary
 // campaigns through runCampaign(), so they show in the Sent pane and honour unsubscribe:
 //   review   — approved members with NO review yet get the "Ask for a review" template
-//              (first one NUDGE_FIRST_AFTER_DAYS after approval, then weekly, max NUDGE_MAX;
-//              stops the moment they post).
+//              (first one NUDGE_FIRST_AFTER_DAYS after approval, then every NUDGE_EVERY_DAYS
+//              days, max NUDGE_MAX; stops the moment they post).
 //   feedback — members who HAVE posted but have not filled in the site feedback form get
-//              the feedback template (first one NUDGE_FIRST_AFTER_DAYS after their first
-//              review, then weekly, max NUDGE_MAX; stops the moment they submit the form).
+//              the feedback template, same spacing. TURNED OFF Oct 30, 2026 (Eric's call);
+//              set FEEDBACK_NUDGES=on in Railway to bring it back.
 // Eric edits the wording of either template in the Email tab.
 const NUDGE_FIRST_AFTER_DAYS = Number(process.env.NUDGE_FIRST_AFTER_DAYS || 2);
-const NUDGE_EVERY_DAYS = Number(process.env.NUDGE_EVERY_DAYS || 7);
+const NUDGE_EVERY_DAYS = Number(process.env.NUDGE_EVERY_DAYS || 14);
 const NUDGE_MAX = Number(process.env.NUDGE_MAX || 4);
+const FEEDBACK_NUDGES_ON = String(process.env.FEEDBACK_NUDGES || "off").toLowerCase() === "on";
 const NUDGE_HOURS = String(process.env.NUDGE_HOURS || "9-18"); // Eastern; "0-24" sends any time
 const NUDGE_CHECK_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -1897,6 +1898,7 @@ const NUDGE_PROGRAMS = {
     lastSent: (r) => { const t = latest(r.last_feedback_nudged_at, r.feedback_sent_at); return t ? new Date(t).toISOString() : null; },
   },
 };
+if (!FEEDBACK_NUDGES_ON) delete NUDGE_PROGRAMS.feedback;
 
 function easternHour(date = new Date()) {
   return Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "America/New_York" }).format(date));
