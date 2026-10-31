@@ -130,9 +130,9 @@ something is on the Site does not mean we reviewed or agree with it. We may keep
       the Site, new features, opportunities, and offers we think are relevant to CRNAs. This permission continues while
       your account exists. You may opt out of marketing messages at any time by using the unsubscribe link or by replying
       to tell us to stop; we may still send you messages necessary to operate your account.</li>
-  <li>Separately, and only if you check the optional box, you give express written consent to receive automated calls and
-      text messages at the number you provide, including from an automatic telephone dialing system or prerecorded voice.
-      Consent to automated messages is not required to join the Site. Message and data rates may apply; reply STOP to stop.</li>
+  <li>Separately, and only if you check the optional box, you agree that we may send text messages about your account and
+      CRNA Critics updates to the number you provide. Agreeing to texts is not required to join the Site. Message and data
+      rates may apply; reply STOP to any text to opt out.</li>
   <li>We use third-party providers to run the Site (hosting, database, email delivery, analytics) and share with them only
       what they need. We may disclose information when required by law, to enforce these Terms, or to protect the rights,
       safety, or property of the Operator, our members, or the public. If the Site is transferred to a new owner or entity,

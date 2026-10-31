@@ -186,7 +186,7 @@ app.get("/api/admin/traffic", requireAdmin, (req, res) => {
 // ---------- access requests ----------
 
 app.post("/api/request-access", async (req, res) => {
-  const { nbcrnaNumber, phone, acceptedTerms, termsVersion, smsConsent } = req.body || {};
+  const { nbcrnaNumber, phone, acceptedTerms, termsVersion, smsConsent, smsConsentText } = req.body || {};
   const email = String(req.body?.email || "").trim().toLowerCase();
   // Who they say they are decides the tier. No declaration, no request — the box is not optional.
   const declaredRole = String(req.body?.declaredRole || "");
@@ -208,15 +208,17 @@ app.post("/api/request-access", async (req, res) => {
   const termsIp = String(req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim().slice(0, 64);
   const termsUa = String(req.headers["user-agent"] || "").slice(0, 300);
   const sms = smsConsent ? 1 : 0;
+  const smsAt = sms ? now : null;
+  const smsText = sms ? String(smsConsentText || "").slice(0, 300) : null;
   const existing = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
   if (existing) {
     db.prepare(
-      "UPDATE access_requests SET role=?, declared_role=?, attested_at=?, srna_school=NULL, srna_program=NULL, srna_grad_year=NULL, srna_grad_month=NULL, srna_expires_at=NULL, instructor_name=NULL, instructor_email=NULL, name=?, nbcrna_number=?, phone=?, status='pending', requested_at=?, decided_at=NULL, terms_version=?, terms_accepted_at=?, terms_ip=?, terms_user_agent=?, sms_consent=? WHERE email=?"
-    ).run(role, declaredRole, now, name, nbcrnaNumber, phone, now, termsV, now, termsIp, termsUa, sms, email);
+      "UPDATE access_requests SET role=?, declared_role=?, attested_at=?, srna_school=NULL, srna_program=NULL, srna_grad_year=NULL, srna_grad_month=NULL, srna_expires_at=NULL, instructor_name=NULL, instructor_email=NULL, name=?, nbcrna_number=?, phone=?, status='pending', requested_at=?, decided_at=NULL, terms_version=?, terms_accepted_at=?, terms_ip=?, terms_user_agent=?, sms_consent=?, sms_consent_at=?, sms_consent_text=? WHERE email=?"
+    ).run(role, declaredRole, now, name, nbcrnaNumber, phone, now, termsV, now, termsIp, termsUa, sms, smsAt, smsText, email);
   } else {
     db.prepare(
-      "INSERT INTO access_requests (id, name, nbcrna_number, email, phone, status, requested_at, terms_version, terms_accepted_at, terms_ip, terms_user_agent, sms_consent, role, declared_role, attested_at) VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,?,?,?,?)"
-    ).run(crypto.randomUUID(), name, nbcrnaNumber, email, phone, now, termsV, now, termsIp, termsUa, sms, role, declaredRole, now);
+      "INSERT INTO access_requests (id, name, nbcrna_number, email, phone, status, requested_at, terms_version, terms_accepted_at, terms_ip, terms_user_agent, sms_consent, sms_consent_at, sms_consent_text, role, declared_role, attested_at) VALUES (?,?,?,?,?, 'pending', ?,?,?,?,?,?,?,?,?,?,?)"
+    ).run(crypto.randomUUID(), name, nbcrnaNumber, email, phone, now, termsV, now, termsIp, termsUa, sms, smsAt, smsText, role, declaredRole, now);
   }
   stampSignupSource(email, req.body);
   const row = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(email);
@@ -630,7 +632,7 @@ app.post("/api/request-access-srna", async (req, res) => {
   if (existing && existing.status === "approved") return res.status(409).json({ error: "already_member" });
   if (existing) {
     db.prepare(
-      "UPDATE access_requests SET name=?, nbcrna_number='SRNA', phone=?, status='pending', role='srna', srna_school=?, srna_program=?, srna_grad_year=?, srna_grad_month=?, srna_expires_at=?, srna_expired_emailed_at=NULL, instructor_name=?, instructor_email=?, instructor_asked_at=NULL, instructor_decision=NULL, instructor_decided_at=NULL, requested_at=?, decided_at=NULL, terms_version=?, terms_accepted_at=?, terms_ip=?, terms_user_agent=?, sms_consent=0 WHERE email=?"
+      "UPDATE access_requests SET name=?, nbcrna_number='SRNA', phone=?, status='pending', role='srna', srna_school=?, srna_program=?, srna_grad_year=?, srna_grad_month=?, srna_expires_at=?, srna_expired_emailed_at=NULL, instructor_name=?, instructor_email=?, instructor_asked_at=NULL, instructor_decision=NULL, instructor_decided_at=NULL, requested_at=?, decided_at=NULL, terms_version=?, terms_accepted_at=?, terms_ip=?, terms_user_agent=?, sms_consent=0, sms_consent_at=NULL, sms_consent_text=NULL WHERE email=?"
     ).run(name, String(phone).slice(0, 40), school, program, gradYear, gradMonth, expiresAt, instructorName, instructorEmail, now, termsV, now, termsIp, termsUa, email);
   } else {
     db.prepare(
@@ -787,7 +789,7 @@ function sendVerifyRequestEmail(row, check) {
           <p>NBCRNA #: ${escapeHtml(row.nbcrna_number)}<br/>
              Email: ${escapeHtml(row.email)}<br/>
              Phone: ${escapeHtml(row.phone)}</p>
-          <p style="color:#555;font-size:12px;">Terms v${escapeHtml(String(row.terms_version || "?"))} accepted ${escapeHtml(String(row.terms_accepted_at || ""))} from ${escapeHtml(String(row.terms_ip || "unknown IP"))}${row.sms_consent ? " &middot; opted in to automated calls/texts" : ""}</p>
+          <p style="color:#555;font-size:12px;">Terms v${escapeHtml(String(row.terms_version || "?"))} accepted ${escapeHtml(String(row.terms_accepted_at || ""))} from ${escapeHtml(String(row.terms_ip || "unknown IP"))}${row.sms_consent ? " &middot; opted in to texts" : ""}</p>
           ${check ? `<p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;">Automatic NBCRNA check: <strong>not verified</strong> &mdash; ${escapeHtml(check.reason)}.${check.record ? "<br/>" + nbcrnaRecordLine(check) : ""}</p>` : ""}
           <p style="margin-top:24px;">
             <a href="${approveUrl}" style="background:#1F5C57;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;margin-right:12px;">Approve</a>

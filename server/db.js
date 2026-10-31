@@ -75,6 +75,9 @@ addColumnIfMissing("access_requests", "terms_accepted_at", "TEXT");
 addColumnIfMissing("access_requests", "terms_ip", "TEXT");
 addColumnIfMissing("access_requests", "terms_user_agent", "TEXT");
 addColumnIfMissing("access_requests", "sms_consent", "INTEGER NOT NULL DEFAULT 0");
+// When the texting box was ticked, and the exact wording shown next to it (consent evidence for bulk texts).
+addColumnIfMissing("access_requests", "sms_consent_at", "TEXT");
+addColumnIfMissing("access_requests", "sms_consent_text", "TEXT");
 // SRNA (student) accounts: read-only members verified by school email + manual approval.
 addColumnIfMissing("access_requests", "role", "TEXT NOT NULL DEFAULT 'crna'"); // 'crna' | 'crna_readonly' | 'srna'
 addColumnIfMissing("access_requests", "declared_role", "TEXT"); // what they said they are on the form: practicing | chief | recruiter | owner

@@ -1524,7 +1524,7 @@ function requestFormHtml() {
         <span><strong>I have read and agree to the Terms of Use &amp; Member Agreement</strong>, including the release of liability and covenant not to sue in Section 8, the indemnification in Section 9, the limitation of liability in Section 11, the arbitration and class-action waiver in Section 14, the agreement in Section 3 not to post with the intention of harming a fellow CRNA, and the rule in Section 1 that staffing-side CRNAs are read-only and that misrepresenting my role can mean removal. I agree that CRNA Critics and its affiliates may contact me at the email and phone number I gave above, and I understand my information will never be sold or rented.</span>
       </label>
       <label class="checkbox-row"><input type="checkbox" id="req-sms" />
-        <span>Optional: I also consent to automated calls and text messages at that number, including from an autodialer or prerecorded voice. Not required to join. Message and data rates may apply; reply STOP to stop.</span>
+        <span>Allow texts about my account and CRNA Critics updates (not required to join; reply STOP to opt out).</span>
       </label>
 
       <div id="gate-error" class="error-text"></div>
@@ -1692,6 +1692,7 @@ function attachGateHandlers() {
       const declaredRole = pickedRole();
       const acceptedTerms = termsBox.checked;
       const smsConsent = document.getElementById("req-sms").checked;
+      const smsConsentText = smsConsent ? document.querySelector("#req-sms + span").textContent.trim() : "";
       const termsVersion = (window.CRNA_TERMS || {}).version || "";
       const errEl = document.getElementById("gate-error");
       if (!firstName || !lastName) { errEl.textContent = "Enter both your first and last name, exactly as they appear on your NBCRNA credential."; return; }
@@ -1701,7 +1702,7 @@ function attachGateHandlers() {
       if (!acceptedTerms) { errEl.textContent = "You have to accept the Terms of Use & Member Agreement to request access."; return; }
       errEl.textContent = "";
       try {
-        await api("/api/request-access", { method: "POST", body: { firstName, lastName, nbcrnaNumber, email, phone, declaredRole, acceptedTerms, termsVersion, smsConsent, ...signupSource() } });
+        await api("/api/request-access", { method: "POST", body: { firstName, lastName, nbcrnaNumber, email, phone, declaredRole, acceptedTerms, termsVersion, smsConsent, smsConsentText, ...signupSource() } });
         const ro = pickedTier() === "readonly";
         document.getElementById("gate-body").innerHTML = `<div class="empty-box"><p style="margin:0;font-weight:700">Submitted.</p><p class="hint-text">We check your first and last name and NBCRNA number against the NBCRNA credential record. You'll get an email once you're approved${ro ? " &mdash; for read-only access, as you chose above" : ""}.</p></div>`;
       } catch (e) {
@@ -3502,7 +3503,7 @@ function declaredLabel(r) { return DECLARED_LABELS[r.declared_role] || ""; }
 function isReadOnlyRow(r) { return r.role === "crna_readonly" || r.role === "srna"; }
 function termsLine(r) {
   return r.terms_accepted_at
-    ? `Terms v${esc(r.terms_version || "?")} accepted ${esc(new Date(r.terms_accepted_at).toLocaleString())} · IP ${esc(r.terms_ip || "unknown")}${r.sms_consent ? " · SMS opt-in" : ""}`
+    ? `Terms v${esc(r.terms_version || "?")} accepted ${esc(new Date(r.terms_accepted_at).toLocaleString())} · IP ${esc(r.terms_ip || "unknown")}${r.sms_consent ? ` · texts OK${r.sms_consent_at ? " since " + esc(new Date(r.sms_consent_at).toLocaleDateString()) : ""}` : " · no text opt-in"}`
     : "No terms acceptance on file (pre-dates the agreement)";
 }
 
@@ -4096,7 +4097,7 @@ function paintAdmin() {
         <div style="font-size:12px;color:#6B756F">NBCRNA ${esc(r.nbcrna_number)}</div>
         <div style="font-size:12px;color:#6B756F">${esc(r.email)} · ${phoneLinksHtml(r)}</div>
         <div style="font-size:11px;color:#8A948E;margin-top:4px">${r.terms_accepted_at
-          ? `Terms v${esc(r.terms_version || "?")} accepted ${esc(new Date(r.terms_accepted_at).toLocaleString())} · IP ${esc(r.terms_ip || "unknown")}${r.sms_consent ? " · SMS opt-in" : ""}`
+          ? `Terms v${esc(r.terms_version || "?")} accepted ${esc(new Date(r.terms_accepted_at).toLocaleString())} · IP ${esc(r.terms_ip || "unknown")}${r.sms_consent ? ` · texts OK${r.sms_consent_at ? " since " + esc(new Date(r.sms_consent_at).toLocaleDateString()) : ""}` : " · no text opt-in"}`
           : "No terms acceptance on file (pre-dates the agreement)"}</div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="tiny-btn approve" data-decide="${r.id}::approved">Approve</button>
