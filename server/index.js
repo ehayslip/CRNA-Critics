@@ -385,6 +385,34 @@ function ensureDeclareTemplates() {
 }
 ensureDeclareTemplates();
 
+// "Ask for a review (video)" — the email twin of the "Casual — please review" text that the
+// Shortcut sends with Eric's 18-second clip. {{video}} on its own line becomes the tappable
+// poster card (server/email.js). Added once; Eric can edit or delete it like any template.
+const VIDEO_TEMPLATE = {
+  name: "Ask for a review (video)",
+  category: "Feedback",
+  subject: "{{first_name}}, 18 seconds from me — then 5 from you?",
+  body: `Hi {{first_name}},
+
+This is Eric Hayslip, CRNA. Thanks for signing up for CRNA Critics. Here's a quick 18-second ask from me:
+
+{{video}}
+
+The site only works if CRNAs leave reviews. If every one of us rated our current assignment — good or bad — the next CRNA headed there would know exactly what to expect. It takes 3 to 5 minutes.
+
+{{cta}}
+
+Every review is anonymous. Other CRNAs see you only as "Anonymous CRNA" — no one will know it was you.
+
+— Eric Hayslip, CRNA, CRNA Critics`,
+};
+(function ensureVideoTemplate() {
+  if (db.prepare("SELECT 1 FROM email_templates WHERE name = ?").get(VIDEO_TEMPLATE.name)) return;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), VIDEO_TEMPLATE.name, VIDEO_TEMPLATE.category, VIDEO_TEMPLATE.subject, VIDEO_TEMPLATE.body, now, now);
+})();
+
 function declareUrlFor(row) {
   return `${BASE_URL}/declare?t=${encodeURIComponent(sign({ id: row.id, purpose: "declare" }, DECLARE_LINK_SECONDS))}`;
 }
