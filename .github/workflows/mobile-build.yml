@@ -84,7 +84,11 @@ jobs:
           if [ -n "$XC" ]; then sudo xcode-select -s "$XC"; fi
           xcodebuild -version
           KEY="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
-          printf '%s\n' "$ASC_KEY" > "$KEY"
+          set -o pipefail
+          # Rebuild a clean PEM no matter how the key was pasted (line breaks, CRs, spaces).
+          B64=$(printf '%s' "$ASC_KEY" | sed -e 's/-----[A-Z ]*-----//g' | tr -cd 'A-Za-z0-9+/=')
+          { echo "-----BEGIN PRIVATE KEY-----"; echo "$B64" | fold -w 64; echo "-----END PRIVATE KEY-----"; } > "$KEY"
+          echo "key body length: ${#B64}"
           AUTH="-allowProvisioningUpdates -authenticationKeyPath $KEY -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
           xcodebuild -project App.xcodeproj -scheme App -configuration Release \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/App.xcarchive" \
