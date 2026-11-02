@@ -2967,6 +2967,11 @@ app.get(["/privacy", "/privacy-policy"], (req, res) => {
   res.set("Cache-Control", "no-cache");
   res.sendFile(path.join(__dirname, "..", "public", "privacy.html"));
 });
+// How to delete an account. Google Play shows this link on the store listing.
+app.get("/delete-account", (req, res) => {
+  res.set("Cache-Control", "no-cache");
+  res.sendFile(path.join(__dirname, "..", "public", "delete-account.html"));
+});
 
 // crnacritics.com/video — Eric's 18-second "please leave a review" clip, for texts and
 // social posts (iMessage shows the poster as a preview). The MP4 lives in public/video/.
