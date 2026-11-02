@@ -715,6 +715,8 @@ function footerHtml() {
         <button type="button" class="inline-link" id="terms-link-btn">Terms of Use &amp; Member Agreement</button>
         <span class="footer-sep">&middot;</span>
         <button type="button" class="inline-link" id="guidelines-link-btn">Review Guidelines</button>
+        <span class="footer-sep">&middot;</span>
+        <a class="inline-link" href="/privacy">Privacy Policy</a>
         ${state.user ? `<span class="footer-sep">&middot;</span><button type="button" class="inline-link" id="contact-link-btn">My contact info</button>` : ""}
         ${state.user ? `<span class="footer-sep">&middot;</span><button type="button" class="inline-link danger-link" id="delete-profile-link-btn">Delete my profile</button>` : ""}
         ${youtubeFooterLinkHtml()}
@@ -1369,6 +1371,7 @@ function attachLandingHandlers() {
     const band = document.getElementById("get-the-app");
     if (band) setTimeout(() => band.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   }
+  if (location.hash === "#terms") { history.replaceState(null, "", "/"); openTerms(); return; }
   document.querySelectorAll("[data-go]").forEach((btn) => {
     btn.onclick = () => {
       state.gateMode = btn.dataset.go === "request" ? "request" : btn.dataset.go === "srna" ? "srna" : "signin";

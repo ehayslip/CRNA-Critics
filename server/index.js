@@ -2954,12 +2954,18 @@ app.get("/sitemap.xml", (req, res) => {
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
     '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' +
     '<url><loc>https://crnacritics.com/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>' +
+    '<url><loc>https://crnacritics.com/privacy</loc><changefreq>yearly</changefreq><priority>0.3</priority></url>' +
     '</urlset>\n'
   );
 });
 
 app.get("/feedback", (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "feedback.html"));
+});
+// Standalone privacy policy. Both app stores require a public URL for it.
+app.get(["/privacy", "/privacy-policy"], (req, res) => {
+  res.set("Cache-Control", "no-cache");
+  res.sendFile(path.join(__dirname, "..", "public", "privacy.html"));
 });
 
 // crnacritics.com/video — Eric's 18-second "please leave a review" clip, for texts and
