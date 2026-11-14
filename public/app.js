@@ -325,7 +325,7 @@ const state = {
   textNote: {},        // memberId -> one-line confirmation under their text box
   adminTraffic: null,  // Admin → Traffic report
   trafficDays: 30,
-  bulk: { tplId: "", video: false, picked: [], filter: "", stage: "pick", batch: 0, note: "" }, // Texts tab: send to several people
+  bulk: { group: "optin", tplId: "", video: false, picked: [], filter: "", stage: "pick", batch: 0, note: "" }, // Texts tab: send to several people
   textTplArmed: null,  // template id waiting for a second "Delete" tap
   adminFilter: "",     // name/email filter in the member list
   adminConfirmId: null, // member row showing the delete confirmation
@@ -3304,15 +3304,18 @@ function attachTextHandlers() {
 }
 // ---- Send one text to several people (Texts tab) ------------------------------------------
 // The page hands a batch to the "CRNA bulk text" Shortcut, which sends each text from Eric's own
-// Messages with a pause between them (and attaches the review video when asked). Only approved
-// CRNAs who ticked the text opt-in, with a good US number, can be picked; the server re-checks
-// that when it logs the batch.
+// Messages with a pause between them (and attaches the review video when asked). Two separate
+// groups, never mixed: "optin" = approved CRNAs who ticked the text opt-in; "account" = approved
+// CRNAs who did NOT, for account information only (Eric, Nov 14, 2026). Either way a good US number
+// is required, and the server re-checks the group when it logs the batch.
 const BULK_SHORTCUT = "CRNA bulk text";
 const BULK_BATCH = 25;
 function bulkEligible(r) {
-  if (!r || r.status !== "approved" || r.role === "srna" || !r.sms_consent || r.phone_bad_at) return false;
+  if (!r || r.status !== "approved" || r.role === "srna" || r.phone_bad_at) return false;
+  if (state.bulk.group === "account" ? !!r.sms_consent : !r.sms_consent) return false;
   return /^\+1\d{10}$/.test(smsNumber(r.phone));
 }
+const ACCOUNT_GROUP_NOTE = "Account information only — sign-in, access, locked reviews, policy or Terms changes. These members did not opt in to texts, so don't send review requests, promotions or \"tell a colleague\" texts to this group.";
 function bulkTemplate() {
   const tpls = (state.adminTexts && state.adminTexts.templates) || [];
   return tpls.find((t) => t.id === state.bulk.tplId) || null;
@@ -3369,9 +3372,17 @@ function bulkSectionHtml() {
   const tpl = bulkTemplate();
   const approved = state.adminRequests.filter((r) => r.status === "approved" && r.role !== "srna");
   const eligible = approved.filter(bulkEligible);
+  const acct = b.group === "account";
   const noOptIn = approved.filter((r) => !r.sms_consent).length;
-  const badNum = approved.filter((r) => r.sms_consent && (r.phone_bad_at || !/^\+1\d{10}$/.test(smsNumber(r.phone)))).length;
-  const head = `<div class="section-label" style="margin:0 0 6px">TEXT SEVERAL PEOPLE AT ONCE</div>`;
+  const optIn = approved.length - noOptIn;
+  const badNum = approved.filter((r) => (acct ? !r.sms_consent : r.sms_consent) && (r.phone_bad_at || !/^\+1\d{10}$/.test(smsNumber(r.phone)))).length;
+  const head = `<div class="section-label" style="margin:0 0 6px">TEXT SEVERAL PEOPLE AT ONCE${acct ? ` &middot; <span class="sms-no">ACCOUNT INFO &mdash; NO OPT-IN</span>` : ""}</div>`;
+  const groupPicker = `
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px">
+      <button type="button" class="tiny-btn${!acct ? " active-btn" : ""}" data-bulk-group="optin">Opted in to texts (${optIn})</button>
+      <button type="button" class="tiny-btn${acct ? " active-btn" : ""}" data-bulk-group="account">Didn't opt in &mdash; account info only (${noOptIn})</button>
+    </div>
+    ${acct ? `<div class="text-warn" style="margin:0 0 8px">${esc(ACCOUNT_GROUP_NOTE)}</div>` : ""}`;
   if (!isAppleDevice()) {
     return `<div class="card">${head}<p class="hint-text" style="margin:0">Sending to several people runs a Shortcut on an iPhone or Mac. Open this page on your iPhone or Mac to use it.</p></div>`;
   }
@@ -3389,6 +3400,7 @@ function bulkSectionHtml() {
     const thisBatch = bulkBatchItems(b.batch);
     return `<div class="card" style="border-color:#1F5C57">${head}
       <p style="margin:4px 0;font-weight:700">Ready: ${picked.length} ${picked.length === 1 ? "person" : "people"} · ${b.video ? "with the video attached" : "text only"}</p>
+      ${acct ? `<div class="text-warn" style="margin:0 0 6px">Didn't-opt-in group. ${esc(ACCOUNT_GROUP_NOTE)}</div>` : ""}
       <p class="hint-text" style="margin:0 0 6px">"${esc(tpl ? tpl.name : "")}". It goes out from your own number. Here is what the first person gets:</p>
       <div class="text-hist-body" style="white-space:pre-wrap;background:#F4F6F4;padding:8px 10px;border-radius:8px">${esc(first && tpl ? fillText(tpl.body, first).trim() : "")}</div>
       <p class="hint-text" style="margin:8px 0 4px"><strong>${esc(picked.slice(0, 6).map((r) => r.name).join(", "))}${picked.length > 6 ? ` and ${picked.length - 6} more` : ""}</strong></p>
@@ -3402,7 +3414,10 @@ function bulkSectionHtml() {
   // Pick screen
   const picked = bulkPickedMembers().length;
   return `<div class="card">${head}
-    <p class="hint-text" style="margin:0 0 8px">Pick a text and the people to send it to, and one tap runs it for all of them from your own number. Only members who ticked the text opt-in at sign-up and have a good number can be picked (${noOptIn} have no opt-in${badNum ? `, ${badNum} have a bad number` : ""}).</p>
+    ${groupPicker}
+    <p class="hint-text" style="margin:0 0 8px">Pick a text and the people to send it to, and one tap runs it for all of them from your own number. ${acct
+      ? `This group is the members who did <strong>not</strong> tick the text opt-in at sign-up${badNum ? ` (${badNum} of them have a bad number and can't be picked)` : ""}.`
+      : `Only members who ticked the text opt-in at sign-up and have a good number are in this group (${noOptIn} have no opt-in &mdash; they're under "Didn't opt in"${badNum ? `; ${badNum} have a bad number` : ""}).`}</p>
     <select id="bulk-tpl" class="search-input">
       <option value="">— choose the text to send —</option>
       ${tpls.map((t) => `<option value="${esc(t.id)}"${b.tplId === t.id ? " selected" : ""}>${esc(t.name)}</option>`).join("")}
@@ -3471,7 +3486,14 @@ function attachBulkHandlers() {
     b.stage = "confirm"; b.batch = 0; b.note = ""; paintAdmin();
   });
   on("bulk-back", () => { b.stage = "pick"; b.note = ""; paintAdmin(); });
-  on("bulk-reset", () => { state.bulk = { tplId: b.tplId, video: b.video, picked: [], filter: "", stage: "pick", batch: 0, note: "" }; paintAdmin(); });
+  on("bulk-reset", () => { state.bulk = { group: b.group, tplId: b.tplId, video: b.video, picked: [], filter: "", stage: "pick", batch: 0, note: "" }; paintAdmin(); });
+  document.querySelectorAll("[data-bulk-group]").forEach((btn) => {
+    btn.onclick = () => {
+      if (b.group === btn.dataset.bulkGroup) return;
+      b.group = btn.dataset.bulkGroup; b.picked = []; b.note = "";
+      paintAdmin();
+    };
+  });
   const launch = document.getElementById("bulk-launch");
   if (launch) launch.onclick = () => {
     const tpl = bulkTemplate();
@@ -3481,7 +3503,7 @@ function attachBulkHandlers() {
     // keepalive lets the log request finish even though the page is handing off to Shortcuts.
     fetch("/api/admin/texts/bulk", {
       method: "POST", keepalive: true, credentials: "include", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ templateId: tpl.id, items: items.map((it) => ({ requestId: it.member.id, body: it.body })) }),
+      body: JSON.stringify({ templateId: tpl.id, group: b.group, items: items.map((it) => ({ requestId: it.member.id, body: it.body })) }),
     }).then((r) => r.json()).then((j) => {
       (j.loggedIds || []).forEach((id) => { const row = state.adminRequests.find((x) => x.id === id); if (row) { row.textCount = (row.textCount || 0) + 1; row.lastTextedAt = new Date().toISOString(); } });
       loadAdminTexts(true);
@@ -3610,7 +3632,8 @@ function memberCardHtml(r) {
     ${r.feedbackSubmittedAt ? `<span class="member-badge member-fb" title="Reviewed the site (feedback form submitted ${adminDate(r.feedbackSubmittedAt)})">✓ site feedback</span>` : ""}
     ${r.phone_bad_at ? `<span class="member-badge member-badphone" title="${esc(r.phone_bad_note || "")}">⚠ bad number</span>` : ""}
     ${r.textCount ? `<span class="member-badge member-texted" title="You've texted them ${r.textCount} time${r.textCount === 1 ? "" : "s"}">💬 texted ${esc(shortDate(r.lastTextedAt))}${r.textCount > 1 ? ` ×${r.textCount}` : ""}</span>` : ""}
-    ${r.openFlags ? `<span class="member-badge member-alert" title="Open review alerts — see the Alerts tab">⚠ ${r.openFlags} alert${r.openFlags === 1 ? "" : "s"}</span>` : ""}`;
+    ${r.openFlags ? `<span class="member-badge member-alert" title="Open review alerts — see the Alerts tab">⚠ ${r.openFlags} alert${r.openFlags === 1 ? "" : "s"}</span>` : ""}
+    ${gateBadgeHtml(r)}`;
   return `
     <div class="card member-card${open ? " open" : ""}">
       <button type="button" class="member-head" data-member="${r.id}">
@@ -3638,6 +3661,7 @@ function memberCardHtml(r) {
           <tr><td class="stats-label">Work type</td><td>${r.employment_type ? esc(r.employment_type === "staff" ? "Staff (W-2 / 1099)" : "Locum") : "not chosen yet"}</td></tr>
           <tr><td class="stats-label">Password</td><td>${r.hasPassword ? "set by member" : "<em>not set yet</em>"}</td></tr>
           <tr><td class="stats-label">Reviews posted</td><td>${r.reviewCount}</td></tr>
+          ${r.access ? `<tr><td class="stats-label">Review access</td><td>${gateRowHtml(r)}</td></tr>` : ""}
           <tr><td class="stats-label">Feedback form</td><td>${feedbackStatusLabel(r)}</td></tr>
           <tr><td class="stats-label">Mailings</td><td>${r.bulk_unsubscribed ? "<strong>opted out</strong> (account email still sends)" : "subscribed"}</td></tr>
           <tr><td class="stats-label">First sign-in</td><td>${r.first_login_at ? adminDate(r.first_login_at) : "not yet"}</td></tr>
@@ -3702,6 +3726,38 @@ function memberCardHtml(r) {
         ${memberFeedbackHtml(r)}
       </div>`}
     </div>`;
+}
+
+// ---- Review gate on the member card: is this member locked out of reviews, and Eric's unlock switch ----
+function gateStatusText(r) {
+  const a = r.access;
+  if (!a) return "";
+  if (a.reason === "read_only") return "Never locked — read-only members can always read";
+  if (a.reason === "gate_off") return "Unlocked — the review gate is turned off";
+  if (a.reason === "admin") return "🔓 Unlocked by you";
+  if (a.reason === "reviewer") return `Unlocked — has ${r.reviewCount} review${r.reviewCount === 1 ? "" : "s"} posted`;
+  if (a.reason === "trial") return `Unlocked — in their ${a.trialDays} days, ${a.daysLeft} day${a.daysLeft === 1 ? "" : "s"} left`;
+  return `🔒 Locked — ${a.trialDays} days are up and no review posted`;
+}
+function gateBadgeHtml(r) {
+  const a = r.access;
+  if (!a) return "";
+  if (a.reason === "locked") return `<span class="member-badge gate-badge-locked" title="${esc(gateStatusText(r))}">🔒 locked</span>`;
+  if (a.reason === "admin") return `<span class="member-badge gate-badge-admin" title="You unlocked them by hand">🔓 unlocked by you</span>`;
+  if (a.reason === "trial") return `<span class="member-badge gate-badge-trial" title="${esc(gateStatusText(r))}">⏳ ${a.daysLeft}d left</span>`;
+  return "";
+}
+function gateRowHtml(r) {
+  const a = r.access;
+  const status = `<strong style="color:${a.unlocked ? "#1F5C57" : "#8C3A32"}">${esc(gateStatusText(r))}</strong>`;
+  if (a.reason === "read_only" || a.reason === "gate_off") return status;
+  const on = !!r.gate_unlocked_by_admin_at;
+  return `${status}
+    <label class="gate-switch-row">
+      <span class="gate-switch"><input type="checkbox" data-gate-unlock="${r.id}" ${on ? "checked" : ""} aria-label="Unlock ${esc(r.name)} by hand"/><span class="gate-slider"></span></span>
+      <span>${on ? `Unlocked by you ${esc(adminDate(r.gate_unlocked_by_admin_at))}` : "Unlock by hand"}</span>
+    </label>
+    <div class="hint-text" style="font-size:11px;margin-top:2px">On: they can read every review no matter what. Off: the normal rule (7 days, then they need a review posted). Nothing is emailed.</div>`;
 }
 
 // One-line status for the Feedback form row in a member's stats table.
@@ -4328,6 +4384,21 @@ function attachMemberHandlers() {
       state.adminMemberFeedbackOpen = wasOpen ? null : id;
       paintAdmin();
       if (!wasOpen && !state.adminMemberFeedback[id]) loadMemberFeedback(id);
+    };
+  });
+  document.querySelectorAll("[data-gate-unlock]").forEach((box) => {
+    box.onchange = async () => {
+      const id = box.dataset.gateUnlock;
+      const row = state.adminRequests.find((x) => x.id === id);
+      box.disabled = true;
+      try {
+        const out = await api(`/api/admin/requests/${id}/gate`, { method: "POST", body: { unlock: box.checked } });
+        if (row) { row.gate_unlocked_by_admin_at = out.gate_unlocked_by_admin_at; row.access = out.access; }
+        state.adminNotes[id] = box.checked ? "Unlocked. They can read every review now." : `Back on the normal rule: ${row ? gateStatusText(row).replace(/^[^A-Za-z]+/, "") : "updated"}.`;
+      } catch (e) {
+        state.adminNotes[id] = `Couldn't change that (${e.message}).`;
+      }
+      paintAdmin();
     };
   });
   document.querySelectorAll("[data-tier]").forEach((btn) => {

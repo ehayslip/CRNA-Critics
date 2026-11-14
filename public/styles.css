@@ -662,6 +662,20 @@ a.tiny-btn { text-decoration: none; }
 .member-ro { background: #FFF4E5; color: #8A5A0A; border: 1px solid #B87F1E; }
 .tier-box { margin-top: 12px; padding: 10px 12px; background: #FAFBF9; border: 1px dashed #CBD5CF; border-radius: 6px; }
 
+/* Admin: review-gate status and the "unlock by hand" slide switch on a member card. */
+.gate-badge-locked { background: #F6E3E0; color: #8C3A32; border: 1px solid #8C3A32; }
+.gate-badge-admin { background: #E6F2EC; color: #1F5C57; border: 1px solid #1F5C57; }
+.gate-badge-trial { background: #FFF9EE; color: #8A5A0A; border: 1px solid #F5B301; }
+.gate-switch-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; cursor: pointer; }
+.gate-switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+.gate-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.gate-slider { position: absolute; inset: 0; background: #CBD5CF; border-radius: 22px; transition: background 0.15s; }
+.gate-slider::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+.gate-switch input:checked + .gate-slider { background: #13A15A; }
+.gate-switch input:checked + .gate-slider::before { transform: translateX(18px); }
+.gate-switch input:focus-visible + .gate-slider { outline: 2px solid #123C3A; outline-offset: 2px; }
+.gate-switch input:disabled + .gate-slider { opacity: 0.6; }
+
 /* Members can report a review to the admin. */
 .report-link { color: #6B756F; font-weight: 600; text-decoration: none; }
 .report-link:hover { text-decoration: underline; color: #8C3A32; }

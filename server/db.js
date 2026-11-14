@@ -129,6 +129,8 @@ addColumnIfMissing("access_requests", "last_nudged_at", "TEXT");
 // start counting from here, not from approval. thanks_sent_at: read-only members' one-time thank-you.
 addColumnIfMissing("access_requests", "first_login_at", "TEXT");
 addColumnIfMissing("access_requests", "thanks_sent_at", "TEXT");
+// Review gate: Eric unlocked this member by hand in Admin (the member card's switch). NULL = the normal rule.
+addColumnIfMissing("access_requests", "gate_unlocked_by_admin_at", "TEXT");
 // "Finish setting up your account" reminders for members who were approved but never created a password.
 addColumnIfMissing("access_requests", "setup_nudge_count", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("access_requests", "last_setup_nudge_at", "TEXT");

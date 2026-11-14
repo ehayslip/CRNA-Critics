@@ -89,6 +89,7 @@ function reviewGateStartedMs() {
 function reviewAccessFor(row, role) {
   if (!REVIEW_GATE_ON) return { unlocked: true, reason: "gate_off" };
   if (isReadOnlyRole(role)) return { unlocked: true, reason: "read_only" };
+  if (row.gate_unlocked_by_admin_at) return { unlocked: true, reason: "admin" };
   if (reviewCountFor(row.email) > 0) return { unlocked: true, reason: "reviewer" };
   const firstMs = Date.parse(row.first_login_at || row.decided_at || row.requested_at || "") || Date.now();
   const endsMs = Math.max(firstMs, reviewGateStartedMs()) + REVIEW_TRIAL_MS;
@@ -1522,8 +1523,21 @@ function adminRow(r) {
     reviewCount: counted ? counted.n : 0,
     feedbackSubmittedAt: fb ? fb.submitted_at : null,
     openFlags: flags ? flags.n : 0,
+    // Review gate status for the member card (locked / days left / has reviews / unlocked by Eric).
+    access: r.status === "approved" ? reviewAccessFor(r, r.role || "crna") : null,
   };
 }
+
+// Eric's switch on a member card: unlock this member by hand, or hand them back to the normal
+// rule (7 days, then a review). Nothing is emailed.
+app.post("/api/admin/requests/:id/gate", requireAdmin, (req, res) => {
+  const row = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const unlock = req.body?.unlock === true;
+  db.prepare("UPDATE access_requests SET gate_unlocked_by_admin_at = ? WHERE id = ?").run(unlock ? new Date().toISOString() : null, row.id);
+  const fresh = db.prepare("SELECT * FROM access_requests WHERE id = ?").get(row.id);
+  res.json({ ok: true, gate_unlocked_by_admin_at: fresh.gate_unlocked_by_admin_at, access: reviewAccessFor(fresh, fresh.role || "crna") });
+});
 
 app.get("/api/admin/requests", requireAdmin, (req, res) => {
   const rows = db.prepare("SELECT * FROM access_requests ORDER BY requested_at DESC").all();
@@ -1749,7 +1763,10 @@ app.post("/api/admin/texts/bulk", requireAdmin, (req, res) => {
   const items = Array.isArray(b.items) ? b.items.slice(0, 100) : [];
   if (!items.length) return res.status(400).json({ error: "no_items" });
   const tpl = b.templateId ? db.prepare("SELECT id, name FROM text_templates WHERE id = ?").get(String(b.templateId)) : null;
-  const tplName = tpl ? tpl.name : (String(b.templateName || "").slice(0, 120) || "Typed by hand");
+  // Two groups, never mixed (Eric, Nov 14, 2026): "optin" (ticked the text box at sign-up) and
+  // "account" (didn't — account information only). The log marks account-group texts as such.
+  const accountGroup = b.group === "account";
+  const tplName = (tpl ? tpl.name : (String(b.templateName || "").slice(0, 120) || "Typed by hand")) + (accountGroup ? " (account info, no opt-in)" : "");
   const now = new Date().toISOString();
   const logged = [];
   const skipped = [];
@@ -1763,7 +1780,8 @@ app.post("/api/admin/texts/bulk", requireAdmin, (req, res) => {
       let why = "";
       if (!m) why = "not found";
       else if (m.status !== "approved" || m.role === "srna") why = "not an approved CRNA";
-      else if (!m.sms_consent) why = "no text opt-in";
+      else if (!accountGroup && !m.sms_consent) why = "no text opt-in";
+      else if (accountGroup && m.sms_consent) why = "opted in — use the opted-in group";
       else if (m.phone_bad_at) why = "number flagged as wrong";
       else if (!okNumber) why = "no usable number";
       else if (!body) why = "empty text";
