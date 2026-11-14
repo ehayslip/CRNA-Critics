@@ -54,6 +54,66 @@ const READ_ONLY_ROLES = new Set(["srna", "crna_readonly"]);
 function isReadOnlyRole(role) { return READ_ONLY_ROLES.has(role); }
 function declaredRoleLabel(row) { return (DECLARED_ROLES[row.declared_role] || {}).label || ""; }
 
+// ---------- the review gate: 7 days to look around, then leave a review to keep reading ----------
+//
+// Eric's rule (Nov 14, 2026), same idea as Glassdoor:
+//   - Every newly verified member can read everything for REVIEW_TRIAL_DAYS (7), counted from
+//     their first sign-in (they can't read anything before that, so nobody loses days waiting).
+//   - After that, reviews are "locked" until they have a review of their own on the site. Names
+//     and locations stay visible (so they can still find a hospital or agent); the star ratings,
+//     comments, pay and every other detail are NOT sent to the browser at all — the blur on the
+//     page is only decoration on top of placeholder text. See lockedReview().
+//   - Read-only members (students, chiefs, recruiters, group owners) can't post, so they are
+//     never locked. They are the people the "read only" rule was written for.
+//   - Members who joined before the gate existed get REVIEW_TRIAL_DAYS from the day it first
+//     started (kv: review_gate_started_at), not an instant lock-out.
+//   - Delete your only review (or have it pulled by the admin) and the lock comes back.
+// REVIEW_GATE=off in Railway turns the whole thing off; REVIEW_TRIAL_DAYS changes the 7.
+const REVIEW_GATE_ON = String(process.env.REVIEW_GATE || "on").toLowerCase() !== "off";
+const REVIEW_TRIAL_DAYS = Number(process.env.REVIEW_TRIAL_DAYS || 7);
+const REVIEW_TRIAL_MS = REVIEW_TRIAL_DAYS * 24 * 60 * 60 * 1000;
+function reviewGateStartedMs() {
+  let row = db.prepare("SELECT value FROM kv WHERE key = 'review_gate_started_at'").get();
+  if (!row) {
+    const now = new Date().toISOString();
+    db.prepare("INSERT OR IGNORE INTO kv (key, value) VALUES ('review_gate_started_at', ?)").run(now);
+    row = { value: now };
+  }
+  return Date.parse(row.value) || Date.now();
+}
+// What a member may see right now. `unlocked` is the only thing the server acts on; the rest is
+// for the banner ("3 days left") and the pop-up.
+function reviewAccessFor(row, role) {
+  if (!REVIEW_GATE_ON) return { unlocked: true, reason: "gate_off" };
+  if (isReadOnlyRole(role)) return { unlocked: true, reason: "read_only" };
+  if (reviewCountFor(row.email) > 0) return { unlocked: true, reason: "reviewer" };
+  const firstMs = Date.parse(row.first_login_at || row.decided_at || row.requested_at || "") || Date.now();
+  const endsMs = Math.max(firstMs, reviewGateStartedMs()) + REVIEW_TRIAL_MS;
+  const left = endsMs - Date.now();
+  if (left > 0) {
+    return { unlocked: true, reason: "trial", trialEndsAt: new Date(endsMs).toISOString(), daysLeft: Math.max(1, Math.ceil(left / (24 * 60 * 60 * 1000))), trialDays: REVIEW_TRIAL_DAYS };
+  }
+  return { unlocked: false, reason: "locked", trialEndsAt: new Date(endsMs).toISOString(), daysLeft: 0, trialDays: REVIEW_TRIAL_DAYS };
+}
+// The same review with everything but the names removed. Nothing a locked member could use to
+// read the review leaves the server: no ratings, comments, pay, would-return, or reviewer details.
+function lockedReview(rv) {
+  return {
+    id: rv.id, date: rv.date, isMine: false, anonymous: true, editedAt: null, locked: true,
+    reviewer: { name: "Anonymous CRNA", credentials: "" },
+    employmentType: rv.employmentType,
+    agencyName: rv.agencyName, agentName: rv.agentName, groupName: rv.groupName,
+    hospitalName: rv.hospitalName, hospitalCity: rv.hospitalCity, hospitalState: rv.hospitalState,
+    agencyAgentRatings: {}, agencyAgentWouldReturn: "", agencyAgentComment: "", agencyAgentNotes: {},
+    payRate: null, payRange: "", travelCovered: "",
+    agentRatings: {}, agentWouldReturn: "", agentComment: "", agentNotes: {},
+    hospitalRatings: {}, hospitalWouldReturn: "", hospitalComment: "", hospitalNotes: {},
+    staffPayType: "", staffPayRange: "", familyInsurance: "", ptoWeeks: "", prnRate: "",
+    groupRatings: {}, groupWouldReturn: "", groupComment: "", groupNotes: {},
+    acceptsQuestions: false,
+  };
+}
+
 // ---------- auth middleware ----------
 
 function requireSession(req, res, next) {
@@ -69,6 +129,7 @@ function requireSession(req, res, next) {
     phone: row.phone || "",
     accessThrough: role === "srna" ? monthYearLabel(row) : undefined,
     needsDeclaration: needsDeclaration(row), pastDeadline: !row.declared_role && !!row.declare_deadline_at,
+    access: reviewAccessFor(row, role),
   };
   next();
 }
@@ -401,17 +462,34 @@ This is Eric Hayslip, CRNA. Thanks for signing up for CRNA Critics. Here's a qui
 
 The site only works if CRNAs leave reviews. If every one of us rated our current assignment — good or bad — the next CRNA headed there would know exactly what to expect. It takes 3 to 5 minutes.
 
+Everyone gets 7 days of access to read reviews and check out the site. If you haven't left a review by then, you won't be able to see the reviews — one review of your current or a past assignment unlocks them again.
+
 {{cta}}
 
 Every review is anonymous. Other CRNAs see you only as "Anonymous CRNA" — no one will know it was you.
 
 — Eric Hayslip, CRNA, CRNA Critics`,
 };
+// The 7-day-access statement (Nov 14, 2026) — one paragraph, kept as its own constant so the
+// one-time migration below can add it to a template that already exists in the live database.
+const TRIAL_NOTE = "Everyone gets 7 days of access to read reviews and check out the site. If you haven't left a review by then, you won't be able to see the reviews — one review of your current or a past assignment unlocks them again.";
 (function ensureVideoTemplate() {
-  if (db.prepare("SELECT 1 FROM email_templates WHERE name = ?").get(VIDEO_TEMPLATE.name)) return;
   const now = new Date().toISOString();
-  db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
-    .run(crypto.randomUUID(), VIDEO_TEMPLATE.name, VIDEO_TEMPLATE.category, VIDEO_TEMPLATE.subject, VIDEO_TEMPLATE.body, now, now);
+  const existing = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(VIDEO_TEMPLATE.name);
+  if (!existing) {
+    db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), VIDEO_TEMPLATE.name, VIDEO_TEMPLATE.category, VIDEO_TEMPLATE.subject, VIDEO_TEMPLATE.body, now, now);
+    return;
+  }
+  // One time only (tracked in kv): put the statement into the template Eric already has, just
+  // above the button, keeping any wording he has edited. If he later deletes the paragraph, it stays deleted.
+  if (db.prepare("SELECT 1 FROM kv WHERE key = 'trial_note_in_video_template_2026_11_14'").get()) return;
+  db.prepare("INSERT INTO kv (key, value) VALUES ('trial_note_in_video_template_2026_11_14', ?)").run(now);
+  if (/7 days/i.test(existing.body)) return; // already says it
+  const body = /\{\{cta\}\}/.test(existing.body)
+    ? existing.body.replace(/\{\{cta\}\}/, `${TRIAL_NOTE}\n\n{{cta}}`)
+    : `${existing.body.replace(/\s+$/, "")}\n\n${TRIAL_NOTE}`;
+  db.prepare("UPDATE email_templates SET body = ?, updated_at = ? WHERE id = ?").run(body, now, existing.id);
 })();
 
 function declareUrlFor(row) {
@@ -2680,7 +2758,11 @@ app.get("/api/reviews", requireSession, (req, res) => {
   const rows = db.prepare("SELECT * FROM reviews ORDER BY date DESC").all();
   // acceptsQuestions only says whether to show "Ask this reviewer" — it never reveals who the reviewer is.
   const optedOut = messaging.optedOutEmails();
-  res.json({ reviews: rows.map((r) => ({ ...rowToReview(r, req.user.email), acceptsQuestions: !optedOut.has(r.reviewer_email) })) });
+  const full = rows.map((r) => ({ ...rowToReview(r, req.user.email), acceptsQuestions: !optedOut.has(r.reviewer_email) }));
+  // A locked member still gets every name (so search works) and their own reviews, but nothing
+  // else about anyone else's — see reviewAccessFor() / lockedReview().
+  const reviews = req.user.access.unlocked ? full : full.map((rv) => (rv.isMine ? rv : lockedReview(rv)));
+  res.json({ reviews, access: req.user.access });
 });
 
 // Validates a review body and returns the column values shared by create and edit,

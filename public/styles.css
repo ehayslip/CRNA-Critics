@@ -726,3 +726,17 @@ a.store-btn:focus-visible { outline: 3px solid #F5B301; outline-offset: 2px; }
 .yt-sub:hover, .yt-sub:focus-visible { background: #A80000; color: #fff; }
 .yt-sub-icon { position: relative; width: 22px; height: 16px; border-radius: 4px; background: #fff; flex: none; }
 .yt-sub-icon::after { content: ""; position: absolute; left: 8px; top: 4px; border-style: solid; border-width: 4px 0 4px 7px; border-color: transparent transparent transparent #CC0000; }
+
+/* ---------- review gate: 7 days to look around, then leave a review to keep reading ---------- */
+.gate-banner { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; background: #EAF4EE; border-left: 4px solid #13A15A; color: #14231F; padding: 10px 14px; font-size: 13px; line-height: 1.45; }
+.gate-banner > span { flex: 1 1 260px; }
+.gate-banner-locked { background: #FBEDEA; border-left-color: #8C3A32; }
+.gate-banner-btn { background: #0B1526; color: #fff; border: none; padding: 9px 16px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: Inter, sans-serif; }
+.gate-blur { filter: blur(5px); user-select: none; pointer-events: none; }
+.gate-blur-heavy { filter: blur(7px); }
+.gate-wrap { position: relative; min-height: 380px; }
+.gate-pop { position: absolute; top: 28px; left: 50%; transform: translateX(-50%); width: calc(100% - 28px); max-width: 420px; background: #fff; border: 2px solid #0B1526; box-shadow: 0 10px 34px rgba(11, 21, 38, 0.28); padding: 22px 20px 16px; text-align: center; z-index: 1; }
+.gate-pop-lock { font-size: 30px; line-height: 1; margin-bottom: 8px; }
+.gate-pop-title { font-family: 'Special Elite', monospace; font-size: 19px; line-height: 1.3; margin-bottom: 8px; }
+.gate-pop-text { font-size: 13px; line-height: 1.5; color: #3C4A45; margin: 0 0 14px; }
+.gate-pop-back { background: none; border: none; color: #0B1526; font-weight: 700; text-decoration: underline; cursor: pointer; font-size: 13px; margin-top: 10px; font-family: Inter, sans-serif; }

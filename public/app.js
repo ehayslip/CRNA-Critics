@@ -585,6 +585,75 @@ async function loadReviews() {
   } catch { /* merges are an enhancement — the built-in rules still apply */ }
   const data = await api("/api/reviews");
   state.reviews = data.reviews;
+  state.access = data.access || null;
+}
+
+// ---------- the review gate (7 days to look around, then leave a review to keep reading) ----------
+// The server decides; when a member is locked it sends names only, so there is nothing real
+// under the blur — what's drawn there is placeholder text.
+function isLocked() { return !!(state.access && state.access.unlocked === false); }
+const UNLOCK_MESSAGE = "To unlock and see this review, Please leave a review!";
+function accessBannerHtml() {
+  const a = state.access;
+  if (!a || isReadOnly()) return "";
+  if (a.reason === "trial") {
+    const d = a.daysLeft;
+    return `<div class="gate-banner"><span><strong>${d} DAY${d !== 1 ? "S" : ""} LEFT TO READ REVIEWS.</strong> Everyone gets ${a.trialDays} days to check the site out. Leave a review of your current or a past assignment and you keep access &mdash; it takes 3 to 5 minutes and it's anonymous.</span><button type="button" class="gate-banner-btn" data-go-submit>Leave a review</button></div>`;
+  }
+  if (a.reason === "locked") {
+    return `<div class="gate-banner gate-banner-locked"><span><strong>&#128274; REVIEWS ARE LOCKED.</strong> Your ${a.trialDays} days of access have ended. Leave a review of your current or a past assignment to see star ratings and reviews again.</span><button type="button" class="gate-banner-btn" data-go-submit>Leave a review</button></div>`;
+  }
+  return "";
+}
+function goToSubmit() {
+  state.tab = "submit"; state.detail = null;
+  render();
+  window.scrollTo(0, 0);
+}
+function attachGateHandlersInApp() {
+  document.querySelectorAll("[data-go-submit]").forEach((btn) => { btn.onclick = goToSubmit; });
+}
+// Stand-in rating shown blurred on a locked search card — the same for every name, so it says nothing.
+function lockedScoreHtml(total) {
+  return `<div class="locked-score" style="text-align:right;flex-shrink:0">
+      <div class="gate-blur" aria-hidden="true">${starsHtml(4, 13)}<div style="font-size:15px;font-weight:800;margin-top:2px;white-space:nowrap"><span style="font-size:22px">0.0</span> out of 5.0</div></div>
+      <div style="font-size:11px;color:#6B756F">&#128274; ${total} review${total !== 1 ? "s" : ""} &middot; locked</div>
+    </div>`;
+}
+// A locked name's page: the name and location are real; everything under the blur is filler.
+function lockedDetailHtml(type, name, rows) {
+  const ent = ENTITY[type];
+  const locLabel = type === "hospital" ? commonLocation(rows) : "";
+  const filler = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation.";
+  const fakeStats = ent.categories.map((c) => `
+      <div class="stat-row"><div class="stat-head"><span class="stat-label">${esc(c.label)}</span><span class="stat-stars">${starsHtml(4, 13)}</span><span class="stat-avg">0.0 <span class="stat-of">of 5.0</span></span></div></div>`).join("");
+  const fakeRows = rows.slice(0, 6).map(() => `
+      <div class="card"><div style="font-weight:800;font-size:16px;margin-bottom:4px">0.0 <span style="font-size:12px;font-weight:600;color:#6B756F">out of 5.0</span></div>
+        <div style="margin:6px 0">${ent.categories.map((c) => `<span class="chip">${esc(c.label.split(" ")[0])} 0</span>`).join("")}</div>
+        <p style="margin:6px 0">${filler}</p>
+        <p style="margin:0;font-size:12px;color:#6B756F">&mdash; Anonymous CRNA</p></div>`).join("");
+  return `
+    <button class="back-btn" id="detail-back">&larr; Back to search</button>
+    <div class="card border-${type}" style="margin-top:10px">
+      <div style="font-size:11px;letter-spacing:0.3px;color:${COLORS[type]};font-weight:700">${typeLabel(type).toUpperCase()}</div>
+      <div style="font-family:'Special Elite',monospace;font-size:24px;margin:4px 0">${esc(name)}</div>
+      ${locLabel ? `<div style="font-size:13px;color:#6B756F;margin-bottom:4px">${esc(locLabel)}</div>` : ""}
+      <div style="font-size:13px;color:#6B756F">&#128274; ${rows.length} review${rows.length !== 1 ? "s" : ""} on file &middot; locked</div>
+    </div>
+    <div class="gate-wrap">
+      <div class="gate-blur gate-blur-heavy" aria-hidden="true">
+        <div class="card" style="margin-top:0"><div class="section-label">CATEGORY AVERAGES</div><div class="stat-rows">${fakeStats}</div></div>
+        <div class="section-label" style="margin:14px 0 8px">INDIVIDUAL REVIEWS</div>
+        ${fakeRows}
+      </div>
+      <div class="gate-pop" role="dialog" aria-modal="false" aria-labelledby="gate-pop-title">
+        <div class="gate-pop-lock">&#128274;</div>
+        <div class="gate-pop-title" id="gate-pop-title">${esc(UNLOCK_MESSAGE)}</div>
+        <p class="gate-pop-text">Your ${state.access && state.access.trialDays ? state.access.trialDays : 7} days of access have ended. Review your current or a past work experience &mdash; it takes 3 to 5 minutes, it's anonymous, and it unlocks every review on the site.</p>
+        <button type="button" class="primary-btn" data-go-submit>Leave a review</button>
+        <button type="button" class="gate-pop-back" id="gate-pop-back">Back to search</button>
+      </div>
+    </div>`;
 }
 
 // ---------- computed helpers ----------
@@ -642,8 +711,9 @@ function render() {
   if (state.view === "guidelines") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${guidelinesPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachGuidelinesPageHandlers(); return; }
   if (state.view === "deleteprofile") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${deleteProfilePageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachDeleteProfileHandlers(); return; }
   if (state.view === "contact") { root.innerHTML = headerHtml() + toastHtml() + `<div class="body">${contactPageHtml()}</div>` + footerHtml(); attachFooterHandlers(); attachContactHandlers(); return; }
-  root.innerHTML = headerHtml() + toastHtml() + navHtml() + studentBannerHtml() + declareCardHtml() + sideBarHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
+  root.innerHTML = headerHtml() + toastHtml() + navHtml() + studentBannerHtml() + accessBannerHtml() + declareCardHtml() + sideBarHtml() + `<div class="body" id="tab-root"></div>` + footerHtml();
   attachFooterHandlers();
+  attachGateHandlersInApp();
   attachNavHandlers();
   attachDeclareHandlers();
   attachSideBarHandlers();
@@ -1772,7 +1842,7 @@ function atLeast(list, chosen, value) {
   return got >= 0 && got >= want;
 }
 function passesFilters(item) {
-  if (!state.filters) return true;
+  if (!state.filters || isLocked()) return true; // a locked member has no ratings or pay to filter on
   const fl = state.filters;
   const on = filterFields();
   const rows = item.rows || [];
@@ -1812,6 +1882,7 @@ function filterChoiceRow(key, label, options, value, hint) {
     </div>`;
 }
 function filterPanelHtml() {
+  if (isLocked()) return "";
   const fl = filters();
   const on = filterFields();
   const n = activeFilterCount();
@@ -1904,7 +1975,9 @@ function searchResultsHtml(results) {
       : `No ${label.toLowerCase()} reviewed yet. If you've worked with one, post the first review.`;
     return `<div class="empty-box"><p style="margin:0">${msg}</p>${elsewhereHtml}</div>`;
   }
-  const intro = `<p class="hint-text" style="margin:0 0 12px">Every review of a name is combined into one score, and different spellings of the same company are merged. Tap a name to see the cumulative score for each category, what each star means, and every individual review behind the average.</p>`;
+  const intro = isLocked()
+    ? `<p class="hint-text" style="margin:0 0 12px">&#128274; Star ratings and reviews are locked. You can still search every name &mdash; leave a review of your current or a past assignment to see them.</p>`
+    : `<p class="hint-text" style="margin:0 0 12px">Every review of a name is combined into one score, and different spellings of the same company are merged. Tap a name to see the cumulative score for each category, what each star means, and every individual review behind the average.</p>`;
   const cardHtml = (item) => `
     <button class="card clickable border-${item.type}${isBeware(item.avg) ? " beware-card" : ""}" data-open="${item.type}::${esc(item.name)}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
@@ -1913,7 +1986,7 @@ function searchResultsHtml(results) {
           ${item.location ? `<div style="font-size:12px;color:#6B756F;margin-top:2px">${esc(item.location)}</div>` : ""}
           ${isBeware(item.avg) ? bewareStampHtml("sm") : ""}
         </div>
-        ${item.count > 0
+        ${isLocked() ? lockedScoreHtml(item.total) : item.count > 0
           ? `<div style="text-align:right;flex-shrink:0">
                ${starsHtml(Math.round(item.avg), 13)}
                <div style="font-size:15px;font-weight:800;margin-top:2px;white-space:nowrap"><span style="font-size:22px">${item.avg.toFixed(1)}</span> out of 5.0</div>
@@ -1980,6 +2053,7 @@ function detailHtml() {
   const ent = ENTITY[type];
   const isHospital = type === "hospital";
   const rows = sideReviews().filter((r) => r[ent.field] && canonicalName(r[ent.field]) === name).sort((a, b) => b.date.localeCompare(a.date));
+  if (isLocked()) return lockedDetailHtml(type, name, rows);
   const otherSpellings = spellingsFor(rows, ent.field, name);
   const categories = ent.categories;
   const scores = rows.map((r) => weighted(categories, r[ent.ratings])).filter((v) => v > 0);
@@ -2497,7 +2571,7 @@ function attachSubmitHandlers() {
       resetForms();
       state.editingId = null;
       state.tab = editingId ? "mine" : "search";
-      flash(editingId ? "Review updated." : "Review posted anonymously.");
+      flash(editingId ? "Review updated." : "Review posted anonymously. Every review on the site is unlocked for you.");
       render();
     } catch (e) {
       errEl.textContent = editingId ? "Something went wrong saving your changes. Try again." : "Something went wrong posting your review. Try again.";
@@ -2697,6 +2771,9 @@ const _renderTab = renderTab;
 renderTab = function () {
   _renderTab();
   if (state.tab === "search" && state.detail) attachDeleteHandlers();
+  attachGateHandlersInApp();
+  const gateBack = document.getElementById("gate-pop-back");
+  if (gateBack) gateBack.onclick = () => { state.detail = null; renderTab(); };
 };
 
 // ---------- messages ("Ask this reviewer") ----------
