@@ -462,7 +462,7 @@ This is Eric Hayslip, CRNA. Thanks for signing up for CRNA Critics. Here's a qui
 
 The site only works if CRNAs leave reviews. If every one of us rated our current assignment — good or bad — the next CRNA headed there would know exactly what to expect. It takes 3 to 5 minutes.
 
-Everyone gets 7 days of access to read reviews and check out the site. If you haven't left a review by then, you won't be able to see the reviews — one review of your current or a past assignment unlocks them again.
+Everyone gets 7 days of access to read reviews and check out the site. If you haven't left a review by then, you won't be able to see the reviews — one review of your current or past assignment/job unlocks the site permanently.
 
 {{cta}}
 
@@ -472,7 +472,7 @@ Every review is anonymous. Other CRNAs see you only as "Anonymous CRNA" — no o
 };
 // The 7-day-access statement (Nov 14, 2026) — one paragraph, kept as its own constant so the
 // one-time migration below can add it to a template that already exists in the live database.
-const TRIAL_NOTE = "Everyone gets 7 days of access to read reviews and check out the site. If you haven't left a review by then, you won't be able to see the reviews — one review of your current or a past assignment unlocks them again.";
+const TRIAL_NOTE = "Everyone gets 7 days of access to read reviews and check out the site. If you haven't left a review by then, you won't be able to see the reviews — one review of your current or past assignment/job unlocks the site permanently.";
 (function ensureVideoTemplate() {
   const now = new Date().toISOString();
   const existing = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(VIDEO_TEMPLATE.name);
@@ -1129,7 +1129,8 @@ function sendWelcomeEmail(row) {
           ? `<p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics with <strong>read-only access</strong>.</p>
         <p style="background:#FFF4E5;border-left:4px solid #B87F1E;padding:10px 12px;">You told us you're a ${escapeHtml(declaredRoleLabel(row).toLowerCase() || "CRNA on the staffing side")}. As agreed on the sign-up form and in Section 1 of the Terms, members who hire, schedule, recruit, or own a group can search and read every review but can't post reviews or message reviewers &mdash; the ratings have to come from CRNAs with nothing at stake in them. If your situation changes, reply to this email and we'll update your account.</p>`
           : `<p>Hi ${escapeHtml(row.name)}, you're approved as a verified CRNA on CRNA Critics.</p>
-        <p style="background:#EEF6F1;border-left:4px solid #1F5C57;padding:10px 12px;">&#128274; <strong>You're anonymous.</strong> Your name is never shown on the site — every review you post appears as "Anonymous CRNA," so no one will know who you are.</p>`}
+        <p style="background:#EEF6F1;border-left:4px solid #1F5C57;padding:10px 12px;">&#128274; <strong>You're anonymous.</strong> Your name is never shown on the site — every review you post appears as "Anonymous CRNA," so no one will know who you are.</p>${REVIEW_GATE_ON ? `
+        <p style="background:#FFF9EE;border-left:4px solid #F5B301;padding:10px 12px;"><strong>You have ${REVIEW_TRIAL_DAYS} days to read reviews and check out the site</strong>, starting with your first sign-in. If you haven't left a review by then, you won't be able to see the reviews. One review of your current or past assignment/job unlocks the site permanently.</p>` : ""}`}
         <p>Use the button below to sign in for the first time and create your password. After that, you'll sign in with your email and password — no more links.</p>
         <p><a href="${loginUrl}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Sign in &amp; create password</a></p>
         <p style="color:#888;font-size:12px;">This link expires in 48 hours. If it expires, use "Forgot password" on the sign-in screen to get a new one.</p>

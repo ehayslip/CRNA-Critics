@@ -598,10 +598,10 @@ function accessBannerHtml() {
   if (!a || isReadOnly()) return "";
   if (a.reason === "trial") {
     const d = a.daysLeft;
-    return `<div class="gate-banner"><span><strong>${d} DAY${d !== 1 ? "S" : ""} LEFT TO READ REVIEWS.</strong> Everyone gets ${a.trialDays} days to check the site out. Leave a review of your current or a past assignment and you keep access &mdash; it takes 3 to 5 minutes and it's anonymous.</span><button type="button" class="gate-banner-btn" data-go-submit>Leave a review</button></div>`;
+    return `<div class="gate-banner"><span><strong>${d} DAY${d !== 1 ? "S" : ""} LEFT TO READ REVIEWS.</strong> Everyone gets ${a.trialDays} days to check the site out. One review of your current or past assignment/job unlocks the site permanently &mdash; it takes 3 to 5 minutes and it's anonymous.</span><button type="button" class="gate-banner-btn" data-go-submit>Leave a review</button></div>`;
   }
   if (a.reason === "locked") {
-    return `<div class="gate-banner gate-banner-locked"><span><strong>&#128274; REVIEWS ARE LOCKED.</strong> Your ${a.trialDays} days of access have ended. Leave a review of your current or a past assignment to see star ratings and reviews again.</span><button type="button" class="gate-banner-btn" data-go-submit>Leave a review</button></div>`;
+    return `<div class="gate-banner gate-banner-locked"><span><strong>&#128274; REVIEWS ARE LOCKED.</strong> Your ${a.trialDays} days of access have ended. One review of your current or past assignment/job unlocks the site permanently.</span><button type="button" class="gate-banner-btn" data-go-submit>Leave a review</button></div>`;
   }
   return "";
 }
@@ -649,7 +649,7 @@ function lockedDetailHtml(type, name, rows) {
       <div class="gate-pop" role="dialog" aria-modal="false" aria-labelledby="gate-pop-title">
         <div class="gate-pop-lock">&#128274;</div>
         <div class="gate-pop-title" id="gate-pop-title">${esc(UNLOCK_MESSAGE)}</div>
-        <p class="gate-pop-text">Your ${state.access && state.access.trialDays ? state.access.trialDays : 7} days of access have ended. Review your current or a past work experience &mdash; it takes 3 to 5 minutes, it's anonymous, and it unlocks every review on the site.</p>
+        <p class="gate-pop-text">Your ${state.access && state.access.trialDays ? state.access.trialDays : 7} days of access have ended. Review your current or a past work experience &mdash; it takes 3 to 5 minutes, it's anonymous, and it permanently unlocks every review on the site.</p>
         <button type="button" class="primary-btn" data-go-submit>Leave a review</button>
         <button type="button" class="gate-pop-back" id="gate-pop-back">Back to search</button>
       </div>
@@ -1976,7 +1976,7 @@ function searchResultsHtml(results) {
     return `<div class="empty-box"><p style="margin:0">${msg}</p>${elsewhereHtml}</div>`;
   }
   const intro = isLocked()
-    ? `<p class="hint-text" style="margin:0 0 12px">&#128274; Star ratings and reviews are locked. You can still search every name &mdash; leave a review of your current or a past assignment to see them.</p>`
+    ? `<p class="hint-text" style="margin:0 0 12px">&#128274; Star ratings and reviews are locked. You can still search every name &mdash; one review of your current or past assignment/job unlocks the site permanently.</p>`
     : `<p class="hint-text" style="margin:0 0 12px">Every review of a name is combined into one score, and different spellings of the same company are merged. Tap a name to see the cumulative score for each category, what each star means, and every individual review behind the average.</p>`;
   const cardHtml = (item) => `
     <button class="card clickable border-${item.type}${isBeware(item.avg) ? " beware-card" : ""}" data-open="${item.type}::${esc(item.name)}">

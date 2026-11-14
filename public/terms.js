@@ -2,11 +2,12 @@
 // way members should have to re-accept; the accepted version is stored per member
 // on access_requests.terms_version.
 window.CRNA_TERMS = {
-  version: "1.1",
-  effective: "October 5, 2026",
+  version: "1.2",
+  effective: "November 14, 2026",
   title: "CRNA Critics — Terms of Use & Member Agreement",
   html: `
-<p class="terms-meta">Version 1.1 &middot; Effective October 5, 2026</p>
+<p class="terms-meta">Version 1.2 &middot; Effective November 14, 2026</p>
+<p class="terms-meta"><em>What changed in 1.2:</em> full members get 7 days to read reviews, and after that must have posted a review of their own to keep reading (Section 1, "Seven days of access, then a review"). For members who joined before November 14, 2026, the 7 days start on that date.</p>
 <p class="terms-meta"><em>What changed in 1.1:</em> version 1.0 (September 13, 2026) barred recruiters, agency employees, chiefs and group owners entirely. Version 1.1 admits CRNAs in those roles with read-only membership (Section 1), adds the "no stake in the rating" rule (Section 3), and the in-site Report link (Section 12).</p>
 
 <p><strong>Read this before you create an account.</strong> CRNA Critics ("the Site") is owned and
@@ -32,6 +33,14 @@ request access and do not use the Site.</p>
             at stake in them, and a party being rated must not be able to rate itself, its competitors, or contact the
             people who rated it.</li>
       </ul></li>
+  <li><strong>Seven days of access, then a review.</strong> Every full member may read the reviews and ratings on the Site
+      for 7 days, counted from their first sign-in (or from November 14, 2026, for members who joined before that date).
+      After those 7 days, a full member who has not posted a review can still search names and locations, but star ratings
+      and reviews are hidden. Posting one review of a current or past assignment or job unlocks every review on the Site
+      permanently, for as long as that review stays posted. If you delete your only review, or we remove it under these
+      Terms, the reviews are hidden again until you post another. A review posted only to gain access &mdash; one that is
+      not first-hand and truthful under Section 3 &mdash; may be removed. Read-only members cannot post and are not
+      subject to this requirement. We may change the length of this period or this requirement at any time.</li>
   <li><strong>Tell us when your role changes.</strong> If a full member takes a chief, recruiting, ownership, or management
       role, you agree to notify us so your account can be moved to read-only. If a read-only member leaves such a role,
       you may ask us to restore full membership. We may move any account between levels at any time, at our sole
