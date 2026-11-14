@@ -2724,9 +2724,9 @@ function attachDeleteHandlers() {
         <button class="tiny-btn" style="margin-left:6px" id="cancel-del-${id}">Cancel</button>`;
       document.getElementById(`confirm-del-${id}`).onclick = async () => {
         try {
-          await api(`/api/reviews/${id}`, { method: "DELETE" });
+          const out = await api(`/api/reviews/${id}`, { method: "DELETE" });
           await loadReviews();
-          flash("Review deleted.");
+          flash(out && out.locked ? "Review deleted. That was your last review, so reviews are locked again until you post one." : "Review deleted.");
           renderTab();
         } catch { flash("Couldn't delete — try again."); }
       };

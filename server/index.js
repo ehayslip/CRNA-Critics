@@ -67,8 +67,9 @@ function declaredRoleLabel(row) { return (DECLARED_ROLES[row.declared_role] || {
 //     never locked. They are the people the "read only" rule was written for.
 //   - Members who joined before the gate existed get REVIEW_TRIAL_DAYS from the day it first
 //     started (kv: review_gate_started_at), not an instant lock-out.
-//   - Posting a review unlocks the site permanently (access_requests.review_unlocked_at). Deleting
-//     that review later, or the admin pulling it, does NOT lock them again (Eric, Nov 14, 2026).
+//   - Only members with a review on the site have full access. Delete all of your reviews (or have
+//     them pulled by the admin) and the lock comes back; a member who deletes their last review is
+//     emailed why (sendReviewsLockedEmail) — Eric, Nov 14, 2026.
 //   - Locked members can't use "Ask this reviewer" either (server/messages.js).
 // REVIEW_GATE=off in Railway turns the whole thing off; REVIEW_TRIAL_DAYS changes the 7.
 const REVIEW_GATE_ON = String(process.env.REVIEW_GATE || "on").toLowerCase() !== "off";
@@ -83,22 +84,12 @@ function reviewGateStartedMs() {
   }
   return Date.parse(row.value) || Date.now();
 }
-// Everyone who has ever had a review on the site is unlocked for good. Safe to run on every start:
-// it only fills in members who have a review now and no stamp yet.
-db.prepare(
-  `UPDATE access_requests SET review_unlocked_at = (SELECT MIN(date) FROM reviews WHERE reviews.reviewer_email = access_requests.email)
-   WHERE review_unlocked_at IS NULL AND EXISTS (SELECT 1 FROM reviews WHERE reviews.reviewer_email = access_requests.email)`
-).run();
-function markReviewUnlocked(email) {
-  db.prepare("UPDATE access_requests SET review_unlocked_at = ? WHERE email = ? AND review_unlocked_at IS NULL").run(new Date().toISOString(), email);
-}
-
 // What a member may see right now. `unlocked` is the only thing the server acts on; the rest is
 // for the banner ("3 days left") and the pop-up.
 function reviewAccessFor(row, role) {
   if (!REVIEW_GATE_ON) return { unlocked: true, reason: "gate_off" };
   if (isReadOnlyRole(role)) return { unlocked: true, reason: "read_only" };
-  if (row.review_unlocked_at || reviewCountFor(row.email) > 0) return { unlocked: true, reason: "reviewer" };
+  if (reviewCountFor(row.email) > 0) return { unlocked: true, reason: "reviewer" };
   const firstMs = Date.parse(row.first_login_at || row.decided_at || row.requested_at || "") || Date.now();
   const endsMs = Math.max(firstMs, reviewGateStartedMs()) + REVIEW_TRIAL_MS;
   const left = endsMs - Date.now();
@@ -2858,7 +2849,6 @@ app.post("/api/reviews", requireCrna, (req, res) => {
     `INSERT INTO reviews (id, date, reviewer_name, reviewer_credentials, reviewer_email, ${cols.join(", ")})
      VALUES (?,?,?,?,?, ${cols.map(() => "?").join(",")})`
   ).run(id, new Date().toISOString(), req.user.name, req.user.credentials, req.user.email, ...cols.map((c) => v[c]));
-  markReviewUnlocked(req.user.email);
   const row = db.prepare("SELECT * FROM reviews WHERE id = ?").get(id);
   res.json({ review: rowToReview(row, req.user.email) });
 });
@@ -2917,8 +2907,33 @@ app.delete("/api/reviews/:id", requireSession, (req, res) => {
   if (!row) return res.status(404).json({ error: "not_found" });
   if (row.reviewer_email !== req.user.email) return res.status(403).json({ error: "not_yours" });
   db.prepare("DELETE FROM reviews WHERE id = ?").run(req.params.id);
-  res.json({ ok: true });
+  // That was their last review and their 7 days are over: reviews lock again. Tell them why by email.
+  const member = db.prepare("SELECT * FROM access_requests WHERE email = ?").get(req.user.email);
+  const lockedNow = member && reviewAccessFor(member, req.user.role).unlocked === false;
+  res.json({ ok: true, locked: !!lockedNow });
+  if (lockedNow) sendReviewsLockedEmail(member).catch((e) => console.error("Reviews-locked email failed:", e.message));
 });
+
+// Sent once, right when a member deletes their last review and loses access (Eric, Nov 14, 2026).
+function sendReviewsLockedEmail(row) {
+  return sendEmail({
+    to: row.email,
+    replyTo: REPLY_TO,
+    subject: "Your CRNA Critics reviews are locked",
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
+        ${emailHeaderHtml(BASE_URL, 480)}
+        <h2 style="color:#123C3A;">&#128274; Reviews are locked on your account</h2>
+        <p>Hi ${escapeHtml(firstNameOf(row.name))},</p>
+        <p>You deleted your last review on CRNA Critics, so you no longer have full access to the site.</p>
+        <p style="background:#FFF9EE;border-left:4px solid #F5B301;padding:10px 12px;"><strong>Only members who have a review posted get full access.</strong> That's what keeps the site full of honest, first-hand reviews from CRNAs. You can still sign in and search names and locations, but star ratings, comments, pay and "Ask this reviewer" are locked until you post a review again.</p>
+        <p>Leave one review of your current or past assignment/job and every review on the site unlocks again. It takes 3 to 5 minutes, and it's anonymous &mdash; it shows only as "Anonymous CRNA."</p>
+        <p><a href="${BASE_URL}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Leave a review</a></p>
+        <p>If you deleted it by mistake, just post it again. Questions? Reply to this email.</p>
+      </div>
+    `,
+  });
+}
 
 // ---------- beta feedback (public, token-based — no member login required) ----------
 
