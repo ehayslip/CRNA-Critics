@@ -3105,7 +3105,7 @@ const { youtubeChannelUrl, youtubeVideoId } = require("./social");
 function appLinks() {
   return {
     ios: (process.env.IOS_APP_URL || "").trim(),
-    android: (process.env.ANDROID_APP_URL || "").trim(),
+    android: (process.env.ANDROID_APP_URL || "https://play.google.com/store/apps/details?id=com.crnacritics.app").trim(),
   };
 }
 app.get("/api/app-links", (req, res) => {
