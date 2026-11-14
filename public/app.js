@@ -3085,8 +3085,16 @@ function whenSent(v) {
 function firstNameOf(r) {
   return String((r && r.name) || "").trim().split(/\s+/)[0] || "there";
 }
+// {{days_left}} is how many of the member's 7 free days remain; if they aren't in the trial
+// window (locked, unlocked, or no status), it falls back to "7" so the text still reads right.
+function daysLeftOf(r) {
+  const a = r && r.access;
+  return a && a.reason === "trial" && a.daysLeft ? String(a.daysLeft) : "7";
+}
 function fillText(body, r) {
-  return String(body || "").replace(/\{\{?\s*first_name\s*\}?\}/gi, firstNameOf(r));
+  return String(body || "")
+    .replace(/\{\{?\s*first_name\s*\}?\}/gi, firstNameOf(r))
+    .replace(/\{\{?\s*days_left\s*\}?\}/gi, daysLeftOf(r));
 }
 // iPhone/iPad/Mac Messages expect "&body=", everything else "?body=".
 function smsHref(phone, body) {
@@ -3581,7 +3589,7 @@ function textsSection() {
       </div>
     </div>`;
   return `
-    <p class="hint-text">The site doesn't send texts itself. These are ready-made texts that go out from your own phone or Mac. <code>{{first_name}}</code> is replaced with each member's first name. To text one person, open them under Members. To text several, use the box below.</p>
+    <p class="hint-text">The site doesn't send texts itself. These are ready-made texts that go out from your own phone or Mac. <code>{{first_name}}</code> is replaced with each member's first name, and <code>{{days_left}}</code> with how many of their 7 free days are left. To text one person, open them under Members. To text several, use the box below.</p>
     ${bulkSectionHtml()}
     <div class="section-label" style="margin:12px 0 8px">READY-MADE TEXTS (${templates.length})</div>
     ${templates.map(tplCard).join("")}

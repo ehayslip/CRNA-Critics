@@ -2972,6 +2972,35 @@ If you deleted it by mistake, just post it again. Questions? Reply to this email
     sort, now, now
   );
 })();
+// "Finish setting up your account" texts for Eric to pick from Admin → Texts, one per status.
+// Added once (tracked in kv), so anything he edits or deletes stays that way. {{days_left}} is
+// filled per member in the admin. Account-information texts (first three) are fine for members
+// who did not opt in to texts; the last two are friendlier/promotional, so use them with opted-in members.
+(function ensureAccountSetupTexts() {
+  if (db.prepare("SELECT 1 FROM kv WHERE key = 'account_setup_texts_2026_11_14'").get()) return;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO kv (key, value) VALUES ('account_setup_texts_2026_11_14', ?)").run(now);
+  let sort = (db.prepare("SELECT MAX(sort) AS m FROM text_templates").get().m ?? -1) + 1;
+  const ins = db.prepare("INSERT INTO text_templates (id, name, body, sort, created_at, updated_at) VALUES (?,?,?,?,?,?)");
+  [
+    {
+      name: "Account setup — in the 7 days (account info)",
+      body: "Hi {{first_name}}, it's Eric Hayslip from CRNA Critics. You're verified and you have {{days_left}} days left of full access to read reviews. After that, ratings and reviews are blurred until you leave one review of a current or past assignment. That one review unlocks the site for good, and you stay anonymous. Log in at crnacritics.com to finish setting up your account. P.S. Check your spam or junk folder for our emails and mark them \"Not spam\" so you don't miss anything.",
+    },
+    {
+      name: "Account setup — locked, how to unlock (account info)",
+      body: "Hi {{first_name}}, it's Eric Hayslip from CRNA Critics. Your 7 days of free access have ended, so reviews are blurred for now. To unlock, log in at crnacritics.com and leave one review of a current or past assignment. It takes a few minutes, it unlocks the site permanently, and no one will know who you are. Still stuck? Text me back and I'll help. Also check your spam or junk folder for our emails.",
+    },
+    {
+      name: "Account setup — short (account info)",
+      body: "CRNA Critics: {{first_name}}, you have {{days_left}} days left to read reviews. After that they blur until you leave 1 review of a current or past job, which unlocks the site for good (anonymous). crnacritics.com. Check spam for our emails. -Eric",
+    },
+    {
+      name: "Account setup — fully unlocked (opted-in members)",
+      body: "Hi {{first_name}}, it's Eric Hayslip from CRNA Critics. Your account is fully unlocked, so you have full access to every review. Thanks for contributing! If you know a colleague who should be on here, send them to crnacritics.com. Check your spam or junk folder if you ever miss one of our emails.",
+    },
+  ].forEach((t) => ins.run(crypto.randomUUID(), t.name, t.body, sort++, now, now));
+})();
 function sendReviewsLockedEmail(row) {
   const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(REVIEWS_LOCKED_TEMPLATE.name) || REVIEWS_LOCKED_TEMPLATE;
   const ctx = { name: row.name, email: row.email, reviewCount: 0, baseUrl: BASE_URL };
