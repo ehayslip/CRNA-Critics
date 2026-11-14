@@ -325,7 +325,7 @@ const state = {
   textNote: {},        // memberId -> one-line confirmation under their text box
   adminTraffic: null,  // Admin → Traffic report
   trafficDays: 30,
-  bulk: { group: "optin", tplId: "", video: false, picked: [], filter: "", stage: "pick", batch: 0, note: "" }, // Texts tab: send to several people
+  bulk: { group: "optin", segment: "all", tplId: "", video: false, picked: [], filter: "", stage: "pick", batch: 0, note: "" }, // Texts tab: send to several people
   textTplArmed: null,  // template id waiting for a second "Delete" tap
   adminFilter: "",     // name/email filter in the member list
   adminConfirmId: null, // member row showing the delete confirmation
@@ -389,6 +389,7 @@ const state = {
   emailRecipients: null,     // approved members, with opt-out + review counts
   emailPicked: [],           // ids ticked for this send
   emailRecipientFilter: "",
+  emailSegment: "all",       // Email tab: all / new (in 7 days, no review) / locked
   emailSubject: "",
   emailBody: "",
   emailTemplateName: "",     // which template the draft came from (recorded on the campaign)
@@ -3091,6 +3092,29 @@ function daysLeftOf(r) {
   const a = r && r.access;
   return a && a.reason === "trial" && a.daysLeft ? String(a.daysLeft) : "7";
 }
+// Where a member stands on the review gate, for the Email and Texts pickers:
+//   "window" = new, still inside their 7 free days, no review yet
+//   "locked" = 7 days are up and no review yet (reviews blurred)
+//   "other"  = already reviewed, unlocked by Eric, read-only, or no status
+// (reviewAccessFor on the server only returns "trial" for members with no review.)
+function gateSegmentOf(r) {
+  const a = r && r.access;
+  if (!a) return "other";
+  if (a.reason === "trial") return "window";
+  if (a.reason === "locked") return "locked";
+  return "other";
+}
+const SEGMENT_LABELS = { all: "Everyone", window: "New — in their 7 days, no review yet", locked: "Locked — 7 days up, no review" };
+function segmentButtonsHtml(attr, current, counts) {
+  return `<div style="display:flex;flex-wrap:wrap;gap:8px;margin:0 0 8px">${["all", "window", "locked"].map((k) =>
+    `<button type="button" class="tiny-btn${current === k ? " active-btn" : ""}" ${attr}="${k}">${esc(SEGMENT_LABELS[k])} (${counts[k] || 0})</button>`).join("")}</div>`;
+}
+function segmentCounts(list) {
+  const c = { all: list.length, window: 0, locked: 0 };
+  list.forEach((r) => { const s = gateSegmentOf(r); if (s !== "other") c[s]++; });
+  return c;
+}
+function inSegment(r, seg) { return !seg || seg === "all" || gateSegmentOf(r) === seg; }
 function fillText(body, r) {
   return String(body || "")
     .replace(/\{\{?\s*first_name\s*\}?\}/gi, firstNameOf(r))
@@ -3318,10 +3342,14 @@ function attachTextHandlers() {
 // is required, and the server re-checks the group when it logs the batch.
 const BULK_SHORTCUT = "CRNA bulk text";
 const BULK_BATCH = 25;
-function bulkEligible(r) {
+// Opt-in group + good number, before the new/locked filter (used for the segment counts).
+function bulkBaseEligible(r) {
   if (!r || r.status !== "approved" || r.role === "srna" || r.phone_bad_at) return false;
   if (state.bulk.group === "account" ? !!r.sms_consent : !r.sms_consent) return false;
   return /^\+1\d{10}$/.test(smsNumber(r.phone));
+}
+function bulkEligible(r) {
+  return bulkBaseEligible(r) && inSegment(r, state.bulk.segment);
 }
 const ACCOUNT_GROUP_NOTE = "Account information only — sign-in, access, locked reviews, policy or Terms changes. These members did not opt in to texts, so don't send review requests, promotions or \"tell a colleague\" texts to this group.";
 function bulkTemplate() {
@@ -3390,6 +3418,7 @@ function bulkSectionHtml() {
       <button type="button" class="tiny-btn${!acct ? " active-btn" : ""}" data-bulk-group="optin">Opted in to texts (${optIn})</button>
       <button type="button" class="tiny-btn${acct ? " active-btn" : ""}" data-bulk-group="account">Didn't opt in &mdash; account info only (${noOptIn})</button>
     </div>
+    ${segmentButtonsHtml("data-bulk-segment", b.segment || "all", segmentCounts(approved.filter(bulkBaseEligible)))}
     ${acct ? `<div class="text-warn" style="margin:0 0 8px">${esc(ACCOUNT_GROUP_NOTE)}</div>` : ""}`;
   if (!isAppleDevice()) {
     return `<div class="card">${head}<p class="hint-text" style="margin:0">Sending to several people runs a Shortcut on an iPhone or Mac. Open this page on your iPhone or Mac to use it.</p></div>`;
@@ -3494,7 +3523,14 @@ function attachBulkHandlers() {
     b.stage = "confirm"; b.batch = 0; b.note = ""; paintAdmin();
   });
   on("bulk-back", () => { b.stage = "pick"; b.note = ""; paintAdmin(); });
-  on("bulk-reset", () => { state.bulk = { group: b.group, tplId: b.tplId, video: b.video, picked: [], filter: "", stage: "pick", batch: 0, note: "" }; paintAdmin(); });
+  document.querySelectorAll("[data-bulk-segment]").forEach((btn) => {
+    btn.onclick = () => {
+      if ((b.segment || "all") === btn.dataset.bulkSegment) return;
+      b.segment = btn.dataset.bulkSegment; b.picked = []; b.note = "";
+      paintAdmin();
+    };
+  });
+  on("bulk-reset", () => { state.bulk = { group: b.group, segment: b.segment || "all", tplId: b.tplId, video: b.video, picked: [], filter: "", stage: "pick", batch: 0, note: "" }; paintAdmin(); });
   document.querySelectorAll("[data-bulk-group]").forEach((btn) => {
     btn.onclick = () => {
       if (b.group === btn.dataset.bulkGroup) return;
@@ -4868,8 +4904,12 @@ function mailableRecipients() {
 function filteredRecipients() {
   const q = state.emailRecipientFilter.trim().toLowerCase();
   return (state.emailRecipients || []).filter(
-    (r) => !q || `${r.name} ${r.email}`.toLowerCase().includes(q)
+    (r) => inSegment(r, state.emailSegment) && (!q || `${r.name} ${r.email}`.toLowerCase().includes(q))
   );
+}
+// Mailable members inside the chosen segment (what the select buttons act on).
+function segmentMailable() {
+  return mailableRecipients().filter((r) => inSegment(r, state.emailSegment));
 }
 
 function recipientRowHtml(r) {
@@ -4929,8 +4969,9 @@ function composePaneHtml() {
 
     <div class="card">
       <div class="section-label">RECIPIENTS (${picked} picked of ${totalMailable})</div>
+      ${segmentButtonsHtml("data-email-segment", state.emailSegment || "all", segmentCounts(mailableRecipients()))}
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-        <button class="tiny-btn" id="rcpt-all">Select all ${totalMailable}</button>
+        <button class="tiny-btn" id="rcpt-all">Select all ${segmentMailable().length}</button>
         <button class="tiny-btn" id="rcpt-none">Clear</button>
         <button class="tiny-btn" id="rcpt-noreviews">Only those with no reviews</button>
         <button class="tiny-btn" id="rcpt-shown">Select everyone shown</button>
@@ -5114,11 +5155,18 @@ function attachEmailHandlers() {
 
   const setPicked = (ids) => { state.emailPicked = ids; state.emailConfirming = false; paintAdmin(); };
   const allBtn = document.getElementById("rcpt-all");
-  if (allBtn) allBtn.onclick = () => setPicked(mailableRecipients().map((r) => r.id));
+  if (allBtn) allBtn.onclick = () => setPicked(segmentMailable().map((r) => r.id));
+  document.querySelectorAll("[data-email-segment]").forEach((btn) => {
+    btn.onclick = () => {
+      if ((state.emailSegment || "all") === btn.dataset.emailSegment) return;
+      state.emailSegment = btn.dataset.emailSegment;
+      setPicked([]);
+    };
+  });
   const noneBtn = document.getElementById("rcpt-none");
   if (noneBtn) noneBtn.onclick = () => setPicked([]);
   const noRevBtn = document.getElementById("rcpt-noreviews");
-  if (noRevBtn) noRevBtn.onclick = () => setPicked(mailableRecipients().filter((r) => r.reviewCount === 0).map((r) => r.id));
+  if (noRevBtn) noRevBtn.onclick = () => setPicked(segmentMailable().filter((r) => r.reviewCount === 0).map((r) => r.id));
   const shownBtn = document.getElementById("rcpt-shown");
   if (shownBtn) shownBtn.onclick = () => setPicked([...new Set([...state.emailPicked, ...filteredRecipients().filter((r) => !r.unsubscribed).map((r) => r.id)])]);
 

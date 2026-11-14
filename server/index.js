@@ -1888,6 +1888,8 @@ app.get("/api/admin/email/recipients", requireAdmin, (req, res) => {
       lastReviewAt: last ? last.date : null,
       unsubscribed: !!r.bulk_unsubscribed,
       hasPassword: !!r.password_hash,
+      // Review gate status, so the Email tab can split new (in their 7 days) from locked members.
+      access: reviewAccessFor(r, r.role || "crna"),
     };
   });
   res.json({ recipients });
