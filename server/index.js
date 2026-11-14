@@ -2915,24 +2915,49 @@ app.delete("/api/reviews/:id", requireSession, (req, res) => {
 });
 
 // Sent once, right when a member deletes their last review and loses access (Eric, Nov 14, 2026).
+// The wording lives in Admin → Email templates ("Reviews locked — deleted last review") so Eric can
+// edit it; this default is only used to create it, or if he deletes the template.
+const REVIEWS_LOCKED_TEMPLATE = {
+  name: "Reviews locked — deleted last review",
+  category: "Members",
+  subject: "Your CRNA Critics reviews are locked",
+  body: `Hi {{first_name}},
+
+You deleted your last review on CRNA Critics, so reviews are now locked on your account.
+
+Only members who have a review posted get full access to the site. That's what keeps CRNA Critics full of honest, first-hand reviews. You can still sign in and search names and locations, but star ratings, comments, pay and "Ask this reviewer" stay locked until you post a review again.
+
+Leave one review of your current or past assignment/job and every review on the site unlocks again. It takes 3 to 5 minutes, and it's anonymous — other CRNAs see you only as "Anonymous CRNA."
+
+{{cta}}
+
+If you deleted it by mistake, just post it again. Questions? Reply to this email.
+
+— Eric Hayslip, CRNA, CRNA Critics`,
+};
+(function ensureReviewsLockedTemplate() {
+  if (db.prepare("SELECT 1 FROM email_templates WHERE name = ?").get(REVIEWS_LOCKED_TEMPLATE.name)) return;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO email_templates (id, name, category, subject, body, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), REVIEWS_LOCKED_TEMPLATE.name, REVIEWS_LOCKED_TEMPLATE.category, REVIEWS_LOCKED_TEMPLATE.subject, REVIEWS_LOCKED_TEMPLATE.body, now, now);
+})();
+// The text-message twin, for Eric to send by hand from Admin → Texts. Added once (tracked in kv),
+// so if he deletes it, it stays deleted.
+(function ensureReviewsLockedText() {
+  if (db.prepare("SELECT 1 FROM kv WHERE key = 'reviews_locked_text_2026_11_14'").get()) return;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO kv (key, value) VALUES ('reviews_locked_text_2026_11_14', ?)").run(now);
+  const sort = (db.prepare("SELECT MAX(sort) AS m FROM text_templates").get().m ?? -1) + 1;
+  db.prepare("INSERT INTO text_templates (id, name, body, sort, created_at, updated_at) VALUES (?,?,?,?,?,?)").run(
+    crypto.randomUUID(), "Reviews locked — post a review",
+    "Hi {{first_name}}, Eric Hayslip from CRNA Critics. You don't have a review posted right now, so reviews are locked on your account. Only members who have a review posted get full access to the site. Leave one review of your current or past assignment/job and everything unlocks again. It takes 3–5 minutes and it's anonymous. crnacritics.com",
+    sort, now, now
+  );
+})();
 function sendReviewsLockedEmail(row) {
-  return sendEmail({
-    to: row.email,
-    replyTo: REPLY_TO,
-    subject: "Your CRNA Critics reviews are locked",
-    html: `
-      <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;">
-        ${emailHeaderHtml(BASE_URL, 480)}
-        <h2 style="color:#123C3A;">&#128274; Reviews are locked on your account</h2>
-        <p>Hi ${escapeHtml(firstNameOf(row.name))},</p>
-        <p>You deleted your last review on CRNA Critics, so you no longer have full access to the site.</p>
-        <p style="background:#FFF9EE;border-left:4px solid #F5B301;padding:10px 12px;"><strong>Only members who have a review posted get full access.</strong> That's what keeps the site full of honest, first-hand reviews from CRNAs. You can still sign in and search names and locations, but star ratings, comments, pay and "Ask this reviewer" are locked until you post a review again.</p>
-        <p>Leave one review of your current or past assignment/job and every review on the site unlocks again. It takes 3 to 5 minutes, and it's anonymous &mdash; it shows only as "Anonymous CRNA."</p>
-        <p><a href="${BASE_URL}" style="background:#123C3A;color:#fff;padding:12px 20px;text-decoration:none;border-radius:4px;font-weight:bold;">Leave a review</a></p>
-        <p>If you deleted it by mistake, just post it again. Questions? Reply to this email.</p>
-      </div>
-    `,
-  });
+  const tpl = db.prepare("SELECT * FROM email_templates WHERE name = ? ORDER BY updated_at DESC LIMIT 1").get(REVIEWS_LOCKED_TEMPLATE.name) || REVIEWS_LOCKED_TEMPLATE;
+  const ctx = { name: row.name, email: row.email, reviewCount: 0, baseUrl: BASE_URL };
+  return sendEmail({ to: row.email, replyTo: REPLY_TO, subject: fillTokens(tpl.subject, ctx), html: plainMailHtml({ body: tpl.body, ctx }) });
 }
 
 // ---------- beta feedback (public, token-based — no member login required) ----------
