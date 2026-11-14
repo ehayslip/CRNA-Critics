@@ -37,8 +37,7 @@ request access and do not use the Site.</p>
       for 7 days, counted from their first sign-in (or from November 14, 2026, for members who joined before that date).
       After those 7 days, a full member who has not posted a review can still search names and locations, but star ratings
       and reviews are hidden. Posting one review of a current or past assignment or job unlocks every review on the Site
-      permanently, for as long as that review stays posted. If you delete your only review, or we remove it under these
-      Terms, the reviews are hidden again until you post another. A review posted only to gain access &mdash; one that is
+      permanently. While reviews are hidden, a full member also cannot use "Ask this reviewer." A review posted only to gain access &mdash; one that is
       not first-hand and truthful under Section 3 &mdash; may be removed. Read-only members cannot post and are not
       subject to this requirement. We may change the length of this period or this requirement at any time.</li>
   <li><strong>Tell us when your role changes.</strong> If a full member takes a chief, recruiting, ownership, or management

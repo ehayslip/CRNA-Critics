@@ -266,6 +266,8 @@ module.exports = function registerMessages(app, deps) {
 
   // Start (or continue) a conversation from a review.
   app.post("/api/messages", requireSession, (req, res) => {
+    // Review gate: a locked member can't read reviews, so they can't question the people who wrote them.
+    if (req.user.access && req.user.access.unlocked === false) return res.status(403).json({ error: "reviews_locked" });
     const review = db.prepare("SELECT * FROM reviews WHERE id = ?").get(String(req.body?.reviewId || ""));
     if (!review) return res.status(404).json({ error: "review_not_found" });
     if (review.reviewer_email === req.user.email) return res.status(400).json({ error: "own_review" });
@@ -300,6 +302,8 @@ module.exports = function registerMessages(app, deps) {
     const role = conv && roleOf(conv, req.user.email);
     if (!role) return res.status(404).json({ error: "not_found" });
     if (conv.blocked_by || conv.closed_by_admin) return res.status(403).json({ error: "closed" });
+    // A locked member can't keep asking in an older thread either. (A reviewer is never locked.)
+    if (role === "asker" && req.user.access && req.user.access.unlocked === false) return res.status(403).json({ error: "reviews_locked" });
     const other = memberRow(otherEmail(conv, role));
     if (!other || other.status !== "approved") return res.status(410).json({ error: "member_gone" });
     const checked = checkBody(req, res);

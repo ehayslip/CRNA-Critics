@@ -2829,6 +2829,7 @@ function reviewSubjectOf(r) {
 
 // From a review card: continue an existing conversation about that review, or start a new one.
 async function askReviewer(reviewId) {
+  if (isLocked()) { flash(UNLOCK_MESSAGE); return; } // the server refuses it too
   const r = state.reviews.find((x) => x.id === reviewId);
   if (!r) return;
   state.tab = "messages"; state.detail = null;
@@ -2980,6 +2981,7 @@ async function sendMessage(sendAnyway) {
       reviewer_unavailable: "The CRNA who wrote this review is no longer on the site.",
       member_gone: "The other CRNA is no longer on the site.",
       own_review: "That's your own review.",
+      reviews_locked: "Reviews are locked for you. Leave one review of your current or past assignment/job to unlock the site permanently, including Ask this reviewer.",
     })[code] || "Couldn't send — try again.";
     renderTab();
   }

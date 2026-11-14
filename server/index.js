@@ -67,7 +67,9 @@ function declaredRoleLabel(row) { return (DECLARED_ROLES[row.declared_role] || {
 //     never locked. They are the people the "read only" rule was written for.
 //   - Members who joined before the gate existed get REVIEW_TRIAL_DAYS from the day it first
 //     started (kv: review_gate_started_at), not an instant lock-out.
-//   - Delete your only review (or have it pulled by the admin) and the lock comes back.
+//   - Posting a review unlocks the site permanently (access_requests.review_unlocked_at). Deleting
+//     that review later, or the admin pulling it, does NOT lock them again (Eric, Nov 14, 2026).
+//   - Locked members can't use "Ask this reviewer" either (server/messages.js).
 // REVIEW_GATE=off in Railway turns the whole thing off; REVIEW_TRIAL_DAYS changes the 7.
 const REVIEW_GATE_ON = String(process.env.REVIEW_GATE || "on").toLowerCase() !== "off";
 const REVIEW_TRIAL_DAYS = Number(process.env.REVIEW_TRIAL_DAYS || 7);
@@ -81,12 +83,22 @@ function reviewGateStartedMs() {
   }
   return Date.parse(row.value) || Date.now();
 }
+// Everyone who has ever had a review on the site is unlocked for good. Safe to run on every start:
+// it only fills in members who have a review now and no stamp yet.
+db.prepare(
+  `UPDATE access_requests SET review_unlocked_at = (SELECT MIN(date) FROM reviews WHERE reviews.reviewer_email = access_requests.email)
+   WHERE review_unlocked_at IS NULL AND EXISTS (SELECT 1 FROM reviews WHERE reviews.reviewer_email = access_requests.email)`
+).run();
+function markReviewUnlocked(email) {
+  db.prepare("UPDATE access_requests SET review_unlocked_at = ? WHERE email = ? AND review_unlocked_at IS NULL").run(new Date().toISOString(), email);
+}
+
 // What a member may see right now. `unlocked` is the only thing the server acts on; the rest is
 // for the banner ("3 days left") and the pop-up.
 function reviewAccessFor(row, role) {
   if (!REVIEW_GATE_ON) return { unlocked: true, reason: "gate_off" };
   if (isReadOnlyRole(role)) return { unlocked: true, reason: "read_only" };
-  if (reviewCountFor(row.email) > 0) return { unlocked: true, reason: "reviewer" };
+  if (row.review_unlocked_at || reviewCountFor(row.email) > 0) return { unlocked: true, reason: "reviewer" };
   const firstMs = Date.parse(row.first_login_at || row.decided_at || row.requested_at || "") || Date.now();
   const endsMs = Math.max(firstMs, reviewGateStartedMs()) + REVIEW_TRIAL_MS;
   const left = endsMs - Date.now();
@@ -2846,6 +2858,7 @@ app.post("/api/reviews", requireCrna, (req, res) => {
     `INSERT INTO reviews (id, date, reviewer_name, reviewer_credentials, reviewer_email, ${cols.join(", ")})
      VALUES (?,?,?,?,?, ${cols.map(() => "?").join(",")})`
   ).run(id, new Date().toISOString(), req.user.name, req.user.credentials, req.user.email, ...cols.map((c) => v[c]));
+  markReviewUnlocked(req.user.email);
   const row = db.prepare("SELECT * FROM reviews WHERE id = ?").get(id);
   res.json({ review: rowToReview(row, req.user.email) });
 });
