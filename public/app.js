@@ -547,8 +547,23 @@ function trackVisit() {
   } catch {}
 }
 
+// The admin login lives at its own address, crnacritics.com/admin. The server hands the same
+// page to every path; this is what makes /admin open the admin screen instead of the home page.
+function isAdminPath() { return /^\/admin\/?$/i.test(window.location.pathname); }
+// Moves the address bar with the screen, so /admin can be bookmarked and Back works.
+function setAdminUrl(on) {
+  const want = on ? "/admin" : "/";
+  if (window.location.pathname !== want) window.history.pushState({}, "", want);
+}
+window.addEventListener("popstate", () => {
+  if (isAdminPath()) state.view = "admin";
+  else if (state.view === "admin") state.view = state.user ? "app" : "home";
+  else return;
+  render();
+});
+
 async function init() {
-  trackVisit();
+  if (!isAdminPath()) trackVisit(); // opening the admin page isn't a visitor
   try {
     const data = await api("/api/me");
     state.user = data.user;
@@ -563,6 +578,7 @@ async function init() {
   } catch {
     state.view = "home";
   }
+  if (isAdminPath()) state.view = "admin";
   render();
 }
 
@@ -799,7 +815,9 @@ function attachFooterHandlers() {
   loadSocialLinks();
   attachYoutubeHandlers();
   document.getElementById("admin-link-btn").onclick = () => {
-    state.view = state.view === "admin" ? (state.user ? "app" : "home") : "admin";
+    const opening = state.view !== "admin";
+    state.view = opening ? "admin" : (state.user ? "app" : "home");
+    setAdminUrl(opening);
     render();
   };
   const termsBtn = document.getElementById("terms-link-btn");
@@ -4079,7 +4097,7 @@ async function renderAdmin() {
         document.getElementById("admin-passcode").value = "";
       }
     };
-    document.getElementById("admin-close").onclick = () => { state.view = state.user ? "app" : "home"; render(); };
+    document.getElementById("admin-close").onclick = () => { state.view = state.user ? "app" : "home"; setAdminUrl(false); render(); };
     return;
   }
   el.innerHTML = `<p class="hint-text">Loading…</p>`;

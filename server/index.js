@@ -3147,6 +3147,14 @@ app.get("/sitemap.xml", (req, res) => {
   );
 });
 
+// crnacritics.com/admin — the admin login. Same single-page app as everywhere else (it opens the
+// admin screen when it sees this path); served explicitly so it can be kept out of search results.
+app.get("/admin", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.set("X-Robots-Tag", "noindex, nofollow");
+  res.sendFile(path.join(__dirname, "..", "public", "index.html"));
+});
+
 app.get("/feedback", (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "feedback.html"));
 });
