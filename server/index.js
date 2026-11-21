@@ -121,7 +121,9 @@ function lockedReview(rv) {
 // ---------- auth middleware ----------
 
 function requireSession(req, res, next) {
-  const payload = verify(req.cookies.session);
+  // The website uses the session cookie; the iPhone app sends the same signed token as a Bearer header.
+  const bearer = String(req.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  const payload = verify(req.cookies.session || bearer || undefined);
   if (!payload || !payload.email) return res.status(401).json({ error: "not_signed_in" });
   const row = lapseIfExpired(db.prepare("SELECT * FROM access_requests WHERE email = ?").get(payload.email));
   if (!row || row.status !== "approved") return res.status(401).json({ error: row && row.status === "expired" ? "access_expired" : "not_approved" });
@@ -1224,7 +1226,8 @@ app.post("/api/auth/login", (req, res) => {
   markFirstLogin(row.email);
   const session = sign({ email: row.email }, SESSION_SECONDS);
   res.cookie("session", session, cookieOpts(SESSION_SECONDS));
-  res.json({ ok: true });
+  // The iPhone app keeps the token in the device keychain-backed storage and sends it as a Bearer header.
+  res.json(req.get("x-crna-app") ? { ok: true, token: session } : { ok: true });
 });
 
 app.post("/api/auth/set-password", requireSession, (req, res) => {

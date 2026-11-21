@@ -64,6 +64,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm ci
+      - name: Use the bundled iPhone app (not the website) for the iOS build
+        run: node scripts/ios-native.js
       - run: npx cap sync ios
       - name: Compile for iPhone simulator
         working-directory: mobile/ios/App
